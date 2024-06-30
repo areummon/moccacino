@@ -1,0 +1,6 @@
+[workspace]
+
+members = [
+    "mocaccino",
+    "moca-data",
+]
