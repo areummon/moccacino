@@ -1,20 +1,21 @@
-use bimap::hash::BiHashMap;
-use std::fmt;
-use crate::state::State;
+use std::collections::HashMap;
+use std::collections::hash_map::Iter;
+use crate::state::{StateID, Input, State};
+use crate::state_machine::StateMachine;
 
 /* Structure that represent a finite automaton. */
-pub struct FiniteAutomaton<'a> {
-    states: BiHashMap<&'a str, State<'a>>,
+pub struct FiniteAutomaton {
+    states_by_id: HashMap<StateID, State>,
 }
 
-impl<'a> FiniteAutomaton<'a> {
+impl FiniteAutomaton {
     pub fn new() -> Self {
-        FiniteAutomaton { states: BiHashMap::new(), }
+        FiniteAutomaton { states_by_id: HashMap::new(), }
     }
-    
-    /* The name is assigned automatically. */
-    pub fn add_state(&mut self) {
-        let state_name = format!("q{}",self.states.len());
-        self.states.insert(state_name, State::new(&state_name));
+}
+
+impl StateMachine for FiniteAutomaton {
+    fn get_states_by_id(&mut self) -> &mut HashMap<StateID, State> {
+        &mut self.states_by_id
     }
 }

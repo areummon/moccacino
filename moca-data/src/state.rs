@@ -1,66 +1,67 @@
 use std::collections::{HashMap, HashSet};
+use std::collections::hash_map::Iter;
 
+/* Type to represent the unique id of a state. */
+pub type StateID = u64;
 /* Type to represent the input a trasntition has. */
-type Input = HashSet<String>;
+pub type Input = String;
 
-
-/* Struct that represents an state of a machine.
- * The name has &'a str for better optimization.
- * The key of transition_states is the name of 
- * the transition state. */
-#[derive(PartialEq, Debug, Eq, Hash)]
-pub struct State<'a> {
-    pub name: &'a str,
-    transition_states: HashMap<&'a str, Input>,
+/* Struct that represents an state of a machine. 
+ * The state has a hashmap because it is going to be used
+ * in different structs, so implementing this feature instead
+ * of the outer structure gives more practicality. */
+#[derive(PartialEq, Debug, Eq)]
+pub struct State {
+    pub name: String,
+    transitions_by_id: HashMap<StateID, HashSet<Input>>,
     pub initial_flag: bool,
     pub final_flag: bool,
 }
 
-impl<'a> State<'a> {
-    pub fn new(name: &'a str) -> Self {
+impl State {
+    pub fn new(name: String) -> Self {
         Self {
             name,
-            transition_states: HashMap::new(),
+            transitions_by_id: HashMap::new(),
             initial_flag: false,
             final_flag: false,
         }
     }
 
-    /* Function to add a transition state. */
-    pub fn add_transition(&mut self, state_name: &'a str, input: String) {
-        self.transition_states.entry(state_name).or_insert(HashSet::new()).replace(input);
+    /* Functon to add a transition to another state given it's id.
+     * It uses replace nstead of insert to avoid having two same
+     * input transitions. */
+    pub fn add_transition(&mut self, state_id: StateID, input: Input) {
+        self.transitions_by_id.entry(state_id).or_insert(HashSet::new()).replace(input);
     }
 
     /* Function to remove a transition. */
-    pub fn remove_transition(&mut self, state_name: &'a str, input: String) {
-        if let Some(transitions) = self.transition_states.get_mut(state_name) {
-            transitions.remove(&input);
+    pub fn remove_transition(&mut self, state_id: StateID, input: &str) {
+        if let Some(transitions) = self.transitions_by_id.get_mut(&state_id) {
+            transitions.remove(input);
         }
     }
 
-    /* Function to modify the input of a transition.
-     * It has to remove the old input and add the new input in the
-     * hashset, it might change in the future. */
-    pub fn modify_input(&mut self, state_name: &'a str, input: String, new_input: String) {
-        if let Some(transitions) = self.transition_states.get_mut(state_name) {
-            transitions.remove(&input);
-            transitions.insert(new_input);
+    /* Function to modify an input transition, in the current implementation
+     * the program uses a hashset so to modify a input trasition, it has
+     * to remove it and add the modified version. It uses replace in case 
+     * the new input is already an input transition. */
+    pub fn modify_input(&mut self, state_id: StateID, old_input: &str, new_input: Input) {
+        if let Some(transitions) = self.transitions_by_id.get_mut(&state_id) {
+            transitions.remove(old_input);
+            transitions.replace(new_input);
         }
     }
 
-    /* Function to update a modified state name. 
-     * I remove and add a new entry with the new name to update the hashmap,
-     * because I think the hashmap is a better option for the operations,
-     * but it might change in the future. */
-    pub fn update(&mut self, state_name: &'a str, new_name: &'a str) {
-        if let Some(transitions) = self.transition_states.remove(state_name) {
-            self.transition_states.insert(new_name, transitions);
-        }
+    /* Function to remove an entry in the transitions HashMap in case
+     * a state was removed. */
+    pub fn remove_state(&mut self, state_id: StateID) {
+        self.transitions_by_id.remove(&state_id);
     }
 
-    /* Getter of the transitions of a given state name. */
-    pub fn get_transitions(&mut self, state_name: &str) -> Option<&Input> {
-        self.transition_states.get(state_name)
+    /* Iterator for transitions_by_id hashmap. */
+    pub fn iter_by_transition(&self) -> Iter<'_, StateID, HashSet<Input>> {
+        self.transitions_by_id.iter()
     }
 }
 
