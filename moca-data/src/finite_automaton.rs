@@ -40,31 +40,33 @@ impl FiniteAutomaton {
      * one state to another, and that new input is passed in the recursive
      * function. */
     fn recursive_traversing(&self, state_id: &StateID, input: &mut Input) -> bool {
-        if let Some(state) = self.states_by_id.get(&state_id) {
-            if state.final_flag == true && input.is_empty() {
-                return true;
-            }
-            let mut string_ref = "";
-            let mut string_len_max = 0;
-            let mut string_id = 0;
-            for (id, transition) in state.iter_by_transition() {
-                for string in transition.iter() {
-                    if input.starts_with(string) {
-                        if string.len() > string_len_max {
-                            string_len_max = string.len();
-                            string_ref = string;
-                            string_id = *id;
+        match self.states_by_id.get(&state_id) {
+            Some(state) => {
+                if state.final_flag == true && input.is_empty() {
+                    return true;
+                }
+                let mut string_ref = "";
+                let mut string_len_max = 0;
+                let mut string_id = 0;
+                for (id, transition) in state.iter_by_transition() {
+                    for string in transition.iter() {
+                        if input.starts_with(string) {
+                            if string.len() > string_len_max {
+                                string_len_max = string.len();
+                                string_ref = string;
+                                string_id = *id;
+                            }
                         }
                     }
                 }
+                if string_len_max == 0 {
+                    return false;
+                }
+                input.replace_range(0..string_ref.len(),"");
+                return self.recursive_traversing(&string_id, input);
             }
-            if string_len_max == 0 {
-                return false;
-            }
-            input.replace_range(0..string_ref.len(),"");
-            return self.recursive_traversing(&string_id, input);
+            None => {return false;},
         }
-        false
     }
 }
 

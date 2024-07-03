@@ -17,6 +17,13 @@ pub trait StateMachine {
         states_by_id.insert(states_by_id_len as u64, State::new(state_name));
     }
 
+    /* Convenient function to add n states. */
+    fn add_n_states(&mut self, n: u64) {
+        for _ in 0..n {
+            self.add_state();
+        }
+    }
+
     /* Functon to add a transition between two given states.
      * The transition goes from state1 to state2. It also checks
      * if a given id/state exists, if not, then it doesn't add it. */

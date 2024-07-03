@@ -77,7 +77,7 @@ mod tests {
         assert_eq!(count_transition(&state, "magnetic", ""), 0);
     }
 
-    /* Tests for the finite_automaton module.
+    /* Tests for the state_machine module.
      * This tests will only be for the finite automaton struct because
      * all the state machines implement the same trait and functions. */
     #[test]
@@ -165,5 +165,56 @@ mod tests {
             }
         }
         assert_eq!(len,0);
+    }
+
+    /* Tests for the finite_automaton module. */
+    #[test]
+    fn check_input_test() {
+        // automata that recognizes strings with an odd number of 'a'
+        let mut automata = FiniteAutomaton::new();
+        automata.add_state();
+        automata.add_state();
+        automata.add_transition(0,1, "a".to_string());
+        automata.add_transition(0,0, "b".to_string());
+        automata.add_transition(1,0, "a".to_string());
+        automata.add_transition(1,1, "b".to_string());
+        automata.make_final(1);
+        automata.make_initial(0);
+        assert_eq!(automata.check_input(&mut "abbbaabaaba".to_string()),false);
+        assert_eq!(automata.check_input(&mut "bbbbbbabaaabba".to_string()),true);
+        assert_eq!(automata.check_input(&mut "aaaaaaaaaaaaa".to_string()),true);
+        /* automata that recognizes strings that have an # as the initial symbol
+         * followed by numbers between 0,1 or 2 followed by at least three
+         * character 'b' aparitions. */
+        let mut automata = FiniteAutomaton::new();
+        automata.add_n_states(7);
+        automata.make_initial(0);
+        automata.make_final(6);
+        // reminder to add another function to add multiple transitions
+        // to sipmplify this mess.
+        automata.add_transition(0,1,"#".to_string());
+        automata.add_transition(1,2,"0".to_string());
+        automata.add_transition(1,2,"1".to_string());
+        automata.add_transition(1,2,"2".to_string());
+        automata.add_transition(2,2,"0".to_string());
+        automata.add_transition(2,2,"1".to_string());
+        automata.add_transition(2,2,"2".to_string());
+        automata.add_transition(2,3,"a".to_string());
+        automata.add_transition(2,4,"b".to_string());
+        automata.add_transition(3,3,"a".to_string());
+        automata.add_transition(3,4,"b".to_string());
+        automata.add_transition(4,3,"a".to_string());
+        automata.add_transition(4,5,"b".to_string());
+        automata.add_transition(5,3,"a".to_string());
+        automata.add_transition(5,6,"b".to_string());
+        automata.add_transition(6,6,"a".to_string());
+        automata.add_transition(6,6,"b".to_string());
+        assert_eq!(automata.check_input(&mut "adsf".to_string()), false);
+        assert_eq!(automata.check_input(&mut "".to_string()), false);
+        assert_eq!(automata.check_input(&mut "#1010201aabb".to_string()), false);
+        assert_eq!(automata.check_input(&mut "1010201abbb".to_string()), false);
+        assert_eq!(automata.check_input(&mut "#1010abbba".to_string()), true);
+        assert_eq!(automata.check_input(&mut "#1010bbbbb".to_string()), true);
+        assert_eq!(automata.check_input(&mut "#2222aaaaaaaaaaabbb".to_string()), true);
     }
 }
