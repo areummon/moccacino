@@ -4,13 +4,14 @@ use crate::state::{StateID, Input, State};
 
 pub trait StateMachine {
 
-    /* Getter to define the implementations of many functions of a 
-     * state machine. */
-    fn get_states_by_id(&mut self) -> &mut HashMap<StateID, State>;
+    /* Getter of a mutable reference of the hashmap to define the 
+     * implementations of many functions of a state machine. */
+    fn get_states_by_id_mut_ref(&mut self) -> &mut HashMap<StateID, State>;
+
 
     /* The name is assigned automatically as well as the id. */
     fn add_state(&mut self) {
-        let states_by_id = self.get_states_by_id();
+        let states_by_id = self.get_states_by_id_mut_ref();
         let states_by_id_len = states_by_id.len();
         let state_name = format!("q{}", states_by_id.len());
         states_by_id.insert(states_by_id_len as u64, State::new(state_name));
@@ -20,15 +21,20 @@ pub trait StateMachine {
      * The transition goes from state1 to state2. It also checks
      * if a given id/state exists, if not, then it doesn't add it. */
     fn add_transition(&mut self, state_id1: StateID, state_id2: StateID, input: Input) {
-        let states_by_id = self.get_states_by_id();
-        if let Some(state) = states_by_id.get_mut(&state_id1) {
-            state.add_transition(state_id2, input);
+        let states_by_id = self.get_states_by_id_mut_ref();
+        match states_by_id.get_mut(&state_id2) {
+            Some(state2) => {
+                if let Some(state) = states_by_id.get_mut(&state_id1) {
+                    state.add_transition(state_id2, input);
+                }
+            },
+            None => (),
         }
     }
     
     /* Modify the name of a state. */
     fn modify_name(&mut self, state_id: StateID, new_name: String) {
-        let states_by_id = self.get_states_by_id();
+        let states_by_id = self.get_states_by_id_mut_ref();
         if let Some(state) = states_by_id.get_mut(&state_id) {
             state.name = new_name;
         }
@@ -37,7 +43,7 @@ pub trait StateMachine {
     /* Function to modify an input transition between two states. */
     fn modify_input(&mut self, state_id: StateID, state_transition_id: StateID,
                         old_input: &str, new_input: Input) {
-        let states_by_id = self.get_states_by_id();
+        let states_by_id = self.get_states_by_id_mut_ref();
         if let Some(state) = states_by_id.get_mut(&state_id) {
             state.modify_input(state_transition_id, old_input, new_input);
         }
@@ -46,7 +52,7 @@ pub trait StateMachine {
     /* Function to delete a state, this implies that it's id will be removed
      * from all the transitions with another state. */
     fn remove_state(&mut self, state_id: StateID) {
-        let states_by_id = self.get_states_by_id();
+        let states_by_id = self.get_states_by_id_mut_ref();
         if let Some(state) = states_by_id.get_mut(&state_id) {
             states_by_id.remove(&state_id);
             for (_, states) in states_by_id.iter_mut() {
@@ -57,23 +63,21 @@ pub trait StateMachine {
 
     /* Function to delete a transition from one state to another. */
     fn remove_transition(&mut self, state_id: StateID, state_transition_id: StateID, input: &str) {
-        let states_by_id = self.get_states_by_id();
+        let states_by_id = self.get_states_by_id_mut_ref();
         if let Some(state) = states_by_id.get_mut(&state_id) {
             state.remove_transition(state_transition_id, input);
         }
     }
 
-    /* Function to make a state initial. */
-    fn make_initial(&mut self, state_id: StateID) {
-        let states_by_id = self.get_states_by_id();
-        if let Some(state) = states_by_id.get_mut(&state_id) {
-            state.initial_flag = true;
-        }
-    }
+    /* Function to make a state initial.
+     * If the machine already has a initial state, then it makes the it changes
+     * the initial_flag from the state to false and then modify the new one,
+     * if the new one does not exist, then the old one remain unchanged. */
+    fn make_initial(&mut self, state_id: StateID); 
 
     /* Function to make a state final. */
     fn make_final(&mut self, state_id: StateID) {
-        let states_by_id = self.get_states_by_id();
+        let states_by_id = self.get_states_by_id_mut_ref();
         if let Some(state) = states_by_id.get_mut(&state_id) {
             state.final_flag = true;
         }
@@ -81,8 +85,7 @@ pub trait StateMachine {
 
     /* Iterator for the states_by_id HashMap. */
     fn iter_by_state(&mut self) -> Iter<'_, StateID, State> {
-        let states_by_id = self.get_states_by_id();
+        let states_by_id = self.get_states_by_id_mut_ref();
         states_by_id.iter()
     }
-
 }

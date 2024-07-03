@@ -1,5 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use crate::state::State;
+use crate::finite_automaton::FiniteAutomaton;
+use crate::state_machine::StateMachine;
 
 #[cfg(test)]
 mod tests {
@@ -73,5 +75,95 @@ mod tests {
         state.add_transition(1, "magnetic".to_string());
         state.remove_state(1);
         assert_eq!(count_transition(&state, "magnetic", ""), 0);
+    }
+
+    /* Tests for the finite_automaton module.
+     * This tests will only be for the finite automaton struct because
+     * all the state machines implement the same trait and functions. */
+    #[test]
+    fn state_machine_add_state_test() {
+        let mut automata = FiniteAutomaton::new();
+        automata.add_state();
+        automata.add_state();
+        assert_eq!(automata.iter_by_state().len(),2);
+    }
+
+    #[test]
+    fn state_machine_add_transition_test() {
+        let mut automata = FiniteAutomaton::new();
+        automata.add_state();
+        automata.add_transition(0, 1, "lovelyz".to_string());
+        for (k,v) in automata.iter_by_state() {
+            assert_ne!(1, v.iter_by_transition().len());
+        }
+        automata.add_state();
+        automata.add_transition(0, 1, "lovelyz".to_string());
+        automata.add_state();
+        automata.add_transition(1, 2, "for you".to_string());
+        let mut len = 0;
+        let mut state_id = 1;
+        for (k,v) in automata.iter_by_state() {
+            for (x,y) in v.iter_by_transition() {
+                if y.contains("lovelyz") || y.contains("for you") {
+                    len += 1;
+                    state_id += 1;
+                }
+            }
+        }
+        assert_eq!(len, 2);
+    }
+
+    #[test]
+    fn modify_name_test() {
+        let mut automata = FiniteAutomaton::new();
+        automata.add_state();
+        automata.modify_name(0, "jiyeon".to_string());
+        for (k,v) in automata.iter_by_state() {
+            assert_eq!(v.name, "jiyeon");
+        }
+    }
+
+    #[test]
+    fn state_machine_modify_input_test() {
+        let mut automata = FiniteAutomaton::new();
+        automata.add_state();
+        automata.add_state();
+        automata.add_transition(0,1,"fiestar".to_string());
+        automata.modify_input(0,1,"fiestar","secret".to_string());
+        for (k,v) in automata.iter_by_state() {
+            if *k == 0 {
+                assert_eq!(count_transition(v, "secret", ""), 1);
+            }
+        }
+    }
+
+    #[test]
+    fn state_machine_remove_transition() {
+        let mut automata = FiniteAutomaton::new();
+        automata.add_state();
+        automata.add_state();
+        automata.remove_state(1);
+        assert_eq!(automata.iter_by_state().len(), 1);
+    }
+
+    #[test]
+    fn state_machine_remove_state() {
+        let mut automata = FiniteAutomaton::new();
+        automata.add_state();
+        automata.add_state();
+        automata.add_state();
+        automata.add_transition(0,1,"badvillain".to_string());
+        automata.add_transition(2,1,"badtitude".to_string());
+        automata.remove_state(1);
+        assert_eq!(automata.iter_by_state().len(),2);
+        let mut len = 0;
+        for (k,v) in automata.iter_by_state() {
+            for (x,y) in v.iter_by_transition() {
+                if *x == 1 {
+                    len += 1;
+                }
+            }
+        }
+        assert_eq!(len,0);
     }
 }
