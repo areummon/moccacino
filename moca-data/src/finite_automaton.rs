@@ -10,7 +10,8 @@ use crate::state_machine::StateMachine;
 #[derive(Debug)]
 pub struct FiniteAutomaton {
     states_by_id: HashMap<StateID, State>,
-    initial_state_id: Option<u64>
+    initial_state_id: Option<u64>,
+    deterministic: bool,
 }
 
 impl FiniteAutomaton {
@@ -18,6 +19,7 @@ impl FiniteAutomaton {
         FiniteAutomaton {
             states_by_id: HashMap::new(),
             initial_state_id: None,
+            deterministic: false,
         }
     }
 
@@ -39,31 +41,57 @@ impl FiniteAutomaton {
      * a time. The input is "consumed" if there is a transition valid from
      * one state to another, and that new input is passed in the recursive
      * function. */
+    // ------ This note is to modify and optimize this function other day --------
+    // ------ because I implemented this only to see if it would work -------
+    /* Note: I create a vector of all the ids, because if a certain state have
+     * multiple transitions with the same string (i.e. is non deterministic)
+     * then i add them to the vector to apply te function recursively to all the
+     * the ids from the string matches, this works because if a string returns true in starts_with
+     * then all the strings that return true and have the same length are the same,
+     * so I use and or with accepted_bool that is going to be the bool value of the function.
+     * If there is one path that accepts the input, then the value will be true.
+     * If one string from the transitions is λ, it uses the function without
+     * check the other conditions by definition.
+     * It works for both, NFA and DFA.
+     */
     fn recursive_traversing(&self, state_id: &StateID, input: &mut Input) -> bool {
         match self.states_by_id.get(&state_id) {
             Some(state) => {
                 if state.final_flag == true && input.is_empty() {
                     return true;
                 }
+                let mut string_matches_id: Vec<u64> = Vec::new();
                 let mut string_ref = "";
                 let mut string_len_max = 0;
                 let mut string_id = 0;
+                let mut acepted_bool = false;
                 for (id, transition) in state.iter_by_transition() {
                     for string in transition.iter() {
+                        if string == "λ" {
+                            acepted_bool = acepted_bool || self.recursive_traversing(&id, input);
+                        }
                         if input.starts_with(string) {
-                            if string.len() > string_len_max {
+                            if string.len() == string_len_max {
+                                string_matches_id.push(*id);
+                            }
+                            else if string.len() > string_len_max {
                                 string_len_max = string.len();
                                 string_ref = string;
                                 string_id = *id;
+                                string_matches_id.clear();
+                                string_matches_id.push(*id);
                             }
                         }
                     }
                 }
-                if string_len_max == 0 {
+                if string_len_max == 0 || string_matches_id.is_empty() {
                     return false;
-                }
+                } 
                 input.replace_range(0..string_ref.len(),"");
-                return self.recursive_traversing(&string_id, input);
+                for id in string_matches_id {
+                    acepted_bool = acepted_bool || self.recursive_traversing(&id, &mut input.clone());
+                }
+                return acepted_bool;
             }
             None => {return false;},
         }
@@ -73,6 +101,10 @@ impl FiniteAutomaton {
 impl StateMachine for FiniteAutomaton {
     fn get_states_by_id_mut_ref(&mut self) -> &mut HashMap<StateID, State> {
         &mut self.states_by_id
+    }
+    
+    fn get_deterministic_flag(&mut self) -> &mut bool {
+        &mut self.deterministic
     }
     
     fn make_initial(&mut self, state_id: StateID) {

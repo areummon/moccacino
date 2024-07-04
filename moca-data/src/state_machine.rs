@@ -8,6 +8,9 @@ pub trait StateMachine {
      * implementations of many functions of a state machine. */
     fn get_states_by_id_mut_ref(&mut self) -> &mut HashMap<StateID, State>;
 
+    /* Getter of the deterministic flag. */
+    fn get_deterministic_flag(&mut self) -> &mut bool;
+
 
     /* The name is assigned automatically as well as the id. */
     fn add_state(&mut self) {
@@ -27,7 +30,12 @@ pub trait StateMachine {
     /* Functon to add a transition between two given states.
      * The transition goes from state1 to state2. It also checks
      * if a given id/state exists, if not, then it doesn't add it. */
-    fn add_transition(&mut self, state_id1: StateID, state_id2: StateID, input: Input) {
+    fn add_transition(&mut self, state_id1: StateID, state_id2: StateID, mut input: Input) {
+        if input.is_empty() {
+            input.push_str("λ");
+            let deterministic_flag = self.get_deterministic_flag();
+            *deterministic_flag = true;
+        }
         let states_by_id = self.get_states_by_id_mut_ref();
         match states_by_id.get_mut(&state_id2) {
             Some(state2) => {

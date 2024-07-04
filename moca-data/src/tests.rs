@@ -191,7 +191,7 @@ mod tests {
         automata.make_initial(0);
         automata.make_final(6);
         // reminder to add another function to add multiple transitions
-        // to sipmplify this mess.
+        // to the same state to sipmplify this mess.
         automata.add_transition(0,1,"#".to_string());
         automata.add_transition(1,2,"0".to_string());
         automata.add_transition(1,2,"1".to_string());
