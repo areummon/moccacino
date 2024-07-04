@@ -51,7 +51,8 @@ impl FiniteAutomaton {
      * so I use and or with accepted_bool that is going to be the bool value of the function.
      * If there is one path that accepts the input, then the value will be true.
      * If one string from the transitions is λ, it uses the function without
-     * check the other conditions by definition.
+     * check the other conditions by definition. I also use clone on the input string because
+     * in my implementation I "consumed" it.
      * It works for both, NFA and DFA.
      */
     fn recursive_traversing(&self, state_id: &StateID, input: &mut Input) -> bool {
@@ -68,7 +69,7 @@ impl FiniteAutomaton {
                 for (id, transition) in state.iter_by_transition() {
                     for string in transition.iter() {
                         if string == "λ" {
-                            acepted_bool = acepted_bool || self.recursive_traversing(&id, input);
+                            acepted_bool = acepted_bool || self.recursive_traversing(&id, &mut input.clone());
                         }
                         if input.starts_with(string) {
                             if string.len() == string_len_max {
