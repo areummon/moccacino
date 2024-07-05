@@ -52,7 +52,7 @@ impl FiniteAutomaton {
      * If there is one path that accepts the input, then the value will be true.
      * If one string from the transitions is λ, it uses the function without
      * check the other conditions by definition. I also use clone on the input string because
-     * in my implementation I "consumed" it.
+     * in my implementation I "consume" it.
      * It works for both, NFA and DFA.
      */
     fn recursive_traversing(&self, state_id: &StateID, input: &mut Input) -> bool {
@@ -64,12 +64,11 @@ impl FiniteAutomaton {
                 let mut string_matches_id: Vec<u64> = Vec::new();
                 let mut string_ref = "";
                 let mut string_len_max = 0;
-                let mut string_id = 0;
-                let mut acepted_bool = false;
+                let mut accepted_bool = false;
                 for (id, transition) in state.iter_by_transition() {
                     for string in transition.iter() {
                         if string == "λ" {
-                            acepted_bool = acepted_bool || self.recursive_traversing(&id, &mut input.clone());
+                            accepted_bool = accepted_bool || self.recursive_traversing(&id, &mut input.clone());
                         }
                         if input.starts_with(string) {
                             if string.len() == string_len_max {
@@ -78,21 +77,21 @@ impl FiniteAutomaton {
                             else if string.len() > string_len_max {
                                 string_len_max = string.len();
                                 string_ref = string;
-                                string_id = *id;
                                 string_matches_id.clear();
                                 string_matches_id.push(*id);
                             }
                         }
                     }
                 }
-                if string_len_max == 0 || string_matches_id.is_empty() {
+                if (string_len_max == 0 || string_matches_id.is_empty()) &&
+                    accepted_bool != true {
                     return false;
                 } 
                 input.replace_range(0..string_ref.len(),"");
                 for id in string_matches_id {
-                    acepted_bool = acepted_bool || self.recursive_traversing(&id, &mut input.clone());
+                    accepted_bool = accepted_bool || self.recursive_traversing(&id, &mut input.clone());
                 }
-                return acepted_bool;
+                return accepted_bool;
             }
             None => {return false;},
         }

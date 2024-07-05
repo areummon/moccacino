@@ -167,9 +167,9 @@ mod tests {
         assert_eq!(len,0);
     }
 
-    /* Tests for the finite_automaton module. */
+    /* Tests for the finite_automaton (DFA) module. */
     #[test]
-    fn check_input_test() {
+    fn check_input_DFA_test() {
         // automata that recognizes strings with an odd number of 'a'
         let mut automata = FiniteAutomaton::new();
         automata.add_state();
@@ -216,5 +216,55 @@ mod tests {
         assert_eq!(automata.check_input(&mut "#1010abbba".to_string()), true);
         assert_eq!(automata.check_input(&mut "#1010bbbbb".to_string()), true);
         assert_eq!(automata.check_input(&mut "#2222aaaaaaaaaaabbb".to_string()), true);
+    }
+    
+    /* Tests for the finite_automaton (NFA) module. */
+    fn check_input_NFA_test() {
+        /* NDA that recognizes strings that contains 01 or 10 */
+        let mut automata = FiniteAutomaton::new();
+        automata.add_n_states(4);
+        automata.make_initial(0);
+        automata.make_final(3);
+        automata.add_transition(0,1, "0".to_string());
+        automata.add_transition(0,2, "1".to_string());
+        automata.add_transition(1,1, "0".to_string());
+        automata.add_transition(1,2, "1".to_string());
+        automata.add_transition(1,3, "1".to_string());
+        automata.add_transition(2,2, "1".to_string());
+        automata.add_transition(2,1, "0".to_string());
+        automata.add_transition(2,3, "0".to_string());
+        automata.add_transition(3,3, "0".to_string());
+        automata.add_transition(3,3, "1".to_string());
+        assert_eq!(automata.check_input(&mut "".to_string()),false);
+        assert_eq!(automata.check_input(&mut "0000000000".to_string()),false);
+        assert_eq!(automata.check_input(&mut "111111111".to_string()),false);
+        assert_eq!(automata.check_input(&mut "10x".to_string()),false);
+        assert_eq!(automata.check_input(&mut "10".to_string()),true);
+        assert_eq!(automata.check_input(&mut "01".to_string()),true);
+        assert_eq!(automata.check_input(&mut "01111111111110".to_string()),true);
+        assert_eq!(automata.check_input(&mut "00000000000001".to_string()),true);
+        assert_eq!(automata.check_input(&mut "010101010101010".to_string()),true);
+        /* NDA that recognizes strings of the form of λ+a(ab)*b+a*b*a */
+        let mut automata = FiniteAutomaton::new();
+        automata.add_n_states(6);
+        automata.make_initial(0);
+        automata.make_final(3);
+        automata.make_final(4);
+        automata.add_transition(0,1, "".to_string());
+        automata.add_transition(0,4, "".to_string());
+        automata.add_transition(1,2, "".to_string());
+        automata.add_transition(1,1, "a".to_string());
+        automata.add_transition(2,3, "a".to_string());
+        automata.add_transition(2,2, "b".to_string());
+        automata.add_transition(4,5, "a".to_string());
+        automata.add_transition(5,4, "b".to_string());
+        assert_eq!(automata.check_input(&mut "abbbbbbbbbb".to_string()),false);
+        assert_eq!(automata.check_input(&mut "b".to_string()),false);
+        assert_eq!(automata.check_input(&mut "aababababababa".to_string()),false);
+        assert_eq!(automata.check_input(&mut "a".to_string()),true);
+        assert_eq!(automata.check_input(&mut "".to_string()),true);
+        assert_eq!(automata.check_input(&mut "aababababababab".to_string()),true);
+        assert_eq!(automata.check_input(&mut "aaaaaabbbbbbbbba".to_string()),true);
+        assert_eq!(automata.check_input(&mut "abbbbbbbbbbba".to_string()),true);
     }
 }
