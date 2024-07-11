@@ -30,24 +30,7 @@ pub trait StateMachine {
     /* Functon to add a transition between two given states.
      * The transition goes from state1 to state2. It also checks
      * if a given id/state exists, if not, then it doesn't add it. */
-    fn add_transition(&mut self, state_id1: StateID, state_id2: StateID, mut input: Input) {
-        if input.is_empty() {
-            let deterministic_flag = self.get_deterministic_flag();
-            input.push_str("λ");
-            *deterministic_flag = true;
-        }
-        let mut deterministic_flag = false;
-        let states_by_id = self.get_states_by_id_mut_ref();
-        match states_by_id.get_mut(&state_id2) {
-            Some(_) => {
-                if let Some(state) = states_by_id.get_mut(&state_id1) {
-                    deterministic_flag = state.add_transition(state_id2, input);
-                }
-            },
-            None => (),
-        }
-        *self.get_deterministic_flag() = deterministic_flag;
-    }
+    fn add_transition(&mut self, state_id1: StateID, state_id2: StateID, input: Input);
     
     /* Modify the name of a state. */
     fn modify_name(&mut self, state_id: StateID, new_name: String) {

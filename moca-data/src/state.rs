@@ -10,12 +10,14 @@ pub type Input = String;
  * The state has a hashmap because it is going to be used
  * in different structs, so implementing this feature instead
  * of the outer structure gives more practicality.
- * The input_transitions variable is used to save all string transitions. */
+ * The input_transitions variable is used to save all string transitions.
+ * The label is used only in automata reductions or transformations like NDA -> DFA. */
 #[derive(PartialEq, Debug, Eq)]
 pub struct State {
     pub name: String,
     transitions_by_id: HashMap<StateID, HashSet<Input>>,
     input_transitions: HashSet<String>,
+    pub label: HashSet<StateID>,
     pub initial_flag: bool,
     pub final_flag: bool,
 }
@@ -26,6 +28,7 @@ impl State {
             name,
             transitions_by_id: HashMap::new(),
             input_transitions: HashSet::new(),
+            label: HashSet::new(),
             initial_flag: false,
             final_flag: false,
         }
