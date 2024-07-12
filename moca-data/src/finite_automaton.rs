@@ -103,69 +103,51 @@ impl FiniteAutomaton {
 
     /* Function to transform an NFA to a DFA using the powerset construction
      * algorithm. */
-    pub fn nfa_to_dfa(&mut self) //-> Self// 
-                                 {
+    // For now the implementation is very inefficient, I want to improve it in the
+    // future.
+    pub fn nfa_to_dfa(&mut self) -> Self {
         if self.deterministic {
             panic!("For now this doesn't do anything");
         }
-        let mut subsets_by_id: BiHashMap<u64, BTreeSet<u64>> = BiHashMap::new();
-        let mut subsets_to_visit: Vec<StateID> = Vec::new();
-        let mut subsets_and_transitions: HashMap<StateID,  Vec<(u64, &str)>> = HashMap::new();
-        match self.initial_state_id {
-            Some(id) => {
-                let mut initial_subset = self.lambda_closure(id, "");
-                initial_subset.insert(id);
-                subsets_by_id.insert(0, initial_subset);
-                subsets_to_visit.push(0);
-                while !subsets_to_visit.is_empty() {
-                            println!("SUbsets to visit: {:?}",subsets_to_visit);
-                    let current_id = match subsets_to_visit.pop() {
-                        Some(id) => id,
-                        None => panic!("The id was not found.")
-                    };
-                    println!("Current id is: {:?}", current_id);
-                    let mut index_aux = subsets_by_id.len() as u64;
-                    let mut vector_aux: Vec<(u64, &str)> = Vec::new();
-                    let mut subsets_to_add: Vec<BTreeSet<u64>> = Vec::new();
-                    if let Some(subset) = subsets_by_id.get_by_left(&current_id) {
-                        for string in self.string_transitions.iter() {
-                            let new_subset = self.apply_lambda_closure(subset, string);
-                            if new_subset.is_empty() {
-                                continue;
-                            }
-                            println!("New_subset is {:?}", new_subset);
-                            subsets_to_add.push(new_subset);
-                            println!("The vector is {:?}",subsets_to_add);
-                            subsets_to_visit.push(index_aux);
-                            vector_aux.push((index_aux, string));
-                            index_aux += 1;
-                            println!("SUbsets to visit: {:?}",subsets_to_visit);
-                        }
+        let mut sets_to_visit: Vec<BTreeSet<u64>> = Vec::new();
+        let mut visited_sets: HashSet<BTreeSet<u64>> = HashSet::new();
+        let mut transitions_by_subsets: HashMap<BTreeSet<u64>, Vec<(BTreeSet<u64>,&str)>> = HashMap::new();
+        let initial_id = match self.initial_state_id {
+            Some(id) => id,
+            None => panic!("There is not an initial state.")
+        };
+        let mut current_subset = self.lambda_closure(initial_id, "");
+        current_subset.insert(initial_id);
+        sets_to_visit.push(current_subset.clone());
+        transitions_by_subsets.insert(current_subset, Vec::new());
+        while !sets_to_visit.is_empty() {
+            let mut vector_transitions: Vec<(BTreeSet<u64>, &str)> = Vec::new();
+            let current_subset = match sets_to_visit.pop() {
+                Some(set) => {
+                    if let Some(vector) = transitions_by_subsets.get(&set) {
+                        if !vector.is_empty() { continue; }
                     }
-                    match subsets_and_transitions.get_mut(&(subsets_by_id.len() as u64)) {
-                        Some(vec_ref) => { *vec_ref = vector_aux; },
-                        None => { subsets_and_transitions.insert((subsets_by_id.len() as u64)-1, vector_aux); },
-                    }
-                    self.add_subsets(subsets_to_add, subsets_by_id.len() as u64, &mut subsets_by_id);
-                    
-                } 
-            } 
-            None => panic!("The automata doesn't have an initial state.")
-        }
-        println!("The bihashmap final is: {:?}", subsets_by_id);
-        println!("The hashmap is: {:?}\n", subsets_and_transitions); 
-    }
-
-    /* Auxiliar function to add a to the subsets_by_id bihashmap from a vector of subsets. */
-    fn add_subsets(&self, mut vector: Vec<BTreeSet<u64>>, bihashmap_len: u64, bihashmap: &mut BiHashMap<u64, BTreeSet<u64>>) {
-        let mut index_aux = 0;
-        for set in vector.into_iter() {
-            if bihashmap.contains_right(&set) {
-                continue;
+                    set
+                },
+                None => panic!("There is no subset, this should never occur"),
+            };
+            
+            for string in self.string_transitions.iter() {
+                let new_subset = self.apply_lambda_closure(&current_subset, string);
+                if new_subset.is_empty() || visited_sets.contains(&new_subset) {
+                    vector_transitions.push((new_subset, string));
+                    continue;
+                }
+                sets_to_visit.push(new_subset.clone());
+                transitions_by_subsets.insert(new_subset.clone(), Vec::new());
+                visited_sets.insert(new_subset.clone());
+                vector_transitions.push((new_subset, string));
             }
-            bihashmap.insert(bihashmap_len + index_aux, set);
-            index_aux += 1;
+            if let Some(vector) = transitions_by_subsets.get_mut(&current_subset) {
+                *vector = vector_transitions;
+            }
         }
+        self.transform_to_dfa(transitions_by_subsets)
     }
 
     /* Auxiliar function to create the next subset from a subset. */
@@ -205,11 +187,62 @@ impl FiniteAutomaton {
                     }
                 }
                     if valid_transitions == 0 && input_string.len() == 0 {
-                        closure_set.insert(state_id);
+                        closure_set.replace(state_id);
                 }
             },
             None => panic!("This should never occurr"),
         }
+    }
+
+    /* Auxiliar function that takes a hahsmap of btreesets of u64 mapped to 
+     * a vector of tuples (btreeset<u64>, &str) that represents the transitions
+     * given by the subset construction algorithm. */
+    fn transform_to_dfa(&self, subsets_and_transitions: HashMap<BTreeSet<u64>, Vec<(BTreeSet<u64>, &str)>>)
+        -> Self {
+            let mut states_by_id: HashMap<StateID, State> = HashMap::new();
+            let mut id_by_subsets: HashMap<BTreeSet<u64>, StateID> = HashMap::new();
+            let mut new_initial_id = 0;
+            let mut id = 0;
+            for (subset, _) in subsets_and_transitions.iter() {
+                let mut state = State::new(format!("q{}", id));
+                if let Some(initial_id) = self.initial_state_id {
+                    let mut initial_subset = self.lambda_closure(initial_id,"");
+                    initial_subset.insert(initial_id);
+                    if initial_subset == *subset {
+                        new_initial_id = id;
+                        state.initial_flag = true;
+                    }
+                }
+                for current_id in subset {
+                    if let Some(current_state) = self.states_by_id.get(current_id) {
+                        if current_state.final_flag == true {
+                            state.final_flag = true;
+                            break;
+                        }
+                    }
+                }
+                id_by_subsets.insert(subset.clone(), id);
+                state.label = subset.clone();
+                states_by_id.insert(id, state);
+                id += 1;
+            }
+            id = 0;
+            for (_, transitions) in subsets_and_transitions {
+                if let Some(state) = states_by_id.get_mut(&id) {
+                    for (set, string) in transitions {
+                        if let Some(id) = id_by_subsets.get(&set) {
+                            state.add_transition(*id, string.to_string());
+                        }
+                    }
+                }
+                id += 1;
+            }
+            FiniteAutomaton {
+                states_by_id: states_by_id,
+                string_transitions: self.string_transitions.clone(),
+                initial_state_id: Some(new_initial_id),
+                deterministic: true,
+            }
     }
 }
 

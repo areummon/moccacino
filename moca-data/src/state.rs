@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, BTreeSet};
 use std::collections::hash_map::Iter;
 
 /* Type to represent the unique id of a state. */
@@ -17,7 +17,7 @@ pub struct State {
     pub name: String,
     transitions_by_id: HashMap<StateID, HashSet<Input>>,
     input_transitions: HashSet<String>,
-    pub label: HashSet<StateID>,
+    pub label: BTreeSet<StateID>,
     pub initial_flag: bool,
     pub final_flag: bool,
 }
@@ -28,7 +28,7 @@ impl State {
             name,
             transitions_by_id: HashMap::new(),
             input_transitions: HashSet::new(),
-            label: HashSet::new(),
+            label: BTreeSet::new(),
             initial_flag: false,
             final_flag: false,
         }

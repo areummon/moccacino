@@ -17,10 +17,22 @@ fn main() {
     automata.add_transition(3,3, "a".to_string());
     automata.add_transition(2,4, "b".to_string());
     automata.add_transition(4,4, "b".to_string());
-    automata.nfa_to_dfa();
-    if automata.check_input(&mut "aaaaaaaaaaaaabbbbbbbbbbbbbbbbbba".to_string()) {
-        println!("La cadena fue aceptada !!");
-    } else {
-        println!("La cadena NO fue aceptada ㅠㅠ");
-    }
+    let new_automata = automata.nfa_to_dfa();
+    println!("Automata: {:?}\n\n",new_automata);
+
+    let mut automata = finite_automaton::FiniteAutomaton::new();
+    automata.add_n_states(4);
+    automata.make_initial(0);
+    automata.make_final(3);
+    automata.add_transition(0,0, "0".to_string());
+    automata.add_transition(0,0, "1".to_string());
+    automata.add_transition(0,1, "0".to_string());
+    automata.add_transition(1,2, "1".to_string());
+    automata.add_transition(2,0, "0".to_string());
+    automata.add_transition(2,3, "1".to_string());
+    automata.add_transition(3,2, "1".to_string());
+    automata.add_transition(3,3, "1".to_string());
+    automata.add_transition(3,3, "0".to_string());
+    let new_automata = automata.nfa_to_dfa();
+    println!("Automata: {:?}",new_automata);
 }
