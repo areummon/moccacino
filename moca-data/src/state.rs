@@ -11,7 +11,8 @@ pub type Input = String;
  * in different structs, so implementing this feature instead
  * of the outer structure gives more practicality.
  * The input_transitions variable is used to save all string transitions.
- * The label is used only in automata reductions or transformations like NDA -> DFA. */
+ * The label is used only in automata reductions or transformations like NDA -> DFA to
+ * store the subset of id's gotten by the subset construction algorithm.*/
 #[derive(PartialEq, Debug, Eq)]
 pub struct State {
     pub name: String,

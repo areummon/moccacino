@@ -1,6 +1,4 @@
 use std::collections::{HashMap, HashSet, BTreeSet};
-use bimap::hash::BiHashMap;
-use std::collections::hash_map::Iter;
 use crate::state::{StateID, Input, State};
 use crate::state_machine::StateMachine;
 
@@ -103,37 +101,41 @@ impl FiniteAutomaton {
 
     /* Function to transform an NFA to a DFA using the powerset construction
      * algorithm. */
-    // For now the implementation is very inefficient, I want to improve it in the
+    // For now the implementation is very inefficient (multiple clones), I plan to improve it in the
     // future.
+    // The implementation uses BTreeSet instead of HashSet because it already have an
+    // implementation of a hasher, so it can be used as a key in a hashmap, also it is a set of
+    // id's so there is not a significant advantage to use either.
     pub fn nfa_to_dfa(&mut self) -> Self {
         if self.deterministic {
-            panic!("For now this doesn't do anything");
+            panic!("For now this doesn't do anything, but it should return an Error()");
         }
-        let mut sets_to_visit: Vec<BTreeSet<u64>> = Vec::new();
-        let mut visited_sets: HashSet<BTreeSet<u64>> = HashSet::new();
-        let mut transitions_by_subsets: HashMap<BTreeSet<u64>, Vec<(BTreeSet<u64>,&str)>> = HashMap::new();
+        // This act as a stack to check every new subset gotten from the lambda closure function
+        let mut sets_to_visit: Vec<BTreeSet<StateID>> = Vec::new();
+        // This is used to not add visited sets to sets_to_visit vector
+        let mut visited_sets: HashSet<BTreeSet<StateID>> = HashSet::new();
+        // This is used to store all the subsets and their transitions in a table-like form, this
+        // is used to construct the resulting dfa automaton.
+        let mut transitions_by_subsets: HashMap<BTreeSet<StateID>, Vec<(BTreeSet<StateID>,&str)>> = HashMap::new();
         let initial_id = match self.initial_state_id {
             Some(id) => id,
             None => panic!("There is not an initial state.")
         };
         let mut current_subset = self.lambda_closure(initial_id, "");
-        current_subset.insert(initial_id);
+        current_subset.insert(initial_id); // This line is required in this implementation.
         sets_to_visit.push(current_subset.clone());
         transitions_by_subsets.insert(current_subset, Vec::new());
         while !sets_to_visit.is_empty() {
             let mut vector_transitions: Vec<(BTreeSet<u64>, &str)> = Vec::new();
             let current_subset = match sets_to_visit.pop() {
                 Some(set) => {
-                    if let Some(vector) = transitions_by_subsets.get(&set) {
-                        if !vector.is_empty() { continue; }
-                    }
                     set
                 },
                 None => panic!("There is no subset, this should never occur"),
             };
             
             for string in self.string_transitions.iter() {
-                let new_subset = self.apply_lambda_closure(&current_subset, string);
+                let new_subset = self.lambda_closure_subset(&current_subset, string);
                 if new_subset.is_empty() || visited_sets.contains(&new_subset) {
                     vector_transitions.push((new_subset, string));
                     continue;
@@ -143,6 +145,8 @@ impl FiniteAutomaton {
                 visited_sets.insert(new_subset.clone());
                 vector_transitions.push((new_subset, string));
             }
+            // It needs to do this because when adding an entry, It needs to add a subset and a
+            // vector.
             if let Some(vector) = transitions_by_subsets.get_mut(&current_subset) {
                 *vector = vector_transitions;
             }
@@ -150,8 +154,8 @@ impl FiniteAutomaton {
         self.transform_to_dfa(transitions_by_subsets)
     }
 
-    /* Auxiliar function to create the next subset from a subset. */
-    fn apply_lambda_closure(&self, subset: &BTreeSet<StateID>, input_string: &str) -> BTreeSet<StateID> {
+    /* λ-closure function given a subset as a parameter. */
+    fn lambda_closure_subset(&self, subset: &BTreeSet<StateID>, input_string: &str) -> BTreeSet<StateID> {
         let mut subset_result: BTreeSet<StateID> = BTreeSet::new();
         for id in subset {
             subset_result = subset_result.union(&self.lambda_closure(*id, input_string)).cloned().collect();
@@ -168,6 +172,8 @@ impl FiniteAutomaton {
 
 
     /* The auxiliar recursive function of the lambda closure function. */
+    // If the state_id is the initial id of the automaton, then it will not be added in this
+    // function, so it needs to be added outside the function. It also "consumes" the input.
     fn lambda_closure_aux(&self, state_id: StateID, input_string: &str, closure_set: &mut BTreeSet<StateID>) {
         match self.states_by_id.get(&state_id) {
             Some(state) => {
@@ -197,12 +203,14 @@ impl FiniteAutomaton {
     /* Auxiliar function that takes a hahsmap of btreesets of u64 mapped to 
      * a vector of tuples (btreeset<u64>, &str) that represents the transitions
      * given by the subset construction algorithm. */
-    fn transform_to_dfa(&self, subsets_and_transitions: HashMap<BTreeSet<u64>, Vec<(BTreeSet<u64>, &str)>>)
+    fn transform_to_dfa(&self, subsets_and_transitions: HashMap<BTreeSet<StateID>, Vec<(BTreeSet<StateID>, &str)>>)
         -> Self {
             let mut states_by_id: HashMap<StateID, State> = HashMap::new();
-            let mut id_by_subsets: HashMap<BTreeSet<u64>, StateID> = HashMap::new();
+            let mut id_by_subsets: HashMap<BTreeSet<StateID>, StateID> = HashMap::new();
             let mut new_initial_id = 0;
             let mut id = 0;
+            // It needs to be iterated two times because in the first iteration it might not know
+            // what is the id of a subset in a transition.
             for (subset, _) in subsets_and_transitions.iter() {
                 let mut state = State::new(format!("q{}", id));
                 if let Some(initial_id) = self.initial_state_id {
