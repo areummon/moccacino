@@ -8,11 +8,12 @@ use crate::state_machine::StateMachine;
  * algorithms and functions will not work.
  * The string_transitions field is used to store all
  * the string transitions the automata have. */
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FiniteAutomaton {
     states_by_id: HashMap<StateID, State>,
     string_transitions: HashSet<String>,
-    initial_state_id: Option<u64>,
+    initial_state_id: Option<StateID>,
+    final_states: HashSet<StateID>,
     deterministic: bool,
 }
 
@@ -22,8 +23,14 @@ impl FiniteAutomaton {
             states_by_id: HashMap::new(),
             string_transitions: HashSet::new(),
             initial_state_id: None,
+            final_states: HashSet::new(),
             deterministic: true,
         }
+    }
+
+    // Getter for the string transitions of the automata.
+    pub fn get_string_transitions(&self) -> &HashSet<String> {
+        &self.string_transitions
     }
 
     /* Function to check if a given input string is accepted by the automata,
@@ -34,6 +41,13 @@ impl FiniteAutomaton {
                 self.recursive_traversing(&initial_id, input)
             },
             None => todo!(), // implement an error or exception because there is not initial state.
+        }
+    }
+
+    // Function to add a label to a state given by it's id.
+    pub fn add_label(&mut self, state_id: StateID, label: BTreeSet<StateID>) {
+        if let Some(state) = self.states_by_id.get_mut(&state_id) {
+            state.label = label;
         }
     }
 
@@ -249,9 +263,76 @@ impl FiniteAutomaton {
                 states_by_id: states_by_id,
                 string_transitions: self.string_transitions.clone(),
                 initial_state_id: Some(new_initial_id),
+                final_states: HashSet::new(), //change this to the new implementation
                 deterministic: true,
             }
     }
+
+    // Function that minimizes a DFA using the _______ algorithm
+    pub fn minimize_dfa(&self)  -> Self  {
+        if !self.deterministic {
+            panic!("Cannon minimize a nfa");
+        }
+        let mut unreachable_states: Vec<StateID> = Vec::new();
+        if let Some(initial_id) = self.initial_state_id {
+            unreachable_states = self.unreachable_states(initial_id)
+        }
+        let mut minimized_automata = self.clone();
+        for id in unreachable_states {
+            minimized_automata.remove_state(id);
+        }
+        minimized_automata
+
+    }
+
+    // Function that returns the unreacheable states as ids.
+    // The complexity is O(n+m) where n is the number of states and m is the number of transitions
+    // of the automaton.
+    pub fn unreachable_states(&self, initial_id: StateID) -> Vec<StateID> {
+        let mut reachable_states: HashSet<StateID> = HashSet::new();
+        let mut new_states: HashSet<StateID> = HashSet::new();
+        reachable_states.insert(initial_id);
+        new_states.insert(initial_id);
+        while !new_states.is_empty() {
+            let mut temp = HashSet::new();
+            for state_id in new_states {
+                for string in self.string_transitions.iter() {
+                    match self.transition_function(state_id, &string) {
+                        Some(new_id) => { temp.insert(new_id); },
+                        None => (),
+                    }
+                }
+            }
+            new_states = temp.symmetric_difference(&reachable_states).cloned().collect();
+            if new_states.is_subset(&reachable_states) {
+                break;
+            }
+            reachable_states = reachable_states.union(&new_states).cloned().collect();
+        }
+        let mut unreachable_states = Vec::new();
+        for (id, _) in self.states_by_id.iter() {
+            if !reachable_states.contains(id) {
+                unreachable_states.push(*id);
+            }
+        }
+        unreachable_states
+    }
+
+    // Transitions function for the automaton only if it is deterministic.
+    pub fn transition_function(&self, state_id: StateID, string: &str) -> Option<StateID> {
+        if let Some(state) = self.states_by_id.get(&state_id) {
+            for (id, transitions) in state.iter_by_transition() {
+                for transition_string in transitions {
+                    if string == transition_string {
+                        return Some(*id);
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    // Hopcroft algorithm to minimize 
 }
 
 impl StateMachine for FiniteAutomaton {
@@ -259,16 +340,28 @@ impl StateMachine for FiniteAutomaton {
         &mut self.states_by_id
     }
     
+    fn get_states_by_id_ref(&self) -> &HashMap<StateID, State> {
+        &self.states_by_id
+    }
+    
     fn get_deterministic_flag(&mut self) -> &mut bool {
         &mut self.deterministic
     }
-
+    
+    fn get_final_states(&self) -> &HashSet<StateID> {
+        &self.final_states
+    }
+    
+    fn get_initial_state_id(&self) -> &Option<StateID> {
+        &self.initial_state_id
+    }
+    
     /* The implementation for finite automaton checks if the automaton
      * is deterministic or not. */
     fn add_transition(&mut self, state_id1: StateID, state_id2: StateID, mut input: Input) {
         if input.is_empty() {
             input.push_str("λ");
-            self.deterministic = true;
+            self.deterministic = false;
         }
         match self.states_by_id.get_mut(&state_id2) {
             Some(_) => {
@@ -303,4 +396,156 @@ impl StateMachine for FiniteAutomaton {
             self.initial_state_id = Some(state_id);
         }
     }
+
+    /* Function to make a state final. */
+    // It has to do it in the particular module because of the mutability of the structure fields.
+    fn make_final(&mut self, state_id: StateID) {
+        match self.states_by_id.get_mut(&state_id) {
+            Some(state) => {
+                state.final_flag = true;
+                self.final_states.insert(state_id);
+            }
+            None => panic!("The states does not exist."),
+        }
+    }
+}
+
+// Hopcroft's algorithm for minimizing dfas, it works by using the nerode congruence, and defining
+// partitions that are indistinguishable (for all input strings, δ(q,w) in any
+// q in a subset lead to an acception/rejection state). The first partitions are in rejecting
+// states and non-rejections states, and the algorithm finish when all subsets are equivalent (δ(q,w) 
+// in any q in a set leads to an accepting or rejection state). The implementation 
+// This algorithm have O(ns log n) where n is the number of states and s the size of the alphabet.
+pub fn hopcroft_algorithm(automata: &FiniteAutomaton) {
+    let mut debug = 0;
+    let non_rejecting_states = hashmap_set_symmetric_difference(automata.get_states_by_id_ref(),
+                                                                    automata.get_final_states());
+    let mut partition_p: HashSet<BTreeSet<StateID>> = HashSet::new();
+    let rejecting_states: BTreeSet<StateID> = automata.get_final_states().iter().cloned().collect();
+    partition_p.insert(rejecting_states);
+    partition_p.insert(non_rejecting_states);
+    let mut partition_w: Vec<BTreeSet<StateID>> = partition_p.iter().cloned().collect();
+    // Variable used to mark wich subsets had been already visited.
+    let mut visited_subsets: HashSet<BTreeSet<StateID>> = HashSet::new();
+    while !partition_w.is_empty() {
+        if debug == 4 {
+            break;
+        }
+        let set_a = match partition_w.pop() {
+            Some(set) => set,
+            None => break,
+        };
+        if visited_subsets.contains(&set_a) {
+            continue;
+        }
+        visited_subsets.insert(set_a.clone());
+        for string in automata.get_string_transitions() {
+            let set_x = transition_function_set(&automata, &set_a, string);
+            let mut partition_aux = partition_p.clone();
+            for set_y in partition_p.iter() {
+                let x_y_intersection: BTreeSet<StateID> = set_y.intersection(&set_x).cloned().collect();
+                let y_minus_x: BTreeSet<StateID> = set_y.symmetric_difference(&set_x).cloned().collect();
+                println!("----------------------------------");
+                println!("The set x is : {:?}", set_x);
+                println!("Current w set is {:?}", set_a);
+                //println!("The set y is : {:?}", set_y);
+                println!("The x,y intersection is: {:?}", x_y_intersection);
+                println!("The y / x  difference is: {:?}", y_minus_x);
+                println!("The partition p is: {:?}", partition_aux);
+                println!("----------------------------------");
+                if !x_y_intersection.is_empty() && !y_minus_x.is_empty() {
+                    partition_aux.remove(set_y);
+                    partition_aux.replace(x_y_intersection.clone());
+                    partition_aux.replace(y_minus_x.clone());
+                    if partition_w.contains(set_y) {
+                        partition_w.retain(|s| s != set_y);
+                        partition_w.push(x_y_intersection);
+                        partition_w.push(y_minus_x);
+                    }
+                    else {
+                        if x_y_intersection.len() <= y_minus_x.len() {
+                            partition_w.push(x_y_intersection);
+                        }
+                        else {
+                            partition_w.push(y_minus_x);
+                        }
+                    }
+                }
+            }
+            partition_p = partition_aux;
+        }
+        debug += 1;
+    }
+    println!("final partition {:?}", partition_p);
+    //transform_minimized_dfa(automata, partition_p);
+}
+
+// Auxiliar function that returns the symmetric difference between a hashmap of states by ids, and 
+// a hashset of ids.
+fn hashmap_set_symmetric_difference(map: &HashMap<StateID, State>, set: &HashSet<StateID>) -> BTreeSet<StateID> {
+    let mut difference_set = BTreeSet::new();
+    for (map_id, _) in map.iter() {
+        if !set.contains(map_id) {
+            difference_set.insert(*map_id);
+        }
+    }
+    difference_set
+}
+
+// Auxiliar function for the hopcroft algorithm, that takes an automata and a subset of that
+// automata as parameters, and returns state ids gotten by the transition function on the condition
+// that the state id returned by the transition funciton have to be in the set given by the
+// function.
+fn transition_function_set(automata: &FiniteAutomaton, set: &BTreeSet<StateID>, string: &str) -> BTreeSet<StateID> {
+    let mut new_set = BTreeSet::new();
+    for (id,_) in automata.get_states_by_id_ref() {
+        if let Some(new_id) = automata.transition_function(*id, string) {
+            if set.contains(&new_id) {
+                new_set.insert(*id);
+            }
+        }
+    }
+    new_set
+}
+
+// Auxiliar function to transform an equivalent partition of an automaton
+// to a deterministic automaton.
+fn transform_minimized_dfa(automata: &FiniteAutomaton, partition: HashSet<BTreeSet<StateID>>) {
+    let mut state_id_by_label: HashMap<BTreeSet<StateID>, StateID> = HashMap::new();
+    let mut index = 0;
+    let mut minimized_automata = FiniteAutomaton::new();
+    let og_final_states = automata.get_final_states();
+    for set in partition.into_iter() {
+        minimized_automata.add_state();
+        if let Some(initial_id) = automata.get_initial_state_id() {
+            if set.contains(initial_id) {
+                minimized_automata.make_initial(index);
+            }
+        }
+        for id in set.iter() {
+            if og_final_states.contains(id) {
+                minimized_automata.make_final(index);
+                break;
+            }
+        }
+        minimized_automata.add_label(index, set.clone());
+        state_id_by_label.insert(set, index);
+        index += 1;
+    }
+    for (set, id) in state_id_by_label.iter() {
+        for set_id in set.iter() {
+            for string in automata.get_string_transitions() {
+                if let Some(state_id) = automata.transition_function(*set_id, string) {
+                    for (minimized_set, minimized_id) in state_id_by_label.iter() {
+                        if minimized_set.contains(&state_id) {
+                            minimized_automata.add_transition(*id, *minimized_id, string.to_string());
+                            break;
+                        }
+                    }
+                }
+            }
+            break;
+        }
+    }
+    println!("{:?}", minimized_automata);
 }

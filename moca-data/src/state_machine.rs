@@ -1,4 +1,4 @@
-use std::collections::{HashMap};
+use std::collections::{HashMap, HashSet};
 use std::collections::hash_map::Iter;
 use crate::state::{StateID, Input, State};
 
@@ -8,9 +8,18 @@ pub trait StateMachine {
      * implementations of many functions of a state machine. */
     fn get_states_by_id_mut_ref(&mut self) -> &mut HashMap<StateID, State>;
 
+    /* Getter of a reference of the hashmap to define the 
+     * implementations of many functions of a state machine. */
+    fn get_states_by_id_ref(&self) -> &HashMap<StateID, State>;
+
     /* Getter of the deterministic flag. */
     fn get_deterministic_flag(&mut self) -> &mut bool;
 
+    /* Getter of the final states of the machine. */
+    fn get_final_states(&self) -> &HashSet<StateID>;
+
+    /* Getter of the initial state id. */
+    fn get_initial_state_id(&self) -> &Option<StateID>;
 
     /* The name is assigned automatically as well as the id. */
     fn add_state(&mut self) {
@@ -53,7 +62,7 @@ pub trait StateMachine {
      * from all the transitions with another state. */
     fn remove_state(&mut self, state_id: StateID) {
         let states_by_id = self.get_states_by_id_mut_ref();
-        if let Some(state) = states_by_id.get_mut(&state_id) {
+        if let Some(_) = states_by_id.get_mut(&state_id) {
             states_by_id.remove(&state_id);
             for (_, states) in states_by_id.iter_mut() {
                 states.remove_state(state_id);
@@ -76,12 +85,7 @@ pub trait StateMachine {
     fn make_initial(&mut self, state_id: StateID); 
 
     /* Function to make a state final. */
-    fn make_final(&mut self, state_id: StateID) {
-        let states_by_id = self.get_states_by_id_mut_ref();
-        if let Some(state) = states_by_id.get_mut(&state_id) {
-            state.final_flag = true;
-        }
-    }
+    fn make_final(&mut self, state_id: StateID); 
 
     /* Iterator for the states_by_id HashMap. */
     fn iter_by_state(&mut self) -> Iter<'_, StateID, State> {

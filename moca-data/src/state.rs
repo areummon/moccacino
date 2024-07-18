@@ -13,7 +13,7 @@ pub type Input = String;
  * The input_transitions variable is used to save all string transitions.
  * The label is used only in automata reductions or transformations like NDA -> DFA to
  * store the subset of id's gotten by the subset construction algorithm.*/
-#[derive(PartialEq, Debug, Eq)]
+#[derive(PartialEq, Debug, Eq, Clone)]
 pub struct State {
     pub name: String,
     transitions_by_id: HashMap<StateID, HashSet<Input>>,
@@ -41,9 +41,9 @@ impl State {
      * with the same input then the function returns true, and false 
      * otherwise. It checks in O(1) if a transition already exists. */
     pub fn add_transition(&mut self, state_id: StateID, input: Input) -> bool {
-        let mut deterministic_flag = false;
+        let mut deterministic_flag = true;
         if self.input_transitions.contains(&input) {
-            deterministic_flag = true;
+            deterministic_flag = false;
         }
         self.input_transitions.replace(input.clone());
         self.transitions_by_id.entry(state_id).or_insert(HashSet::new()).replace(input);
