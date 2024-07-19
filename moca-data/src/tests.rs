@@ -219,6 +219,7 @@ mod tests {
     }
     
     /* Tests for the finite_automaton (NFA) module. */
+    #[test]
     fn check_input_NFA_test() {
         /* NDA that recognizes strings that contains 01 or 10 */
         let mut automata = FiniteAutomaton::new();
@@ -244,7 +245,7 @@ mod tests {
         assert_eq!(automata.check_input(&mut "01111111111110".to_string()),true);
         assert_eq!(automata.check_input(&mut "00000000000001".to_string()),true);
         assert_eq!(automata.check_input(&mut "010101010101010".to_string()),true);
-        /* NDA that recognizes strings of the form of λ+a(ab)*b+a*b*a */
+        /* NDA that recognizes strings of the form of λ+a(ba)*b+a*b*a */
         let mut automata = FiniteAutomaton::new();
         automata.add_n_states(6);
         automata.make_initial(0);
@@ -263,8 +264,190 @@ mod tests {
         assert_eq!(automata.check_input(&mut "aababababababa".to_string()),false);
         assert_eq!(automata.check_input(&mut "a".to_string()),true);
         assert_eq!(automata.check_input(&mut "".to_string()),true);
-        assert_eq!(automata.check_input(&mut "aababababababab".to_string()),true);
+        assert_eq!(automata.check_input(&mut "abababababababab".to_string()),true);
         assert_eq!(automata.check_input(&mut "aaaaaabbbbbbbbba".to_string()),true);
         assert_eq!(automata.check_input(&mut "abbbbbbbbbbba".to_string()),true);
     }
+
+    #[test]
+    fn to_dfa_test() {
+        // The automata accepts any string of the form (a+ + b+)
+        let mut automata = FiniteAutomaton::new();
+        automata.add_n_states(5);
+        automata.make_initial(0);
+        automata.make_final(3);
+        automata.make_final(4);
+        automata.add_transition(0,1, "".to_string());
+        automata.add_transition(0,2, "".to_string());
+        automata.add_transition(1,3, "a".to_string());
+        automata.add_transition(3,3, "a".to_string());
+        automata.add_transition(2,4, "b".to_string());
+        automata.add_transition(4,4, "b".to_string());
+        assert_eq!(automata.is_deterministic(), false);
+        let deterministic_automata = automata.to_dfa();
+        assert_eq!(deterministic_automata.is_deterministic(), true);
+        // The language recognized by the dfa and the nfa must be the same.
+        assert_eq!(deterministic_automata.check_input(&mut "".to_string()),false);
+        assert_eq!(deterministic_automata.check_input(&mut "ab".to_string()),false);
+        assert_eq!(deterministic_automata.check_input(&mut "abaaaa".to_string()),false);
+        assert_eq!(deterministic_automata.check_input(&mut "a".to_string()),true);
+        assert_eq!(deterministic_automata.check_input(&mut "b".to_string()),true);
+        assert_eq!(deterministic_automata.check_input(&mut "bbbbbbbb".to_string()),true);
+        assert_eq!(deterministic_automata.check_input(&mut "aaaaaaaa".to_string()),true);
+        /* NDA that recognizes strings of the form of λ+a(ba)*b+a*b*a */
+        // This should work for the previous reason for the previous automata.
+        let mut automata = FiniteAutomaton::new();
+        automata.add_n_states(6);
+        automata.make_initial(0);
+        automata.make_final(3);
+        automata.make_final(4);
+        automata.add_transition(0,1, "".to_string());
+        automata.add_transition(0,4, "".to_string());
+        automata.add_transition(1,2, "".to_string());
+        automata.add_transition(1,1, "a".to_string());
+        automata.add_transition(2,3, "a".to_string());
+        automata.add_transition(2,2, "b".to_string());
+        automata.add_transition(4,5, "a".to_string());
+        automata.add_transition(5,4, "b".to_string());
+        let deterministic_automata = automata.to_dfa();
+        assert_eq!(deterministic_automata.check_input(&mut "abbbbbbbbbb".to_string()),false);
+        assert_eq!(deterministic_automata.check_input(&mut "b".to_string()),false);
+        assert_eq!(deterministic_automata.check_input(&mut "aababababababa".to_string()),false);
+        assert_eq!(deterministic_automata.check_input(&mut "a".to_string()),true);
+        assert_eq!(deterministic_automata.check_input(&mut "".to_string()),true);
+        assert_eq!(deterministic_automata.check_input(&mut "abababababababab".to_string()),true);
+        assert_eq!(deterministic_automata.check_input(&mut "aaaaaabbbbbbbbba".to_string()),true);
+        assert_eq!(deterministic_automata.check_input(&mut "abbbbbbbbbbba".to_string()),true);
+        /* NDA that recognizes strings that contains 01 or 10 */
+        let mut automata = FiniteAutomaton::new();
+        automata.add_n_states(4);
+        automata.make_initial(0);
+        automata.make_final(3);
+        automata.add_transition(0,1, "0".to_string());
+        automata.add_transition(0,2, "1".to_string());
+        automata.add_transition(1,1, "0".to_string());
+        automata.add_transition(1,2, "1".to_string());
+        automata.add_transition(1,3, "1".to_string());
+        automata.add_transition(2,2, "1".to_string());
+        automata.add_transition(2,1, "0".to_string());
+        automata.add_transition(2,3, "0".to_string());
+        automata.add_transition(3,3, "0".to_string());
+        automata.add_transition(3,3, "1".to_string());
+        let deterministic_automata = automata.to_dfa();
+        assert_eq!(deterministic_automata.check_input(&mut "".to_string()),false);
+        assert_eq!(deterministic_automata.check_input(&mut "0000000000".to_string()),false);
+        assert_eq!(deterministic_automata.check_input(&mut "111111111".to_string()),false);
+        assert_eq!(deterministic_automata.check_input(&mut "10x".to_string()),false);
+        assert_eq!(deterministic_automata.check_input(&mut "10".to_string()),true);
+        assert_eq!(deterministic_automata.check_input(&mut "01".to_string()),true);
+        assert_eq!(deterministic_automata.check_input(&mut "01111111111110".to_string()),true);
+        assert_eq!(deterministic_automata.check_input(&mut "00000000000001".to_string()),true);
+        assert_eq!(deterministic_automata.check_input(&mut "010101010101010".to_string()),true);
+    }
+
+    #[test]
+    fn minimize_test() {
+        // This automata is used as an example in https://en.wikipedia.org/wiki/DFA_minimization
+        let mut bloated_automata = FiniteAutomaton::new();
+        bloated_automata.add_n_states(6);
+        bloated_automata.make_initial(0);
+        bloated_automata.make_final(2);
+        bloated_automata.make_final(3);
+        bloated_automata.make_final(4);
+        bloated_automata.add_transition(0,1, "0".to_string());
+        bloated_automata.add_transition(0,2, "1".to_string());
+        bloated_automata.add_transition(1,0, "0".to_string());
+        bloated_automata.add_transition(1,3, "1".to_string());
+        bloated_automata.add_transition(3,4, "0".to_string());
+        bloated_automata.add_transition(3,5, "1".to_string());
+        bloated_automata.add_transition(2,5, "1".to_string());
+        bloated_automata.add_transition(2,4, "0".to_string());
+        bloated_automata.add_transition(4,4, "0".to_string());
+        bloated_automata.add_transition(4,5, "1".to_string());
+        bloated_automata.add_transition(5,5, "0".to_string());
+        bloated_automata.add_transition(5,5, "1".to_string());
+        let debloated_automata = bloated_automata.minimize();
+        let mut states_by_id = debloated_automata.get_states_by_id_ref();
+        assert_eq!(states_by_id.len(), 3);
+        if let Some(initial_state_id) = debloated_automata.get_initial_state_id() {
+            if let Some(state) = states_by_id.get(initial_state_id) {
+                assert_eq!(state.label, [0,1].into_iter().collect());
+            }
+        }
+        for state_id in debloated_automata.get_final_states() {
+            if let Some(state) = states_by_id.get(state_id) {
+                assert_eq!(state.label, [2,3,4].into_iter().collect());
+            }
+        }
+        assert_eq!(debloated_automata.check_input(&mut "0000000000000".to_string()),false);
+        assert_eq!(debloated_automata.check_input(&mut "1a0101010".to_string()),false);
+        assert_eq!(debloated_automata.check_input(&mut "a".to_string()),false);
+        assert_eq!(debloated_automata.check_input(&mut "11".to_string()),false);
+        assert_eq!(debloated_automata.check_input(&mut "00000000000001".to_string()),true);
+        assert_eq!(debloated_automata.check_input(&mut "1".to_string()),true);
+        assert_eq!(debloated_automata.check_input(&mut "00001".to_string()),true);
+        assert_eq!(debloated_automata.check_input(&mut "100000000000000000000000".to_string()),true);
+        // This automata is used as an example in https://www.javatpoint.com/minimization-of-dfa
+        // The example in the webpage has a useless state q1, therefore only 2 states are needed.
+        let mut bloated_automata = FiniteAutomaton::new();
+        bloated_automata.add_n_states(6);
+        bloated_automata.make_initial(0);
+        bloated_automata.make_final(3);
+        bloated_automata.make_final(5);
+        bloated_automata.add_transition(0,1, "0".to_string());
+        bloated_automata.add_transition(0,3, "1".to_string());
+        bloated_automata.add_transition(1,0, "0".to_string());
+        bloated_automata.add_transition(1,3, "1".to_string());
+        bloated_automata.add_transition(2,1, "0".to_string());
+        bloated_automata.add_transition(2,4, "1".to_string());
+        bloated_automata.add_transition(4,3, "1".to_string());
+        bloated_automata.add_transition(4,3, "0".to_string());
+        bloated_automata.add_transition(3,5, "0".to_string());
+        bloated_automata.add_transition(3,5, "1".to_string());
+        bloated_automata.add_transition(5,5, "1".to_string());
+        bloated_automata.add_transition(5,5, "0".to_string());
+        let debloated_automata = bloated_automata.minimize();
+        assert_eq!(debloated_automata.get_states_by_id_ref().len(), 2);
+        assert_eq!(debloated_automata.check_input(&mut "".to_string()),false);
+        assert_eq!(debloated_automata.check_input(&mut "0".to_string()),false);
+        assert_eq!(debloated_automata.check_input(&mut "000000000".to_string()),false);
+        assert_eq!(debloated_automata.check_input(&mut "1".to_string()),true);
+        assert_eq!(debloated_automata.check_input(&mut "01010101".to_string()),true);
+        // This automata is used as an example in https://www.gatevidyalay.com/minimization-of-dfa-minimize-dfa-example/
+        // problem 01
+        let mut bloated_automata = FiniteAutomaton::new();
+        bloated_automata.add_n_states(5);
+        bloated_automata.make_initial(0);
+        bloated_automata.make_final(4);
+        bloated_automata.add_transition(0,2, "b".to_string());
+        bloated_automata.add_transition(0,1, "a".to_string());
+        bloated_automata.add_transition(1,1, "a".to_string());
+        bloated_automata.add_transition(1,3, "b".to_string());
+        bloated_automata.add_transition(2,2, "b".to_string());
+        bloated_automata.add_transition(2,1, "a".to_string());
+        bloated_automata.add_transition(3,4, "b".to_string());
+        bloated_automata.add_transition(3,1, "a".to_string());
+        bloated_automata.add_transition(4,2, "b".to_string());
+        bloated_automata.add_transition(4,1, "a".to_string());
+        let debloated_automata = bloated_automata.minimize();
+        let mut states_by_id = debloated_automata.get_states_by_id_ref();
+        assert_eq!(states_by_id.len(), 4);
+        if let Some(initial_state_id) = debloated_automata.get_initial_state_id() {
+            if let Some(state) = states_by_id.get(initial_state_id) {
+                assert_eq!(state.label, [0,2].into_iter().collect());
+            }
+        }
+        for state_id in debloated_automata.get_final_states() {
+            if let Some(state) = states_by_id.get(state_id) {
+                assert_eq!(state.label, [4].into_iter().collect());
+            }
+        }
+        assert_eq!(debloated_automata.check_input(&mut "ab".to_string()),false);
+        assert_eq!(debloated_automata.check_input(&mut "abbaaaaa".to_string()),false);
+        assert_eq!(debloated_automata.check_input(&mut "abaaaaaa".to_string()),false);
+        assert_eq!(debloated_automata.check_input(&mut "abb".to_string()),true);
+        assert_eq!(debloated_automata.check_input(&mut "abbabb".to_string()),true);
+        assert_eq!(debloated_automata.check_input(&mut "abbbbaabb".to_string()),true);
+    }
+
 }

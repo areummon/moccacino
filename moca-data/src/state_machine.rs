@@ -13,7 +13,7 @@ pub trait StateMachine {
     fn get_states_by_id_ref(&self) -> &HashMap<StateID, State>;
 
     /* Getter of the deterministic flag. */
-    fn get_deterministic_flag(&mut self) -> &mut bool;
+    fn is_deterministic(&self) -> bool;
 
     /* Getter of the final states of the machine. */
     fn get_final_states(&self) -> &HashSet<StateID>;

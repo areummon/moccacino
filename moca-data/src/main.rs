@@ -6,85 +6,6 @@ mod state_machine;
 use crate::state_machine::StateMachine;
 
 fn main() {
-    /*let mut automata = finite_automaton::FiniteAutomaton::new();
-    automata.add_n_states(5);
-    automata.make_initial(0);
-    automata.make_final(3);
-    automata.make_final(4);
-    automata.add_transition(0,1, "".to_string());
-    automata.add_transition(0,2, "".to_string());
-    automata.add_transition(1,3, "a".to_string());
-    automata.add_transition(3,3, "a".to_string());
-    automata.add_transition(2,4, "b".to_string());
-    automata.add_transition(4,4, "b".to_string());
-    let new_automata = automata.nfa_to_dfa();
-    println!("Automata: {:?}\n\n",new_automata);
-
-    let mut automata = finite_automaton::FiniteAutomaton::new();
-    automata.add_n_states(4);
-    automata.make_initial(0);
-    automata.make_final(3);
-    automata.add_transition(0,0, "0".to_string());
-    automata.add_transition(0,0, "1".to_string());
-    automata.add_transition(0,1, "0".to_string());
-    automata.add_transition(1,2, "1".to_string());
-    automata.add_transition(2,0, "0".to_string());
-    automata.add_transition(2,3, "1".to_string());
-    automata.add_transition(3,2, "1".to_string());
-    automata.add_transition(3,3, "1".to_string());
-    automata.add_transition(3,3, "0".to_string());
-    let new_automata = automata.nfa_to_dfa();
-    println!("Automata: {:?}",new_automata); 
-    let mut automata = finite_automaton::FiniteAutomaton::new();
-    automata.add_n_states(4);
-    automata.make_initial(0);
-    automata.add_transition(0,0, "b".to_string());
-    automata.add_transition(0,1, "a".to_string());
-    automata.add_transition(1,0, "b".to_string());
-    automata.add_transition(1,2, "a".to_string());
-    automata.add_transition(2,0, "a".to_string());
-    automata.add_transition(2,1, "b".to_string());
-    automata.add_transition(3,1, "b".to_string());
-    println!("{:?}", automata.unreachable_states(0));  */
-    /*let mut bloated_automata = finite_automaton::FiniteAutomaton::new();
-    bloated_automata.add_n_states(6);
-    bloated_automata.make_initial(0);
-    bloated_automata.make_final(2);
-    bloated_automata.make_final(3);
-    bloated_automata.make_final(4);
-    bloated_automata.add_transition(0,1, "0".to_string());
-    bloated_automata.add_transition(0,2, "1".to_string());
-    bloated_automata.add_transition(1,0, "0".to_string());
-    bloated_automata.add_transition(1,3, "1".to_string());
-    bloated_automata.add_transition(3,4, "0".to_string());
-    bloated_automata.add_transition(3,5, "1".to_string());
-    bloated_automata.add_transition(2,5, "1".to_string());
-    bloated_automata.add_transition(2,4, "0".to_string());
-    bloated_automata.add_transition(4,4, "0".to_string());
-    bloated_automata.add_transition(4,5, "1".to_string());
-    bloated_automata.add_transition(5,5, "0".to_string());
-    bloated_automata.add_transition(5,5, "1".to_string());
-    let bloated_automata = bloated_automata.minimize_dfa();
-    finite_automaton::hopcroft_algorithm(&bloated_automata);  
-    let mut b2_automata = finite_automaton::FiniteAutomaton::new();
-    b2_automata.add_n_states(6);
-    b2_automata.make_initial(0);
-    b2_automata.make_final(3);
-    b2_automata.make_final(5);
-    b2_automata.add_transition(0,1, "0".to_string());
-    b2_automata.add_transition(0,3, "1".to_string());
-    b2_automata.add_transition(1,0, "0".to_string());
-    b2_automata.add_transition(1,3, "1".to_string());
-    b2_automata.add_transition(2,1, "0".to_string());
-    b2_automata.add_transition(2,4, "1".to_string());
-    b2_automata.add_transition(4,3, "1".to_string());
-    b2_automata.add_transition(4,3, "0".to_string());
-    b2_automata.add_transition(3,5, "0".to_string());
-    b2_automata.add_transition(3,5, "1".to_string());
-    b2_automata.add_transition(5,5, "1".to_string());
-    b2_automata.add_transition(5,5, "0".to_string());
-    let b2_automata = b2_automata.minimize_dfa();
-    finite_automaton::hopcroft_algorithm(&b2_automata); */ 
     let mut b3_automata = finite_automaton::FiniteAutomaton::new();
     b3_automata.add_n_states(5);
     b3_automata.make_initial(0);
@@ -99,6 +20,12 @@ fn main() {
     b3_automata.add_transition(3,1, "a".to_string());
     b3_automata.add_transition(4,2, "b".to_string());
     b3_automata.add_transition(4,1, "a".to_string());
-    let b3_automata = b3_automata.minimize_dfa();
+    let b3_automata = b3_automata.minimize();
     finite_automaton::hopcroft_algorithm(&b3_automata); 
 }
+
+/*println!("id \t label \t\t transitions"); to_string of an automata to debug more easily
+        for (id, state) in deterministic_automata.get_states_by_id_ref() {
+            println!("{} \t {:?} \t\t {:?}", id, state.label, state.iter_by_transition());
+        } 
+        println!("initial state {:?} and final states {:?}", deterministic_automata.get_initial_state_id(), deterministic_automata.get_final_states()); */
