@@ -30,11 +30,10 @@ pub trait StateMachine {
     }
 
     /* Another adding method that asigns a state given a label. */
-    fn add_state_with_label(&mut self, label: &str) {
+    fn add_state_with_id_label(&mut self, id: u64, label: &str) {
         let states_by_id = self.get_states_by_id_mut_ref();
-        let states_by_id_len = states_by_id.len();
         let state_name = label;
-        states_by_id.insert(states_by_id_len as u64, State::new(state_name.to_string()));
+        states_by_id.insert(id, State::new(state_name.to_string()));
     }
 
     /* Convenient function to add n states. */
