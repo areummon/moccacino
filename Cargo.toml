@@ -3,4 +3,5 @@
 members = [
     "mocaccino",
     "moca-data",
+    "moca-gui",
 ]
