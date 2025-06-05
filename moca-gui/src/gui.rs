@@ -1,4 +1,5 @@
 use iced::keyboard;
+use iced::widget::pane_grid::state;
 use iced::widget::{button, container, horizontal_space, hover, row, text_input, text, column, stack};
 use iced::{Element, Alignment, Point, Event, Subscription, Task, Length};
 use std::collections::HashMap;
@@ -14,7 +15,7 @@ pub enum Message {
     KeyPressed(keyboard::Key),
     KeyReleased(keyboard::Key),
     Clear,
-    SyncToFiniteAutomata,
+    SyncToFiniteAutomata, // Explicit message to force a sync
     LoadFromFiniteAutomata,
     EditTextChanged(String),
     FinishEditing,
@@ -29,6 +30,8 @@ pub enum Message {
     SubmitCheckInput,
     CancelCheckInput,
     CloseCheckResultPopup,
+    DeleteState(usize),
+    DeleteTransition(usize),
 }
 
 #[derive(Default)]
@@ -49,6 +52,7 @@ pub struct App {
     check_input_text: String,
     check_result_popup_open: bool,
     check_result: Option<bool>,
+    deletion_mode: bool, 
 }
 
 impl App {
@@ -69,31 +73,36 @@ impl App {
     }
 
     pub fn update(&mut self, message: Message) {
+        // Flag to determine if sync_gui_to_finite_automata should be called
+        let mut should_sync_automata = false; 
+
         match message {
             Message::Canvas(canvas_msg) => {
                 match canvas_msg {
                     state_machine::CanvasMessage::AddState(mut state) => {
-                        // Assign a unique ID to the state
-                        let id = self.state_machine.get_next_id();
-                        state.id = id;
+                        // Assign the new state a unique ID and increment the counter
+                        let assigned_id = self.state_machine.next_id;
+                        state.id = assigned_id; 
                         
-                        // Add to states vector and update the ID-to-index mapping
                         let index = self.states.len();
                         self.states.push(state);
-                        self.state_id_to_index.insert(id, index);
+                        self.state_id_to_index.insert(assigned_id, index);
                         
+                        self.state_machine.next_id += 1; // Increment for the next state
                         self.state_machine.request_redraw();
+                        should_sync_automata = true; // State added, so sync is required
                     }
                     state_machine::CanvasMessage::AddTransition(transition) => {
                         self.transitions.push(transition);
                         self.state_machine.request_redraw();
+                        should_sync_automata = true; // Transition added, so sync is required
                     }
                     state_machine::CanvasMessage::MoveState { state_id, new_position } => {
+                        // Update the position of the state and its connected transitions
                         if let Some(&index) = self.state_id_to_index.get(&state_id) {
                             if let Some(state) = self.states.get_mut(index) {
                                 state.position = new_position;
                                 
-                                // Update transition points
                                 for transition in &mut self.transitions {
                                     if transition.from_state_id == state_id {
                                         transition.from_point = new_position;
@@ -104,17 +113,27 @@ impl App {
                                 }
                                 
                                 self.state_machine.request_redraw();
+                                // Moving a state changes its visual position but not its logical definition (ID, label, connections)
+                                // within the FiniteAutomata, thus no sync is strictly needed unless FiniteAutomata tracked positions.
                             }
                         }
                     }
                     state_machine::CanvasMessage::StateClicked(state_id) => {
-                        if self.state_machine.is_shift_pressed() {
+                        if self.deletion_mode {
+                            // Deletion is handled by calling DeleteState, which will set should_sync_automata
+                            self.update(Message::DeleteState(state_id));
+                        } else if self.state_machine.is_shift_pressed() {
+                            // Toggling final state modifies the state machine structure
                             self.toggle_final_state(state_id);
+                            should_sync_automata = true; 
                         } else if self.state_machine.is_alt_pressed() {
+                            // Setting initial state modifies the state machine structure
                             self.set_initial_state(state_id);
+                            should_sync_automata = true; 
                         }
                     }
                     state_machine::CanvasMessage::StateDoubleClicked(state_id) => {
+                        // Prepares for editing, but doesn't modify the state machine yet
                         if let Some(&index) = self.state_id_to_index.get(&state_id) {
                             if let Some(state) = self.states.get(index) {
                                 self.editing_state = Some(state_id);
@@ -124,37 +143,50 @@ impl App {
                         }
                     }
                     state_machine::CanvasMessage::TransitionDoubleClicked(transition_index) => {
+                        // Prepares for editing, but doesn't modify the state machine yet
                         if let Some(transition) = self.transitions.get(transition_index) {
                             self.editing_transition = Some(transition_index);
                             self.edit_text = transition.label.to_string();
                             self.editing_state = None;
                         }
                     }
+                    state_machine::CanvasMessage::TransitionClicked(transition_index) => {
+                        if self.deletion_mode {
+                            // Deletion is handled by calling DeleteTransition, which will set should_sync_automata
+                            self.update(Message::DeleteTransition(transition_index));
+                        }
+                    }
                 }
-                // Close menus when interacting with canvas
+                // Close operations menu when interacting with the canvas
                 self.operations_menu_open = false;
             }
             Message::EditTextChanged(text) => {
+                // Updates the text input buffer, but doesn't modify the state machine yet
                 self.edit_text = text;
             }
             Message::FinishEditing => {
+                // Applies the edited label to either a state or a transition
                 if let Some(state_id) = self.editing_state {
                     if let Some(&index) = self.state_id_to_index.get(&state_id) {
                         if let Some(state) = self.states.get_mut(index) {
                             state.label = Box::leak(self.edit_text.clone().into_boxed_str());
+                            should_sync_automata = true; // State label changed, so sync is required
                         }
                     }
                 } else if let Some(transition_index) = self.editing_transition {
                     if let Some(transition) = self.transitions.get_mut(transition_index) {
                         transition.label = Box::leak(self.edit_text.clone().into_boxed_str());
+                        should_sync_automata = true; // Transition label changed, so sync is required
                     }
                 }
+                // Reset editing state
                 self.editing_state = None;
                 self.editing_transition = None;
                 self.edit_text.clear();
                 self.state_machine.request_redraw();
             }
             Message::CancelEditing => {
+                // Resets editing state without modifying the state machine
                 self.editing_state = None;
                 self.editing_transition = None;
                 self.edit_text.clear();
@@ -170,12 +202,23 @@ impl App {
                     keyboard::Key::Named(keyboard::key::Named::Alt) => {
                         self.state_machine.set_alt_pressed(true);
                     }
+                    keyboard::Key::Named(keyboard::key::Named::Tab) => {
+                        // Toggle deletion mode
+                        if self.editing_state.is_none() && self.editing_transition.is_none() && 
+                           !self.check_input_dialog_open {
+                           self.deletion_mode = true;
+                           self.state_machine.set_deletion_mode(true);
+                           self.state_machine.request_redraw();
+                        }
+                    }
                     keyboard::Key::Named(keyboard::key::Named::Enter) => {
+                        // Finish editing if an edit dialog is open
                         if self.editing_state.is_some() || self.editing_transition.is_some() {
                             self.update(Message::FinishEditing);
                         }
                     }
                     keyboard::Key::Named(keyboard::key::Named::Escape) => {
+                        // Cancel editing or close menus
                         if self.editing_state.is_some() || self.editing_transition.is_some() {
                             self.update(Message::CancelEditing);
                         } else {
@@ -196,12 +239,19 @@ impl App {
                     keyboard::Key::Named(keyboard::key::Named::Alt) => {
                         self.state_machine.set_alt_pressed(false);
                     }
+                    keyboard::Key::Named(keyboard::key::Named::Tab) => {
+                        // Exit deletion mode
+                        self.deletion_mode = false;
+                        self.state_machine.set_deletion_mode(false); 
+                        self.state_machine.request_redraw();
+                    }
                     _ => {}
                 }
             }
             Message::Clear => {
+                // Clear all state machine data
                 self.state_machine = state_machine::State::default();
-                self.state_machine.reset_id_counter();
+                self.state_machine.reset_id_counter(); 
                 self.transitions.clear();
                 self.states.clear();
                 self.state_id_to_index.clear();
@@ -212,12 +262,18 @@ impl App {
                 self.check_input_text.clear();
                 self.check_result_popup_open = false;
                 self.check_result = None;
+                self.deletion_mode = false;
+                self.state_machine.set_deletion_mode(false);
+                should_sync_automata = true; // All cleared, so sync is required
             }
             Message::SyncToFiniteAutomata => {
-                self.sync_gui_to_finite_automata();
+                // Explicitly requested a sync
+                should_sync_automata = true;
             }
             Message::LoadFromFiniteAutomata => {
+                // Loading changes the GUI's representation of the FA, so sync the internal machine
                 self.load_finite_automata_to_gui();
+                should_sync_automata = true; 
             }
             Message::ToggleOperationsMenu => {
                 self.operations_menu_open = !self.operations_menu_open;
@@ -252,19 +308,36 @@ impl App {
                 self.check_result = None;
             }
             Message::DfaToNfa => {
-                // TODO: Implement DFA to NFA conversion
                 println!("DFA to NFA clicked");
                 self.operations_menu_open = false;
+                // Assuming DFA to NFA conversion modifies the internal machine structure
+                should_sync_automata = true;
             }
             Message::Minimize => {
-                // TODO: Implement minimize functionality
                 println!("Minimize clicked");
                 self.operations_menu_open = false;
+                // Assuming minimization modifies the internal machine structure
+                should_sync_automata = true;
             }
-
+            Message::DeleteState(state_id) => {
+                self.delete_state(state_id); // Deletes state, associated transitions, updates initial/final
+                self.state_machine.request_redraw();
+                should_sync_automata = true; // State deleted, so sync is required
+            }
+            Message::DeleteTransition(transition_index) => {
+                self.delete_transition(transition_index); // Deletes a transition
+                self.state_machine.request_redraw();
+                should_sync_automata = true; // Transition deleted, so sync is required
+            }
         }
-        // I will move this function call
-        self.sync_gui_to_finite_automata();
+
+        // Only synchronize the GUI to the finite automata if changes occurred
+        if should_sync_automata {
+            self.sync_gui_to_finite_automata();
+            println!("-----------------------------------------\n");
+            println!("{:?}", self.machine);
+            println!("-----------------------------------------\n");
+        }
     }
 
     fn set_initial_state(&mut self, state_id: usize) {
@@ -289,20 +362,16 @@ impl App {
         self.machine.clear();
         // Create a map from state ID to state label for easy lookup
         let mut state_map: HashMap<usize, String> = HashMap::new();
-        let mut states_list = Vec::new();
-        
         for state_node in &self.states {
             let state_label = state_node.label.to_string();
             state_map.insert(state_node.id, state_label.clone());
-            states_list.push(state_label);
+            self.machine.add_state_with_id_label(state_node.id as u64, state_node.label);
         }
         
         for state_node in &self.states {
             let is_initial = self.initial_state == Some(state_node.id);
             let is_final = self.final_states.contains(&state_node.id);
             let id = state_node.id as u64;
-            self.machine.add_state();
-            self.machine.modify_name(id, state_node.label.to_string());
             if is_final {
                 self.machine.make_final(id);
             }
@@ -321,13 +390,47 @@ impl App {
         }
     }
 
+    fn delete_state(&mut self, state_id: usize) {
+        // Remove the state from the vector
+        self.states.retain(|s| s.id != state_id);
+        
+        // Remove transitions connected to the deleted state
+        self.transitions.retain(|transition| {
+            transition.from_state_id != state_id && transition.to_state_id != state_id
+        });
+        
+        // Update initial and final states if the deleted state was one of them
+        if self.initial_state == Some(state_id) {
+            self.initial_state = None;
+        }
+        
+        self.final_states.remove(&state_id);
+
+        // Rebuild the state_id_to_index map as indices may have shifted
+        self.state_id_to_index.clear();
+        for (index, state) in self.states.iter().enumerate() {
+            self.state_id_to_index.insert(state.id, index);
+        }
+        // self.machine.remove_state(state_id as u64); // This line is commented out as per previous versions
+    }
+
+    fn delete_transition(&mut self, transition_index: usize) {
+        if transition_index < self.transitions.len() {
+            let transition_to_remove = self.transitions.remove(transition_index);
+            // self.machine.remove_transition(transition_to_remove.from_state_id as u64, transition_to_remove.to_state_id as u64, transition_to_remove.label); // This line is commented out as per previous versions
+        }
+    }
+
+    fn is_deletion_mode(&self) -> bool {
+        self.deletion_mode
+    }
+
     fn load_finite_automata_to_gui(&mut self) {
         self.states.clear();
         self.transitions.clear();
         self.state_id_to_index.clear();
         self.initial_state = None;
         self.final_states.clear();
-        self.state_machine.reset_id_counter();
         
         // Convert FiniteAutomata to GUI representation
         let mut states_from_machine: Vec<_> = self.machine.get_states_by_id_ref().into_iter().collect();
@@ -340,7 +443,8 @@ impl App {
                 100.0 + ((**idx as f32 * 150.0) / 600.0).floor() * 100.0,
             );
             
-            let id = self.state_machine.get_next_id();
+            // Assign the ID directly from the loaded machine's state ID
+            let id = **idx as usize; // Use the actual ID from the loaded automaton
             let state_node = state_machine::StateNode::new(
                 id,
                 position,
@@ -353,6 +457,10 @@ impl App {
             self.state_id_to_index.insert(id, index);
         }
         
+        // Set next_id to be greater than any loaded ID, ensuring uniqueness for new states
+        let max_id_after_load = self.states.iter().map(|s| s.id).max().unwrap_or(0);
+        self.state_machine.next_id = max_id_after_load + 1;
+
         // Convert transitions
         for (state_id, state) in states_from_machine {
             for (transition_id, input) in state.iter_by_transition() {
@@ -827,3 +935,4 @@ impl App {
         final_content
     }
 }
+

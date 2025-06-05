@@ -33,6 +33,7 @@ pub enum CanvasMessage {
     StateClicked(usize),
     StateDoubleClicked(usize),
     TransitionDoubleClicked(usize),
+    TransitionClicked(usize),
 }
 
 pub struct State {
@@ -40,7 +41,8 @@ pub struct State {
     ctrl_pressed: bool,
     shift_pressed: bool,
     alt_pressed: bool,
-    next_id: usize,
+    deletion_mode: bool,
+    pub next_id: usize, // Make next_id public for external modification
 }
 
 impl Default for State {
@@ -50,6 +52,7 @@ impl Default for State {
             ctrl_pressed: false,
             shift_pressed: false,
             alt_pressed: false,
+            deletion_mode: false,
             next_id: 0,
         }
     }
@@ -103,10 +106,19 @@ impl State {
         self.alt_pressed
     }
 
-    pub fn get_next_id(&mut self) -> usize {
-        let id = self.next_id;
-        self.next_id += 1;
-        id
+    pub fn set_deletion_mode(&mut self, enabled: bool) {
+        self.deletion_mode = enabled;
+        self.cache.clear(); 
+    }
+
+    pub fn is_deletion_mode(&self) -> bool {
+        self.deletion_mode
+    }
+
+    // This method is now less about "getting" and more about providing the current counter value
+    // The actual increment happens in gui.rs after a state is formally added.
+    pub fn get_current_next_id(&self) -> usize {
+        self.next_id
     }
 
     pub fn reset_id_counter(&mut self) {
@@ -227,6 +239,15 @@ impl canvas::Program<CanvasMessage> for StateMachine<'_> {
                     match current_state {
                         None | Some(PendingTransition::ClickTracking { .. }) => {
                             if let Some(node) = clicked_node {
+                                if self.state.is_deletion_mode() { 
+                                    *state = Some(PendingTransition::ClickTracking {
+                                        last_click_time: now,
+                                        last_clicked_state: Some(node.id),
+                                        last_clicked_transition: None,
+                                    });
+                                    return (canvas::event::Status::Captured, Some(CanvasMessage::StateClicked(node.id)));
+                                }
+
                                 if now.duration_since(last_click_time) < double_click_threshold
                                     && last_clicked_state == Some(node.id) {
                                     *state = Some(PendingTransition::ClickTracking {
@@ -237,7 +258,6 @@ impl canvas::Program<CanvasMessage> for StateMachine<'_> {
                                     return (canvas::event::Status::Captured, Some(CanvasMessage::StateDoubleClicked(node.id)));
                                 }
 
-                                // Update click tracking
                                 *state = Some(PendingTransition::ClickTracking {
                                     last_click_time: now,
                                     last_clicked_state: Some(node.id),
@@ -262,6 +282,16 @@ impl canvas::Program<CanvasMessage> for StateMachine<'_> {
                                 }
                                 (canvas::event::Status::Captured, None)
                             } else if let Some(transition_index) = clicked_transition_index {
+
+                                 if self.state.is_deletion_mode() { 
+                                    *state = Some(PendingTransition::ClickTracking {
+                                        last_click_time: now,
+                                        last_clicked_transition: Some(transition_index),
+                                        last_clicked_state: None,
+                                    });
+                                    return (canvas::event::Status::Captured, Some(CanvasMessage::TransitionClicked(transition_index)));
+                                } 
+
                                 if now.duration_since(last_click_time) < double_click_threshold
                                     && last_clicked_transition == Some(transition_index) {
                                     *state = Some(PendingTransition::ClickTracking {
@@ -280,7 +310,8 @@ impl canvas::Program<CanvasMessage> for StateMachine<'_> {
 
                                 (canvas::event::Status::Captured, None)
                             } else {
-                                let label = format!("q{}", self.states.len());
+                                // Dynamically assign a label using the current next_id from State
+                                let label = format!("q{}", self.state.get_current_next_id()); 
                                 let state_node = StateNode::new_with_temp_id(cursor_pos, 30.0, Box::leak(label.into_boxed_str()));
                                 (canvas::event::Status::Captured, Some(CanvasMessage::AddState(state_node)))
                             }
@@ -356,6 +387,10 @@ impl canvas::Program<CanvasMessage> for StateMachine<'_> {
         cursor: mouse::Cursor,
     ) -> mouse::Interaction {
         if cursor.is_over(bounds) {
+            if self.state.is_deletion_mode() {
+                return mouse::Interaction::None; 
+            }
+
             let cursor_position = cursor.position_in(bounds);
             if let Some(pos) = cursor_position {
                 match state {
@@ -402,11 +437,44 @@ impl canvas::Program<CanvasMessage> for StateMachine<'_> {
             );
         });
 
-        if let Some(pending) = state {
-            vec![content, pending.draw(renderer, theme, bounds, cursor, self.states)]
-        } else {
-            vec![content]
+        let mut geometries = vec![content];
+
+        // Draw deletion cursor if in deletion mode
+        if self.state.is_deletion_mode() {
+            if let Some(cursor_position) = cursor.position_in(bounds) {
+                let mut cursor_frame = Frame::new(renderer, bounds.size());
+                let x_size = 10.0; // Size of the 'X' arms
+                let line_width = 2.0;
+
+                // Draw first line of the X
+                cursor_frame.stroke(
+                    &Path::line(
+                        Point::new(cursor_position.x - x_size, cursor_position.y - x_size),
+                        Point::new(cursor_position.x + x_size, cursor_position.y + x_size),
+                    ),
+                    Stroke::default()
+                        .with_width(line_width)
+                        .with_color(iced::Color::from_rgb(1.0, 0.0, 0.0)), // Red color
+                );
+
+                // Draw second line of the X
+                cursor_frame.stroke(
+                    &Path::line(
+                        Point::new(cursor_position.x + x_size, cursor_position.y - x_size),
+                        Point::new(cursor_position.x - x_size, cursor_position.y + x_size),
+                    ),
+                    Stroke::default()
+                        .with_width(line_width)
+                        .with_color(iced::Color::from_rgb(1.0, 0.0, 0.0)), // Red color
+                );
+                geometries.push(cursor_frame.into_geometry());
+            }
         }
+
+        if let Some(pending) = state {
+            geometries.push(pending.draw(renderer, theme, bounds, cursor, self.states));
+        }
+        geometries
     }
 }
 
@@ -424,6 +492,8 @@ impl StateNode {
     }
 
     pub fn new_with_temp_id(position: Point, radius: f32, label: &'static str) -> Self {
+        // When created temporarily in the canvas, its ID is 0 and label is a placeholder.
+        // The real ID and label based on next_id will be assigned in App::update.
         StateNode { id: 0, position, radius, label } 
     }
 
@@ -726,3 +796,4 @@ impl PendingTransition {
         frame.into_geometry()
     }
 }
+
