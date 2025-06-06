@@ -31,7 +31,8 @@ cargo run --release
 >
 > There are several errors and bugs in the program, including some 
 > functions that are not working correctly, such as the Minimize algorithm.
-> Some situations are not caught or are simply not implemented. 
+> Some situations are not caught or are simply not implemented.
+> Additionally, the project's structure is not well modularized or organized.
 
 ## Usage
 
@@ -65,9 +66,7 @@ This project uses a workspace structure with two main crates:
 
 - `iced`: GUI library for Rust
 
-### Future Development
-
-This is a small project I created and worked on a few years ago. I don't feel like developing it further right now, so I'll leave it as is. I might update it in the future.
+> **Note:** This is a student project I created and worked on a few years ago. I don't feel like developing it further right now, so I'll leave it as is. I might update it in the future.
 
 ## License
 
@@ -76,4 +75,4 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 ## Acknowledgments
 
 - Built with [Iced](https://github.com/iced-rs/iced) GUI framework
-- Inspired by various finite automata visualization tools like JFLAP and automatarium.
+- Inspired by various finite automata visualization tools like [JFLAP][https://www.jflap.org/] and [automatarium][https://github.com/automatarium/automatarium].
