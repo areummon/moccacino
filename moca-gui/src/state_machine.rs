@@ -147,13 +147,22 @@ impl StateMachine<'_> {
                 self.states.iter().find(|s| s.id == transition.from_state_id),
                 self.states.iter().find(|s| s.id == transition.to_state_id)
             ) {
-                // Check if point is near the transition label
-                let label_pos = self.calculate_transition_label_position(transition, from_state, to_state);
-                let distance = (point - label_pos).length();
-
-                // Consider a hit if within 20 pixels of the label center
-                if distance <= 20.0 {
-                    return Some(index);
+                // For self-loops, check if point is near the label
+                if transition.from_state_id == transition.to_state_id {
+                    let center = from_state.position;
+                    let control = Point::new(center.x, center.y - from_state.radius * 3.8);
+                    let label_pos = Point::new(control.x, control.y + 30.0);
+                    let distance = (point - label_pos).length();
+                    if distance <= 20.0 {
+                        return Some(index);
+                    }
+                } else {
+                    // For regular transitions, check if point is near the label
+                    let label_pos = self.calculate_transition_label_position(transition, from_state, to_state);
+                    let distance = (point - label_pos).length();
+                    if distance <= 20.0 {
+                        return Some(index);
+                    }
                 }
             }
         }
@@ -303,7 +312,7 @@ impl canvas::Program<CanvasMessage> for StateMachine<'_> {
                                     last_clicked_transition: Some(transition_index),
                                     last_clicked_state: None,
                                 });
-                                return (canvas::event::Status::Captured, None);
+                                return (canvas::event::Status::Captured, Some(CanvasMessage::TransitionClicked(transition_index)));
                             } else {
                                 // Dynamically assign a label using the current next_id from State
                                 let label = format!("q{}", self.state.get_current_next_id()); 

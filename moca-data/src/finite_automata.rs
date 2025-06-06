@@ -81,6 +81,20 @@ impl FiniteAutomata {
      * It works for both, NFA and DFA.
      */
     fn recursive_traversing(&self, state_id: &StateID, input: &mut Input) -> bool {
+        let mut visited = HashSet::new();
+        self.recursive_traversing_aux(state_id, input, &mut visited)
+    }
+
+    // Auxiliary function to traverse the automata. It prevents infinite recursion by checking which
+    // state and input have been already visited. It also "consumes" the input. It's necessary because of 
+    // the loops.
+    fn recursive_traversing_aux(&self, state_id: &StateID, input: &mut Input, visited: &mut HashSet<(StateID, String)>) -> bool {
+        let key = (*state_id, input.clone());
+        if visited.contains(&key) {
+            return false;
+        }
+        visited.insert(key);
+
         match self.states_by_id.get(&state_id) {
             Some(state) => {
                 if state.final_flag == true && input.is_empty() {
@@ -93,7 +107,7 @@ impl FiniteAutomata {
                 for (id, transition) in state.iter_by_transition() {
                     for string in transition.iter() {
                         if string == "ε" {
-                            accepted_bool = accepted_bool || self.recursive_traversing(&id, &mut input.clone());
+                            accepted_bool = accepted_bool || self.recursive_traversing_aux(&id, &mut input.clone(), visited);
                         }
                         if input.starts_with(string) {
                             if string.len() == string_len_max {
@@ -112,7 +126,7 @@ impl FiniteAutomata {
                     accepted_bool != true { return false; } 
                 input.replace_range(0..string_ref.len(),"");
                 for id in string_matches_id {
-                    accepted_bool = accepted_bool || self.recursive_traversing(&id, &mut input.clone());
+                    accepted_bool = accepted_bool || self.recursive_traversing_aux(&id, &mut input.clone(), visited);
                 }
                 return accepted_bool;
             }
@@ -379,52 +393,60 @@ pub fn get_unreachable_states(automata: &FiniteAutomata, initial_id: StateID) ->
 // The function returns an equivalent (using the earlier definition) partition of state ids.
 // This algorithm is adapted from https://en.wikipedia.org/wiki/DFA_minimization.
 pub fn hopcroft_algorithm(automata: &FiniteAutomata) -> HashSet<BTreeSet<StateID>> {
+    // Initial partition: split states into accepting and non-accepting
     let non_rejecting_states = hashmap_set_difference(automata.get_states_by_id_ref(),
-                                                                    automata.get_final_states());
+                                                    automata.get_final_states());
     let mut partition_p: HashSet<BTreeSet<StateID>> = HashSet::new();
     let rejecting_states: BTreeSet<StateID> = automata.get_final_states().iter().cloned().collect();
-    partition_p.insert(rejecting_states);
-    partition_p.insert(non_rejecting_states);
+    
+    if !rejecting_states.is_empty() {
+        partition_p.insert(rejecting_states);
+    }
+    if !non_rejecting_states.is_empty() {
+        partition_p.insert(non_rejecting_states);
+    }
+
     let mut partition_w: Vec<BTreeSet<StateID>> = partition_p.iter().cloned().collect();
-    // Variable used to mark wich subsets had been already visited.
     let mut visited_subsets: HashSet<BTreeSet<StateID>> = HashSet::new();
-    while !partition_w.is_empty() {
-        let set_a = match partition_w.pop() {
-            Some(set) => set,
-            None => break,
-        };
+
+    while let Some(set_a) = partition_w.pop() {
         if visited_subsets.contains(&set_a) {
             continue;
         }
         visited_subsets.insert(set_a.clone());
+
         for string in automata.get_string_transitions() {
-            let set_x = transition_function_set(&automata, &set_a, string);
-            let mut partition_aux = partition_p.clone();
-            for set_y in partition_p.iter() {
+            let set_x = transition_function_set(automata, &set_a, string);
+            if set_x.is_empty() {
+                continue;
+            }
+
+            let mut new_partitions = Vec::new();
+            let mut partitions_to_remove = Vec::new();
+
+            for set_y in &partition_p {
                 let x_y_intersection: BTreeSet<StateID> = set_y.intersection(&set_x).cloned().collect();
                 let y_minus_x: BTreeSet<StateID> = set_y.difference(&set_x).cloned().collect();
+
                 if !x_y_intersection.is_empty() && !y_minus_x.is_empty() {
-                    partition_aux.remove(set_y);
-                    partition_aux.replace(x_y_intersection.clone());
-                    partition_aux.replace(y_minus_x.clone());
-                    if partition_w.contains(set_y) {
-                        partition_w.retain(|s| s != set_y);
-                        partition_w.push(x_y_intersection);
-                        partition_w.push(y_minus_x);
-                    }
-                    else {
-                        if x_y_intersection.len() <= y_minus_x.len() {
-                            partition_w.push(x_y_intersection);
-                        }
-                        else {
-                            partition_w.push(y_minus_x);
-                        }
-                    }
+                    partitions_to_remove.push(set_y.clone());
+                    new_partitions.push(x_y_intersection);
+                    new_partitions.push(y_minus_x);
                 }
             }
-            partition_p = partition_aux;
+
+            for partition in partitions_to_remove {
+                partition_p.remove(&partition);
+            }
+            for partition in new_partitions {
+                partition_p.insert(partition.clone());
+                if !visited_subsets.contains(&partition) {
+                    partition_w.push(partition);
+                }
+            }
         }
     }
+
     partition_p
 }
 
@@ -508,60 +530,65 @@ fn convert_minimized_dfa(automata: &FiniteAutomata, partition: HashSet<BTreeSet<
 // implementation of a hasher, so it can be used as a key in a hashmap, also it is a set of
 // id's so there is not a significant advantage to use either.
 pub fn subset_construction(automata: &FiniteAutomata) -> HashMap<BTreeSet<StateID>, Vec<(BTreeSet<StateID>, &str)>> {
-    // This act as a stack to check every new subset gotten from the lambda closure function
     let mut sets_to_visit: Vec<BTreeSet<StateID>> = Vec::new();
-    // This is used to not add visited sets to sets_to_visit vector
     let mut visited_sets: HashSet<BTreeSet<StateID>> = HashSet::new();
-    // This is used to store all the subsets and their transitions in a table-like form, this
-    // is used to construct the resulting dfa automaton.
     let mut transitions_by_subsets: HashMap<BTreeSet<StateID>, Vec<(BTreeSet<StateID>,&str)>> = HashMap::new();
+    
     let initial_id = match automata.initial_state_id {
         Some(id) => id,
         None => panic!("There is not an initial state.")
     };
+
+    // Initialize with the initial state's closure
     let mut current_subset = automata.lambda_closure(initial_id, "");
-    current_subset.insert(initial_id); // This line is required in this implementation.
+    current_subset.insert(initial_id);
     sets_to_visit.push(current_subset.clone());
     transitions_by_subsets.insert(current_subset, Vec::new());
-    while !sets_to_visit.is_empty() {
-        let mut vector_transitions: Vec<(BTreeSet<u64>, &str)> = Vec::new();
-        let current_subset = match sets_to_visit.pop() {
-            Some(set) => {
-                set
-            },
-            None => panic!("There is no subset, this should never occur"),
-        };
+
+    while let Some(current_subset) = sets_to_visit.pop() {
+        let mut vector_transitions: Vec<(BTreeSet<StateID>, &str)> = Vec::new();
         
         for string in automata.get_string_transitions() {
-            let new_subset = lambda_closure_subset(&automata, &current_subset, string);
-            if new_subset.is_empty() || visited_sets.contains(&new_subset) {
-                vector_transitions.push((new_subset, string));
-                continue;
+            let new_subset = lambda_closure_subset(automata, &current_subset, string);
+            
+            if !new_subset.is_empty() && !visited_sets.contains(&new_subset) {
+                sets_to_visit.push(new_subset.clone());
+                transitions_by_subsets.insert(new_subset.clone(), Vec::new());
+                visited_sets.insert(new_subset.clone());
             }
-            sets_to_visit.push(new_subset.clone());
-            transitions_by_subsets.insert(new_subset.clone(), Vec::new());
-            visited_sets.insert(new_subset.clone());
+            
             vector_transitions.push((new_subset, string));
         }
-        // It needs to do this because when adding an entry, It needs to add a subset and a
-        // vector.
+
         if let Some(vector) = transitions_by_subsets.get_mut(&current_subset) {
             *vector = vector_transitions;
         }
     }
-    println!("{:?}", transitions_by_subsets);
-    println!("{:?}", visited_sets);
+
     transitions_by_subsets
 }
 
-//Auxiliar ε-closure function that takes a subset as a parameter and returns a set with all the ids
-//returned by the lambda closure function applied to all the elements of the subset.
 fn lambda_closure_subset(automata: &FiniteAutomata, subset: &BTreeSet<StateID>, input_string: &str) -> BTreeSet<StateID> {
-    let mut subset_result: BTreeSet<StateID> = BTreeSet::new();
-    for id in subset {
-        subset_result = subset_result.union(&automata.lambda_closure(*id, input_string)).cloned().collect();
+    let mut result: BTreeSet<StateID> = BTreeSet::new();
+    let mut to_process: Vec<StateID> = subset.iter().cloned().collect();
+    let mut processed: HashSet<StateID> = HashSet::new();
+
+    while let Some(id) = to_process.pop() {
+        if processed.contains(&id) {
+            continue;
+        }
+        processed.insert(id);
+
+        let closure = automata.lambda_closure(id, input_string);
+        for state_id in &closure {
+            if !processed.contains(state_id) {
+                to_process.push(*state_id);
+            }
+        }
+        result.extend(closure);
     }
-    subset_result
+
+    result
 }
 
 
