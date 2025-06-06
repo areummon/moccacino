@@ -1,8 +1,0 @@
-[package]
-name = "mocaccino"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-async-channel = "2.3.1"
-gtk = { version = "0.9.6", package = "gtk4", features = ["v4_16"] }
