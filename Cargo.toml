@@ -1,7 +1,23 @@
 [workspace]
 
 members = [
-    "mocaccino",
     "moca-data",
     "moca-gui",
 ]
+
+[package]
+name = "moccacino"
+version = "0.1.0"
+edition = "2021"
+authors = ["Moccacino Contributors"]
+description = "Software program to experiment with concepts in automata theory and formal languages"
+license = "MIT"
+
+[dependencies]
+iced = { version = "0.13.1", features = ["canvas"] }
+moca-data = { path = "./moca-data" }
+moca-gui = { path = "./moca-gui" }
+
+[[bin]]
+name = "moccacino"
+path = "moca-gui/src/main.rs"

@@ -300,7 +300,7 @@ impl StateMachine for FiniteAutomata {
     
     /* The implementation for finite automata checks if the automaton
      * is deterministic or not. */
-    fn add_transition(&mut self, state_id1: StateID, state_id2: StateID, mut input: Input) {
+    fn add_transition(&mut self, state_id1: StateID, state_id2: StateID, input: Input) {
         if input == "ε" {
             self.deterministic = false;
         }
@@ -530,68 +530,58 @@ fn convert_minimized_dfa(automata: &FiniteAutomata, partition: HashSet<BTreeSet<
 // implementation of a hasher, so it can be used as a key in a hashmap, also it is a set of
 // id's so there is not a significant advantage to use either.
 pub fn subset_construction(automata: &FiniteAutomata) -> HashMap<BTreeSet<StateID>, Vec<(BTreeSet<StateID>, &str)>> {
+    // This act as a stack to check every new subset gotten from the lambda closure function
     let mut sets_to_visit: Vec<BTreeSet<StateID>> = Vec::new();
+    // This is used to not add visited sets to sets_to_visit vector
     let mut visited_sets: HashSet<BTreeSet<StateID>> = HashSet::new();
+    // This is used to store all the subsets and their transitions in a table-like form, this
+    // is used to construct the resulting dfa automaton.
     let mut transitions_by_subsets: HashMap<BTreeSet<StateID>, Vec<(BTreeSet<StateID>,&str)>> = HashMap::new();
-    
     let initial_id = match automata.initial_state_id {
         Some(id) => id,
         None => panic!("There is not an initial state.")
     };
-
-    // Initialize with the initial state's closure
     let mut current_subset = automata.lambda_closure(initial_id, "");
-    current_subset.insert(initial_id);
+    current_subset.insert(initial_id); // This line is required in this implementation.
     sets_to_visit.push(current_subset.clone());
     transitions_by_subsets.insert(current_subset, Vec::new());
-
-    while let Some(current_subset) = sets_to_visit.pop() {
-        let mut vector_transitions: Vec<(BTreeSet<StateID>, &str)> = Vec::new();
+    while !sets_to_visit.is_empty() {
+        let mut vector_transitions: Vec<(BTreeSet<u64>, &str)> = Vec::new();
+        let current_subset = match sets_to_visit.pop() {
+            Some(set) => {
+                set
+            },
+            None => panic!("There is no subset, this should never occur"),
+        };
         
         for string in automata.get_string_transitions() {
-            let new_subset = lambda_closure_subset(automata, &current_subset, string);
-            
-            if !new_subset.is_empty() && !visited_sets.contains(&new_subset) {
-                sets_to_visit.push(new_subset.clone());
-                transitions_by_subsets.insert(new_subset.clone(), Vec::new());
-                visited_sets.insert(new_subset.clone());
+            let new_subset = lambda_closure_subset(&automata, &current_subset, string);
+            if new_subset.is_empty() || visited_sets.contains(&new_subset) {
+                vector_transitions.push((new_subset, string));
+                continue;
             }
-            
+            sets_to_visit.push(new_subset.clone());
+            transitions_by_subsets.insert(new_subset.clone(), Vec::new());
+            visited_sets.insert(new_subset.clone());
             vector_transitions.push((new_subset, string));
         }
-
+        // It needs to do this because when adding an entry, It needs to add a subset and a
+        // vector.
         if let Some(vector) = transitions_by_subsets.get_mut(&current_subset) {
             *vector = vector_transitions;
         }
     }
-
+    println!("{:?}", transitions_by_subsets);
+    println!("{:?}", visited_sets);
     transitions_by_subsets
 }
 
+//Auxiliar ε-closure function that takes a subset as a parameter and returns a set with all the ids
+//returned by the lambda closure function applied to all the elements of the subset.
 fn lambda_closure_subset(automata: &FiniteAutomata, subset: &BTreeSet<StateID>, input_string: &str) -> BTreeSet<StateID> {
-    let mut result: BTreeSet<StateID> = BTreeSet::new();
-    let mut to_process: Vec<StateID> = subset.iter().cloned().collect();
-    let mut processed: HashSet<StateID> = HashSet::new();
-
-    while let Some(id) = to_process.pop() {
-        if processed.contains(&id) {
-            continue;
-        }
-        processed.insert(id);
-
-        let closure = automata.lambda_closure(id, input_string);
-        for state_id in &closure {
-            if !processed.contains(state_id) {
-                to_process.push(*state_id);
-            }
-        }
-        result.extend(closure);
+    let mut subset_result: BTreeSet<StateID> = BTreeSet::new();
+    for id in subset {
+        subset_result = subset_result.union(&automata.lambda_closure(*id, input_string)).cloned().collect();
     }
-
-    result
+    subset_result
 }
-
-
-
-
-

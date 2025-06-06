@@ -2,8 +2,6 @@ use iced::keyboard;
 use iced::widget::{button, container, horizontal_space, hover, row, text, column, stack};
 use iced::{Element, Alignment, Event, Subscription, Task, Length};
 use std::collections::HashMap;
-use std::collections::HashSet;
-use std::collections::VecDeque;
 
 use crate::state_machine;
 
@@ -16,29 +14,20 @@ pub enum Message {
     KeyPressed(keyboard::Key),
     KeyReleased(keyboard::Key),
     Clear,
-    SyncToFiniteAutomata, // Explicit message to force a sync
-    LoadFromFiniteAutomata,
     EditTextChanged(String),
     FinishEditing,
     CancelEditing,
     ToggleOperationsMenu,
-    CloseMenus,
     CheckInput,
     DfaToNfa,
     Minimize,
-    OpenCheckInputDialog,
     CheckInputTextChanged(String),
     SubmitCheckInput,
     CancelCheckInput,
     CloseCheckResultPopup,
-    DeleteState(usize),
-    DeleteTransition(usize),
-    // New tab-related messages
     AddTab,
     RemoveTab(usize),
     SwitchTab(usize),
-    // New error message
-    ShowError(String),
     CloseError,
 }
 
@@ -47,7 +36,6 @@ struct Tab {
     state_machine: state_machine::State,
     transitions: Vec<state_machine::Transition>,
     states: Vec<state_machine::StateNode>,
-    // Map from state ID to index in the states vector for quick lookup
     state_id_to_index: HashMap<usize, usize>,
     machine: FiniteAutomata,
     initial_state: Option<usize>, 
@@ -61,16 +49,15 @@ struct Tab {
     check_result_popup_open: bool,
     check_input_result: Option<bool>,
     deletion_mode: bool,
-    name: String, // Add name field for tab
-    error_message: Option<String>, // Add error message field
+    name: String, 
 }
 
 impl Tab {
     fn new() -> Self {
         let mut tab = Self::default();
         tab.state_machine.reset_id_counter();
-        tab.machine = FiniteAutomata::default(); // Ensure finite automata is initialized
-        tab.name = "Machine".to_string(); // Default name
+        tab.machine = FiniteAutomata::default(); 
+        tab.name = "Machine".to_string(); 
         tab
     }
 
@@ -85,7 +72,7 @@ impl Tab {
 pub struct App {
     tabs: Vec<Box<Tab>>,
     active_tab: usize,
-    error_message: Option<String>, // Add error message field
+    error_message: Option<String>, 
 }
 
 impl App {
@@ -312,10 +299,6 @@ impl App {
                 self.get_active_tab_mut().operations_menu_open = !self.get_active_tab_mut().operations_menu_open;
                 Task::none()
             }
-            Message::CloseMenus => {
-                self.get_active_tab_mut().operations_menu_open = false;
-                Task::none()
-            }
             Message::CheckInput => {
                 self.get_active_tab_mut().operations_menu_open = false;
                 self.get_active_tab_mut().check_input_dialog_open = true;
@@ -325,56 +308,41 @@ impl App {
             Message::DfaToNfa => {
                 self.get_active_tab_mut().operations_menu_open = false;
                 
-                // First sync the GUI state to the finite automata
                 self.sync_gui_to_finite_automata();
                 
-                // Check if the automaton is deterministic
                 if self.get_active_tab().machine.is_deterministic() {
                     self.error_message = Some("Cannot convert: The automaton is already deterministic.".to_string());
                     return Task::none();
                 }
 
-                // Convert to DFA
                 let dfa = self.get_active_tab().machine.to_dfa();
                 
-                // Create new tab with DFA
                 let mut new_tab = Tab::new_with_name("DFA".to_string());
                 new_tab.machine = dfa;
                 self.tabs.push(Box::new(new_tab));
                 self.active_tab = self.tabs.len() - 1;
                 
-                // Load the DFA into the GUI
                 self.load_finite_automata_to_gui();
                 Task::none()
             }
             Message::Minimize => {
                 self.get_active_tab_mut().operations_menu_open = false;
                 
-                // First sync the GUI state to the finite automata
                 self.sync_gui_to_finite_automata();
                 
-                // Check if the automaton is deterministic
                 if !self.get_active_tab().machine.is_deterministic() {
                     self.error_message = Some("Cannot minimize: The automaton must be deterministic.".to_string());
                     return Task::none();
                 }
 
-                // Minimize the DFA
                 let minimized = self.get_active_tab().machine.minimize();
                 
-                // Create new tab with minimized DFA
                 let mut new_tab = Tab::new_with_name("Minimized".to_string());
                 new_tab.machine = minimized;
                 self.tabs.push(Box::new(new_tab));
                 self.active_tab = self.tabs.len() - 1;
                 
-                // Load the minimized DFA into the GUI
                 self.load_finite_automata_to_gui();
-                Task::none()
-            }
-            Message::OpenCheckInputDialog => {
-                self.get_active_tab_mut().check_input_dialog_open = true;
-                self.get_active_tab_mut().check_input_text.clear();
                 Task::none()
             }
             Message::CheckInputTextChanged(text) => {
@@ -384,9 +352,7 @@ impl App {
             Message::SubmitCheckInput => {
                 let mut input = self.get_active_tab().check_input_text.clone();
                 if !input.is_empty() {
-                    // First sync the GUI state to the finite automata
                     self.sync_gui_to_finite_automata();
-                    // Then check the input using the finite automata
                     let result = self.get_active_tab().machine.check_input(&mut input);
                     self.get_active_tab_mut().check_input_result = Some(result);
                     self.get_active_tab_mut().check_result_popup_open = true;
@@ -400,24 +366,6 @@ impl App {
             }
             Message::CloseCheckResultPopup => {
                 self.get_active_tab_mut().check_result_popup_open = false;
-                Task::none()
-            }
-            Message::DeleteState(state_id) => {
-                self.delete_state(state_id);
-                Task::none()
-            }
-            Message::DeleteTransition(transition_index) => {
-                self.delete_transition(transition_index);
-                Task::none()
-            }
-            Message::SyncToFiniteAutomata => {
-                self.sync_gui_to_finite_automata();
-                self.get_active_tab_mut().state_machine.request_redraw();
-                Task::none()
-            }
-            Message::LoadFromFiniteAutomata => {
-                self.load_finite_automata_to_gui();
-                self.get_active_tab_mut().state_machine.request_redraw();
                 Task::none()
             }
             Message::AddTab => {
@@ -438,10 +386,6 @@ impl App {
                 if index < self.tabs.len() {
                     self.active_tab = index;
                 }
-                Task::none()
-            }
-            Message::ShowError(message) => {
-                self.error_message = Some(message);
                 Task::none()
             }
             Message::CloseError => {
@@ -473,22 +417,18 @@ impl App {
         let active_tab = self.get_active_tab_mut();
         active_tab.machine.clear();
 
-        // Add all states
         for state_node in &active_tab.states {
             active_tab.machine.add_state_with_id_label(state_node.id as u64, state_node.label);
         }
 
-        // Set final states
         for &state_id in &active_tab.final_states {
             active_tab.machine.make_final(state_id as u64);
         }
 
-        // Set initial state
         if let Some(initial_id) = active_tab.initial_state {
             active_tab.machine.make_initial(initial_id as u64);
         }
 
-        // Add all transitions
         for gui_transition in &active_tab.transitions {
             active_tab.machine.add_transition(
                 gui_transition.from_state_id as u64,
@@ -498,59 +438,21 @@ impl App {
         }
     }
 
-    fn delete_state(&mut self, state_id: usize) {
-        let active_tab = self.get_active_tab_mut();
-        
-        // Remove the state
-        active_tab.states.retain(|s| s.id != state_id);
-
-        // Remove all transitions connected to this state
-        active_tab.transitions.retain(|transition| {
-            transition.from_state_id != state_id && transition.to_state_id != state_id
-        });
-
-        // Update initial state if needed
-        if active_tab.initial_state == Some(state_id) {
-            active_tab.initial_state = None;
-        }
-
-        // Remove from final states
-        active_tab.final_states.remove(&state_id);
-
-        // Update state_id_to_index map
-        active_tab.state_id_to_index.clear();
-        for (index, state) in active_tab.states.iter().enumerate() {
-            active_tab.state_id_to_index.insert(state.id, index);
-        }
-    }
-
-    fn delete_transition(&mut self, transition_index: usize) {
-        if transition_index < self.get_active_tab_mut().transitions.len() {
-            let _transition_to_remove = self.get_active_tab_mut().transitions.remove(transition_index);
-        }
-    }
-
-    fn is_deletion_mode(&self) -> bool {
-        self.get_active_tab().deletion_mode
-    }
-
     fn load_finite_automata_to_gui(&mut self) {
         let active_tab = self.get_active_tab_mut();
         
-        // Clear current GUI state
         active_tab.states.clear();
         active_tab.transitions.clear();
         active_tab.state_id_to_index.clear();
         active_tab.initial_state = None;
         active_tab.final_states.clear();
 
-        // Load states
         let mut max_id_after_load = 0;
         for (id, state) in active_tab.machine.get_states_by_id_ref() {
             let state_node = state_machine::StateNode::new(
                 *id as usize,
-                iced::Point::new(100.0, 100.0), // Default position, will be updated by layout
-                30.0, // Consistent radius for all states
+                iced::Point::new(100.0, 100.0), 
+                30.0, 
                 Box::leak(state.name.clone().into_boxed_str())
             );
             let index = active_tab.states.len();
@@ -559,10 +461,8 @@ impl App {
             max_id_after_load = max_id_after_load.max(*id as usize);
         }
 
-        // Update next_id to be after the highest loaded ID
         active_tab.state_machine.next_id = max_id_after_load + 1;
 
-        // Load transitions
         for (from_id, state) in active_tab.machine.get_states_by_id_ref() {
             for (to_id, inputs) in state.iter_by_transition() {
                 let from_state = active_tab.states.iter()
@@ -588,7 +488,6 @@ impl App {
             }
         }
 
-        // Set initial state
         if let Some(initial_id) = active_tab.machine.get_initial_state_id() {
             if let Some(state) = active_tab.states.iter()
                 .find(|s| s.id == *initial_id as usize) {
@@ -596,7 +495,6 @@ impl App {
             }
         }
 
-        // Set final states
         for final_id in active_tab.machine.get_final_states() {
             if let Some(state) = active_tab.states.iter()
                 .find(|s| s.id == *final_id as usize) {
@@ -604,43 +502,36 @@ impl App {
             }
         }
 
-        // Apply layout
         if active_tab.initial_state.is_some() {
             Self::apply_tree_layout_to_tab(active_tab);
         } else {
             Self::apply_grid_layout_to_tab(active_tab);
         }
 
-        // Request redraw after all modifications are done
         active_tab.state_machine.request_redraw();
     }
 
     fn apply_tree_layout_to_tab(active_tab: &mut Tab) {
         use std::collections::{HashMap, HashSet};
 
-        // Build parent-to-children map (tree structure only)
         let mut children_map: HashMap<usize, Vec<usize>> = HashMap::new();
         let mut parent_map: HashMap<usize, usize> = HashMap::new();
         let mut all_ids: HashSet<usize> = HashSet::new();
         for state in &active_tab.states {
             all_ids.insert(state.id);
         }
-        // Only use the first outgoing edge for each state to build a tree
         for transition in &active_tab.transitions {
-            // Only add the first parent for each child (tree structure)
             if !parent_map.contains_key(&transition.to_state_id) {
                 children_map.entry(transition.from_state_id).or_default().push(transition.to_state_id);
                 parent_map.insert(transition.to_state_id, transition.from_state_id);
             }
         }
 
-        // Find the root (initial state)
         let root_id = match active_tab.initial_state {
             Some(id) => id,
             None => return,
         };
 
-        // Recursively assign positions
         let mut x_counter = 0.0;
         let x_spacing = 90.0;
         let y_spacing = 120.0;
@@ -666,7 +557,6 @@ impl App {
                     let cx = assign_positions(child_id, depth + 1, children_map, state_map, x_counter, x_spacing, y_spacing, start_x, start_y);
                     child_xs.push(cx);
                 }
-                // Center this node above its children
                 if !child_xs.is_empty() {
                     x = (child_xs[0] + child_xs[child_xs.len() - 1]) / 2.0;
                 } else {
@@ -674,7 +564,6 @@ impl App {
                     *x_counter += x_spacing;
                 }
             } else {
-                // Leaf node
                 x = *x_counter;
                 *x_counter += x_spacing;
             }
@@ -684,7 +573,6 @@ impl App {
             x
         }
 
-        // Build a map for mutable access
         let mut state_map: HashMap<usize, &mut state_machine::StateNode> =
             active_tab.states.iter_mut().map(|s| (s.id, s)).collect();
         assign_positions(
@@ -699,7 +587,6 @@ impl App {
             start_y,
         );
 
-        // Place unreachable states in a row at the bottom
         let placed: HashSet<usize> = state_map.keys().copied().collect();
         let unreachable: Vec<usize> = all_ids.difference(&placed).copied().collect();
         let unreachable_y = start_y + 4.0 * y_spacing;
@@ -709,7 +596,6 @@ impl App {
             }
         }
 
-        // Update transition positions (all transitions, not just tree edges)
         for transition in &mut active_tab.transitions {
             if let (Some(from_state), Some(to_state)) = (
                 active_tab.states.iter().find(|s| s.id == transition.from_state_id),
@@ -728,13 +614,11 @@ impl App {
             return;
         }
 
-        // Calculate grid dimensions
         let grid_size = (states.len() as f32).sqrt().ceil() as usize;
-        let spacing = 150.0; // Space between states
+        let spacing = 150.0; 
         let start_x = 100.0;
         let start_y = 100.0;
 
-        // Position states in a grid
         for (i, state) in states.iter_mut().enumerate() {
             let row = i / grid_size;
             let col = i % grid_size;
@@ -744,7 +628,6 @@ impl App {
             );
         }
 
-        // Update transition positions
         for transition in &mut active_tab.transitions {
             if let (Some(from_state), Some(to_state)) = (
                 active_tab.states.iter().find(|s| s.id == transition.from_state_id),
@@ -979,7 +862,7 @@ impl App {
             if result {
                 "Input is accepted by the automaton :)"
             } else {
-                "Input is rejected by the automaton ㅜㅜ"
+                "Input is rejected by the automaton :("
             }
         } else {
             "No result available"
@@ -1030,7 +913,6 @@ impl App {
 
         let mut tab_buttons = row![].spacing(2);
 
-        // Add tabs
         for (index, tab) in self.tabs.iter().enumerate() {
             let is_active = index == self.active_tab;
             let tab_button = button(
@@ -1097,7 +979,6 @@ impl App {
             tab_buttons = tab_buttons.push(tab_button);
         }
 
-        // Add new tab button
         let new_tab_button = button(
             text("+")
                 .size(16)
@@ -1317,8 +1198,8 @@ impl App {
                     }
                 })
                 .padding(iced::Padding {
-                    top: 40.0,  // Reduced from 64.0 to account for menu bar height
-                    left: 141.0, // Keep the same horizontal position
+                    top: 40.0,  
+                    left: 141.0, 
                     right: 0.0,
                     bottom: 0.0,
                 })
@@ -1350,7 +1231,7 @@ impl App {
         container(final_content)
             .style(|_theme: &iced::Theme| {
                 container::Style {
-                    background: Some(iced::Color::from_rgb(0.1, 0.1, 0.1).into()), // Match canvas background
+                    background: Some(iced::Color::from_rgb(0.1, 0.1, 0.1).into()), 
                     border: iced::Border::default(),
                     ..Default::default()
                 }

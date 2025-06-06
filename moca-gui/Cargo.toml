@@ -4,6 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-iced = { version = "0.13.1", features = ["canvas", "debug", "wgpu", "tokio"] }
+iced = { version = "0.13.1", features = ["canvas"] }
 
 moca-data = { path = "../moca-data" }
