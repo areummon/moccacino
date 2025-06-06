@@ -80,4 +80,4 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 ## Acknowledgments
 
 - Built with [Iced](https://github.com/iced-rs/iced) GUI framework
-- Inspired by various finite automata visualization tools like [JFLAP][https://www.jflap.org/] and [automatarium][https://github.com/automatarium/automatarium].
+- Inspired by various finite automata visualization tools like [JFLAP](https://www.jflap.org/) and [automatarium](https://github.com/automatarium/automatarium).
