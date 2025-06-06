@@ -38,12 +38,13 @@ cargo run --release
 
 ### Basic Controls
 
-- **Left Click**: Select states and transitions
-- **Double Click**: Edit state or transition labels
+- **Click**: Create state
+- **Click on state**: Create or complete a transition
+- **Ctrl + Click**: Drag and drop states
+- **Click on Labels**: Edit transition labels
 - **Shift + Click**: Toggle final state
 - **Alt + Click**: Set initial state
 - **Tab**: Toggle deletion mode
-- **Delete**: Enter deletion mode
 
 ### Operations
 
