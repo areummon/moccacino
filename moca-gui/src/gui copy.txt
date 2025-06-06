@@ -1,0 +1,808 @@
+use iced::keyboard;
+use iced::widget::{button, container, horizontal_space, hover, row, text_input, text, column, stack};
+use iced::{Element, Alignment, Point, Event, Subscription, Task, Length};
+use iced_aw::menu::{self, MenuBar, MenuTree};
+use iced_aw::card;
+use std::collections::HashMap;
+
+use crate::state_machine;
+
+use moca_data::finite_automata::FiniteAutomata;
+use moca_data::state_machine::StateMachine;
+
+#[derive(Debug, Clone)]
+pub enum Message {
+    Canvas(state_machine::CanvasMessage), 
+    KeyPressed(keyboard::Key),
+    KeyReleased(keyboard::Key),
+    Clear,
+    SyncToFiniteAutomata, // Explicit message to force a sync
+    LoadFromFiniteAutomata,
+    EditTextChanged(String),
+    FinishEditing,
+    CancelEditing,
+    ToggleOperationsMenu,
+    CloseMenus,
+    CheckInput,
+    DfaToNfa,
+    Minimize,
+    OpenCheckInputDialog,
+    CheckInputTextChanged(String),
+    SubmitCheckInput,
+    CancelCheckInput,
+    CloseCheckResultPopup,
+    DeleteState(usize),
+    DeleteTransition(usize),
+    MenuAction(MenuAction),
+}
+
+#[derive(Debug, Clone)]
+pub enum MenuAction {
+    CheckInput,
+    DfaToNfa,
+    Minimize,
+    Clear,
+}
+
+#[derive(Default)]
+pub struct App {
+    state_machine: state_machine::State,
+    transitions: Vec<state_machine::Transition>,
+    states: Vec<state_machine::StateNode>,
+    // Map from state ID to index in the states vector for quick lookup
+    state_id_to_index: HashMap<usize, usize>,
+    machine: FiniteAutomata,
+    initial_state: Option<usize>, 
+    final_states: std::collections::HashSet<usize>, 
+    editing_state: Option<usize>,
+    editing_transition: Option<usize>,
+    edit_text: String,
+    operations_menu_open: bool,
+    check_input_dialog_open: bool,
+    check_input_text: String,
+    check_result_popup_open: bool,
+    check_result: Option<bool>,
+    deletion_mode: bool, 
+}
+
+impl App {
+    pub fn new() -> (Self, Task<Message>) {
+        (Self::default(), Task::none())
+    }
+
+    pub fn subscription(&self) -> Subscription<Message> {
+        iced::event::listen_with(|event, _status, _| match event {
+            Event::Keyboard(keyboard::Event::KeyPressed { key, .. }) => {
+                Some(Message::KeyPressed(key))
+            }
+            Event::Keyboard(keyboard::Event::KeyReleased { key, .. }) => {
+                Some(Message::KeyReleased(key))
+            }
+            _ => None,
+        })
+    }
+
+    pub fn update(&mut self, message: Message) {
+        // Flag to determine if sync_gui_to_finite_automata should be called
+        let mut should_sync_automata = false; 
+
+        match message {
+            Message::Canvas(canvas_msg) => {
+                match canvas_msg {
+                    state_machine::CanvasMessage::AddState(mut state) => {
+                        // Assign the new state a unique ID and increment the counter
+                        let assigned_id = self.state_machine.next_id;
+                        state.id = assigned_id; 
+                        
+                        let index = self.states.len();
+                        self.states.push(state);
+                        self.state_id_to_index.insert(assigned_id, index);
+                        
+                        self.state_machine.next_id += 1; // Increment for the next state
+                        self.state_machine.request_redraw();
+                        should_sync_automata = true; // State added, so sync is required
+                    }
+                    state_machine::CanvasMessage::AddTransition(transition) => {
+                        self.transitions.push(transition);
+                        self.state_machine.request_redraw();
+                        should_sync_automata = true; // Transition added, so sync is required
+                    }
+                    state_machine::CanvasMessage::MoveState { state_id, new_position } => {
+                        // Update the position of the state and its connected transitions
+                        if let Some(&index) = self.state_id_to_index.get(&state_id) {
+                            if let Some(state) = self.states.get_mut(index) {
+                                state.position = new_position;
+                                
+                                for transition in &mut self.transitions {
+                                    if transition.from_state_id == state_id {
+                                        transition.from_point = new_position;
+                                    }
+                                    if transition.to_state_id == state_id {
+                                        transition.to_point = new_position;
+                                    }
+                                }
+                                
+                                self.state_machine.request_redraw();
+                                // Moving a state changes its visual position but not its logical definition (ID, label, connections)
+                                // within the FiniteAutomata, thus no sync is strictly needed unless FiniteAutomata tracked positions.
+                            }
+                        }
+                    }
+                    state_machine::CanvasMessage::StateClicked(state_id) => {
+                        if self.deletion_mode {
+                            // Deletion is handled by calling DeleteState, which will set should_sync_automata
+                            self.update(Message::DeleteState(state_id));
+                        } else if self.state_machine.is_shift_pressed() {
+                            // Toggling final state modifies the state machine structure
+                            self.toggle_final_state(state_id);
+                            should_sync_automata = true; 
+                        } else if self.state_machine.is_alt_pressed() {
+                            // Setting initial state modifies the state machine structure
+                            self.set_initial_state(state_id);
+                            should_sync_automata = true; 
+                        }
+                    }
+                    state_machine::CanvasMessage::StateDoubleClicked(state_id) => {
+                        // Prepares for editing, but doesn't modify the state machine yet
+                        if let Some(&index) = self.state_id_to_index.get(&state_id) {
+                            if let Some(state) = self.states.get(index) {
+                                self.editing_state = Some(state_id);
+                                self.edit_text = state.label.to_string();
+                                self.editing_transition = None;
+                            }
+                        }
+                    }
+                    state_machine::CanvasMessage::TransitionDoubleClicked(transition_index) => {
+                        // Prepares for editing, but doesn't modify the state machine yet
+                        if let Some(transition) = self.transitions.get(transition_index) {
+                            self.editing_transition = Some(transition_index);
+                            self.edit_text = transition.label.to_string();
+                            self.editing_state = None;
+                        }
+                    }
+                    state_machine::CanvasMessage::TransitionClicked(transition_index) => {
+                        if self.deletion_mode {
+                            // Deletion is handled by calling DeleteTransition, which will set should_sync_automata
+                            self.update(Message::DeleteTransition(transition_index));
+                        }
+                    }
+                }
+                // Close operations menu when interacting with the canvas
+                self.operations_menu_open = false;
+            }
+            Message::EditTextChanged(text) => {
+                // Updates the text input buffer, but doesn't modify the state machine yet
+                self.edit_text = text;
+            }
+            Message::FinishEditing => {
+                // Applies the edited label to either a state or a transition
+                if let Some(state_id) = self.editing_state {
+                    if let Some(&index) = self.state_id_to_index.get(&state_id) {
+                        if let Some(state) = self.states.get_mut(index) {
+                            state.label = Box::leak(self.edit_text.clone().into_boxed_str());
+                            should_sync_automata = true; // State label changed, so sync is required
+                        }
+                    }
+                } else if let Some(transition_index) = self.editing_transition {
+                    if let Some(transition) = self.transitions.get_mut(transition_index) {
+                        transition.label = Box::leak(self.edit_text.clone().into_boxed_str());
+                        should_sync_automata = true; // Transition label changed, so sync is required
+                    }
+                }
+                // Reset editing state
+                self.editing_state = None;
+                self.editing_transition = None;
+                self.edit_text.clear();
+                self.state_machine.request_redraw();
+            }
+            Message::CancelEditing => {
+                // Resets editing state without modifying the state machine
+                self.editing_state = None;
+                self.editing_transition = None;
+                self.edit_text.clear();
+            }
+            Message::KeyPressed(key) => {
+                match key {
+                    keyboard::Key::Named(keyboard::key::Named::Control) => {
+                        self.state_machine.set_ctrl_pressed(true);
+                    }
+                    keyboard::Key::Named(keyboard::key::Named::Shift) => {
+                        self.state_machine.set_shift_pressed(true);
+                    }
+                    keyboard::Key::Named(keyboard::key::Named::Alt) => {
+                        self.state_machine.set_alt_pressed(true);
+                    }
+                    keyboard::Key::Named(keyboard::key::Named::Tab) => {
+                        // Toggle deletion mode
+                        if self.editing_state.is_none() && self.editing_transition.is_none() && 
+                           !self.check_input_dialog_open {
+                           self.deletion_mode = true;
+                           self.state_machine.set_deletion_mode(true);
+                           self.state_machine.request_redraw();
+                        }
+                    }
+                    keyboard::Key::Named(keyboard::key::Named::Enter) => {
+                        // Finish editing if an edit dialog is open
+                        if self.editing_state.is_some() || self.editing_transition.is_some() {
+                            self.update(Message::FinishEditing);
+                        }
+                    }
+                    keyboard::Key::Named(keyboard::key::Named::Escape) => {
+                        // Cancel editing or close menus
+                        if self.editing_state.is_some() || self.editing_transition.is_some() {
+                            self.update(Message::CancelEditing);
+                        } else {
+                            self.update(Message::CloseMenus);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Message::KeyReleased(key) => {
+                match key {
+                    keyboard::Key::Named(keyboard::key::Named::Control) => {
+                        self.state_machine.set_ctrl_pressed(false);
+                    }
+                    keyboard::Key::Named(keyboard::key::Named::Shift) => {
+                        self.state_machine.set_shift_pressed(false);
+                    }
+                    keyboard::Key::Named(keyboard::key::Named::Alt) => {
+                        self.state_machine.set_alt_pressed(false);
+                    }
+                    keyboard::Key::Named(keyboard::key::Named::Tab) => {
+                        // Exit deletion mode
+                        self.deletion_mode = false;
+                        self.state_machine.set_deletion_mode(false); 
+                        self.state_machine.request_redraw();
+                    }
+                    _ => {}
+                }
+            }
+            Message::Clear => {
+                // Clear all state machine data
+                self.state_machine = state_machine::State::default();
+                self.state_machine.reset_id_counter(); 
+                self.transitions.clear();
+                self.states.clear();
+                self.state_id_to_index.clear();
+                self.initial_state = None;
+                self.final_states.clear();
+                self.machine = FiniteAutomata::default();
+                self.check_input_dialog_open = false;
+                self.check_input_text.clear();
+                self.check_result_popup_open = false;
+                self.check_result = None;
+                self.deletion_mode = false;
+                self.state_machine.set_deletion_mode(false);
+                should_sync_automata = true; // All cleared, so sync is required
+            }
+            Message::SyncToFiniteAutomata => {
+                // Explicitly requested a sync
+                should_sync_automata = true;
+            }
+            Message::LoadFromFiniteAutomata => {
+                // Loading changes the GUI's representation of the FA, so sync the internal machine
+                self.load_finite_automata_to_gui();
+                should_sync_automata = true; 
+            }
+            Message::ToggleOperationsMenu => {
+                self.operations_menu_open = !self.operations_menu_open;
+            }
+            Message::CloseMenus => {
+                self.operations_menu_open = false;
+            }
+            Message::CheckInput => {
+                self.update(Message::OpenCheckInputDialog);
+                self.operations_menu_open = false;            
+            }
+            Message::OpenCheckInputDialog => {
+                self.check_input_dialog_open = true;
+                self.check_input_text.clear();
+            }
+            Message::CheckInputTextChanged(text) => {
+                self.check_input_text = text;
+            }
+            Message::SubmitCheckInput => {
+                let result = self.machine.check_input(&mut self.check_input_text);
+                self.check_result = Some(result);
+                self.check_input_dialog_open = false;
+                self.check_result_popup_open = true;
+                self.check_input_text.clear();
+            }
+            Message::CancelCheckInput => {
+                self.check_input_dialog_open = false;
+                self.check_input_text.clear();
+            }
+            Message::CloseCheckResultPopup => {
+                self.check_result_popup_open = false;
+                self.check_result = None;
+            }
+            Message::DfaToNfa => {
+                println!("DFA to NFA clicked");
+                self.operations_menu_open = false;
+                // Assuming DFA to NFA conversion modifies the internal machine structure
+                should_sync_automata = true;
+            }
+            Message::Minimize => {
+                println!("Minimize clicked");
+                self.operations_menu_open = false;
+                // Assuming minimization modifies the internal machine structure
+                should_sync_automata = true;
+            }
+            Message::DeleteState(state_id) => {
+                self.delete_state(state_id); // Deletes state, associated transitions, updates initial/final
+                self.state_machine.request_redraw();
+                should_sync_automata = true; // State deleted, so sync is required
+            }
+            Message::DeleteTransition(transition_index) => {
+                self.delete_transition(transition_index); // Deletes a transition
+                self.state_machine.request_redraw();
+                should_sync_automata = true; // Transition deleted, so sync is required
+            }
+            Message::MenuAction(action) => {
+                match action {
+                    MenuAction::CheckInput => self.update(Message::CheckInput),
+                    MenuAction::DfaToNfa => self.update(Message::DfaToNfa),
+                    MenuAction::Minimize => self.update(Message::Minimize),
+                    MenuAction::Clear => self.update(Message::Clear),
+                }
+            }
+        }
+
+        // Only synchronize the GUI to the finite automata if changes occurred
+        if should_sync_automata {
+            self.sync_gui_to_finite_automata();
+            println!("-----------------------------------------\n");
+            println!("{:?}", self.machine);
+            println!("-----------------------------------------\n");
+        }
+    }
+
+    fn set_initial_state(&mut self, state_id: usize) {
+        if self.initial_state == Some(state_id) {
+            self.initial_state = None;
+        } else {
+            self.initial_state = Some(state_id);
+        }
+        self.state_machine.request_redraw();
+    }
+
+    fn toggle_final_state(&mut self, state_id: usize) {
+        if self.final_states.contains(&state_id) {
+            self.final_states.remove(&state_id);
+        } else {
+            self.final_states.insert(state_id);
+        }
+        self.state_machine.request_redraw();
+    }
+
+    fn sync_gui_to_finite_automata(&mut self) {
+        self.machine.clear();
+        // Create a map from state ID to state label for easy lookup
+        let mut state_map: HashMap<usize, String> = HashMap::new();
+        for state_node in &self.states {
+            let state_label = state_node.label.to_string();
+            state_map.insert(state_node.id, state_label.clone());
+            self.machine.add_state_with_id_label(state_node.id as u64, state_node.label);
+        }
+        
+        for state_node in &self.states {
+            let is_initial = self.initial_state == Some(state_node.id);
+            let is_final = self.final_states.contains(&state_node.id);
+            let id = state_node.id as u64;
+            if is_final {
+                self.machine.make_final(id);
+            }
+            if is_initial {
+                self.machine.make_initial(id);
+            }
+        }
+        
+        for gui_transition in &self.transitions {
+            if let (Some(_), Some(_)) = (
+                state_map.get(&gui_transition.from_state_id),
+                state_map.get(&gui_transition.to_state_id)
+            ) {
+                self.machine.add_transition(gui_transition.from_state_id as u64, gui_transition.to_state_id as u64, gui_transition.label.to_string());
+            }
+        }
+    }
+
+    fn delete_state(&mut self, state_id: usize) {
+        // Remove the state from the vector
+        self.states.retain(|s| s.id != state_id);
+        
+        // Remove transitions connected to the deleted state
+        self.transitions.retain(|transition| {
+            transition.from_state_id != state_id && transition.to_state_id != state_id
+        });
+        
+        // Update initial and final states if the deleted state was one of them
+        if self.initial_state == Some(state_id) {
+            self.initial_state = None;
+        }
+        
+        self.final_states.remove(&state_id);
+
+        // Rebuild the state_id_to_index map as indices may have shifted
+        self.state_id_to_index.clear();
+        for (index, state) in self.states.iter().enumerate() {
+            self.state_id_to_index.insert(state.id, index);
+        }
+        // self.machine.remove_state(state_id as u64); // This line is commented out as per previous versions
+    }
+
+    fn delete_transition(&mut self, transition_index: usize) {
+        if transition_index < self.transitions.len() {
+            self.transitions.remove(transition_index);
+        }
+    }
+
+    fn is_deletion_mode(&self) -> bool {
+        self.deletion_mode
+    }
+
+    fn load_finite_automata_to_gui(&mut self) {
+        self.states.clear();
+        self.transitions.clear();
+        self.state_id_to_index.clear();
+        self.initial_state = None;
+        self.final_states.clear();
+        
+        // Convert FiniteAutomata to GUI representation
+        let mut states_from_machine: Vec<_> = self.machine.get_states_by_id_ref().into_iter().collect();
+        states_from_machine.sort_by(|x,y| x.0.cmp(&y.0));
+        
+        // Basic positioning algorithm, will change to something that looks better
+        for (idx, state) in states_from_machine.iter() {
+            let position = Point::new(
+                100.0 + (**idx as f32 * 150.0) % 600.0,
+                100.0 + ((**idx as f32 * 150.0) / 600.0).floor() * 100.0,
+            );
+            
+            // Assign the ID directly from the loaded machine's state ID
+            let id = **idx as usize; // Use the actual ID from the loaded automaton
+            let state_node = state_machine::StateNode::new(
+                id,
+                position,
+                30.0,
+                Box::leak(state.name.clone().into_boxed_str())
+            );
+            
+            let index = self.states.len();
+            self.states.push(state_node);
+            self.state_id_to_index.insert(id, index);
+        }
+        
+        // Set next_id to be greater than any loaded ID, ensuring uniqueness for new states
+        let max_id_after_load = self.states.iter().map(|s| s.id).max().unwrap_or(0);
+        self.state_machine.next_id = max_id_after_load + 1;
+
+        // Convert transitions
+        for (state_id, state) in states_from_machine {
+            for (transition_id, input) in state.iter_by_transition() {
+                if let (Some(from_state), Some(to_state)) = (
+                    self.states.iter().find(|s| s.id as u64 == *state_id),
+                    self.states.iter().find(|s| s.id as u64 == *transition_id),
+                ) {
+                    // This joins the hashset as "word1, word2, word3, ...
+                    let label: String = input
+                        .iter()
+                        .map(|s| s.as_str())
+                        .collect::<Vec<&str>>()
+                        .join(", ");
+                    let gui_transition = state_machine::Transition {
+                        from_state_id: from_state.id,
+                        to_state_id: to_state.id,
+                        from_point: from_state.position,
+                        to_point: to_state.position,
+                        label: Box::leak(label.into_boxed_str()),
+                    };
+                    self.transitions.push(gui_transition);
+                }
+            }
+        }
+        
+        // Set initial state
+        if let Some(initial) = self.machine.get_initial_state_id() {
+            if let Some(state) = self.states.iter().find(|s| s.id as u64 == *initial) {
+                self.initial_state = Some(state.id);
+            }
+        }
+        
+        // Set final states
+        for final_state in self.machine.get_final_states() {
+            if let Some(state) = self.states.iter().find(|s| s.id as u64 == *final_state) {
+                self.final_states.insert(state.id);
+            }
+        }
+        
+        self.state_machine.request_redraw();
+    }
+
+    fn create_menu_bar(&self) -> Element<Message> {
+        let menu_bar = MenuBar::new()
+            .push(
+                MenuTree::new(text("Abstract Machine"))
+                    .push(
+                        MenuTree::new(text("Clear"))
+                            .on_action(Message::MenuAction(MenuAction::Clear))
+                    )
+                    .style(|_theme: &iced::Theme| {
+                        menu::Style {
+                            text_color: iced::Color::from_rgba(0.6, 0.6, 0.6, 1.0),
+                            background: iced::Background::Color(iced::Color::from_rgba(0.176, 0.172, 0.176, 1.0)),
+                            border_width: 0.0,
+                            border_radius: 0.0.into(),
+                            ..Default::default()
+                        }
+                    })
+            )
+            .push(
+                MenuTree::new(text("Operations"))
+                    .push(
+                        MenuTree::new(text("Check Input"))
+                            .on_action(Message::MenuAction(MenuAction::CheckInput))
+                    )
+                    .push(
+                        MenuTree::new(text("DFA to NFA"))
+                            .on_action(Message::MenuAction(MenuAction::DfaToNfa))
+                    )
+                    .push(
+                        MenuTree::new(text("Minimize"))
+                            .on_action(Message::MenuAction(MenuAction::Minimize))
+                    )
+                    .style(|_theme: &iced::Theme| {
+                        menu::Style {
+                            text_color: iced::Color::WHITE,
+                            background: iced::Background::Color(iced::Color::from_rgba(0.176, 0.172, 0.176, 1.0)),
+                            border_width: 0.0,
+                            border_radius: 0.0.into(),
+                            ..Default::default()
+                        }
+                    })
+            );
+
+        container(menu_bar)
+            .style(|_theme: &iced::Theme| {
+                container::Style {
+                    background: Some(iced::Color::from_rgba(0.176, 0.172, 0.176, 1.0).into()),
+                    border: iced::Border {
+                        color: iced::Color::from_rgba(0.3, 0.3, 0.3, 1.0),
+                        width: 1.0,
+                        radius: 0.0.into(),
+                    },
+                    ..Default::default()
+                }
+            })
+            .padding([4, 8])
+            .width(Length::Fill)
+            .into()
+    }
+
+    fn create_check_input_dialog(&self) -> Element<Message> {
+        let card = card::Card::new(
+            text("Input String:").size(17),
+            column![
+                text_input("Enter input string...", &self.check_input_text)
+                    .on_input(Message::CheckInputTextChanged)
+                    .on_submit(Message::SubmitCheckInput)
+                    .width(200)
+                    .style(|_theme: &iced::Theme, _status| {
+                        iced::widget::text_input::Style {
+                            background: iced::Background::Color(iced::Color::from_rgba(0.15, 0.14, 0.15, 1.0)),
+                            border: iced::Border {
+                                color: iced::Color::from_rgba(0.0, 0.5, 1.0, 1.0),
+                                width: 2.0,
+                                radius: 4.0.into(),
+                            },
+                            icon: iced::Color::WHITE,
+                            placeholder: iced::Color::from_rgba(0.7, 0.7, 0.7, 1.0),
+                            value: iced::Color::WHITE,
+                            selection: iced::Color::from_rgba(0.0, 0.5, 1.0, 0.3),
+                        }
+                    }),
+                row![
+                    button("Accept")
+                        .on_press(Message::SubmitCheckInput)
+                        .padding([4, 8]),
+                    button("Cancel")
+                        .on_press(Message::CancelCheckInput)
+                        .padding([4, 8])
+                ]
+                .spacing(8)
+            ]
+            .spacing(8)
+            .padding(12)
+            .width(250)
+        )
+        .style(|_theme: &iced::Theme| {
+            card::Style {
+                background: iced::Background::Color(iced::Color::from_rgba(0.15, 0.14, 0.15, 1.0)),
+                border_radius: 4.0.into(),
+                border_width: 1.0,
+                border_color: iced::Color::from_rgba(0.4, 0.4, 0.4, 1.0),
+                ..Default::default()
+            }
+        });
+
+        container(card)
+            .center(iced::Length::Fill)
+            .style(|_theme: &iced::Theme| {
+                container::Style {
+                    background: Some(iced::Color::from_rgba(0.0, 0.0, 0.0, 0.3).into()),
+                    ..Default::default()
+                }
+            })
+            .into()
+    }
+
+    fn create_check_result_popup(&self) -> Element<Message> {
+        let result_text = match self.check_result {
+            Some(true) => "Accepted!",
+            Some(false) => "Not Accepted :(",
+            None => "Error"
+        };
+
+        let card = card::Card::new(
+            row![
+                text(result_text).size(18),
+                horizontal_space(),
+                button("×")
+                    .on_press(Message::CloseCheckResultPopup)
+                    .style(|_theme: &iced::Theme, status| {
+                        match status {
+                            button::Status::Hovered => button::Style {
+                                background: Some(iced::Color::from_rgba(0.8, 0.2, 0.2, 1.0).into()),
+                                text_color: iced::Color::WHITE,
+                                border: iced::Border::default(),
+                                ..Default::default()
+                            },
+                            _ => button::Style {
+                                background: Some(iced::Color::TRANSPARENT.into()),
+                                text_color: iced::Color::WHITE,
+                                border: iced::Border::default(),
+                                ..Default::default()
+                            }
+                        }
+                    })
+                    .padding([2, 6]),
+            ]
+            .align_y(Alignment::Center)
+            .padding(12)
+            .width(200)
+        )
+        .style(|_theme: &iced::Theme| {
+            card::Style {
+                background: iced::Background::Color(iced::Color::from_rgba(0.15, 0.14, 0.15, 1.0)),
+                border_radius: 4.0.into(),
+                border_width: 1.0,
+                border_color: iced::Color::from_rgba(0.4, 0.4, 0.4, 1.0),
+                ..Default::default()
+            }
+        });
+
+        container(card)
+            .center(iced::Length::Fill)
+            .style(|_theme: &iced::Theme| {
+                container::Style {
+                    background: Some(iced::Color::from_rgba(0.0, 0.0, 0.0, 0.3).into()),
+                    ..Default::default()
+                }
+            })
+            .into()
+    }
+
+    pub fn view(&self) -> Element<Message> {
+        let menu_bar = self.create_menu_bar();
+
+        let main_content = container(hover(
+            self.state_machine.view(&self.states, &self.transitions, self.initial_state, &self.final_states)
+                .map(Message::Canvas),
+            if self.states.is_empty() && self.transitions.is_empty() {
+                container(horizontal_space())
+            } else {
+                container(row![
+                    horizontal_space(),
+                    button("Clear")
+                        .style(button::danger)
+                        .on_press(Message::Clear)
+                ]
+                .align_y(Alignment::Center)
+                )
+                .padding(10)
+            },
+        ))
+        .style(|_theme: &iced::Theme| {
+            container::Style {
+                background: Some(iced::Color::WHITE.into()),
+                border: iced::Border {
+                    color: iced::Color::from_rgba(0.3, 0.3, 0.3, 1.0),
+                    width: 1.0,
+                    radius: 0.0.into(),
+                },
+                ..Default::default()
+            }
+        })
+        .padding(20);
+
+        let content_with_menu = column![
+            menu_bar,
+            main_content
+        ]
+        .spacing(0);
+        
+        let mut final_content = content_with_menu.into();
+
+        if self.editing_state.is_some() || self.editing_transition.is_some() {
+            let edit_dialog = card::Card::new(
+                text(if self.editing_state.is_some() { "Edit State:" } else { "Edit Transition:" }).size(17),
+                column![
+                    text_input("Enter label...", &self.edit_text)
+                        .on_input(Message::EditTextChanged)
+                        .on_submit(Message::FinishEditing)
+                        .width(150)
+                        .style(|_theme: &iced::Theme, _status| {
+                            iced::widget::text_input::Style {
+                                background: iced::Background::Color(iced::Color::from_rgba(0.15, 0.14, 0.15, 1.0)),
+                                border: iced::Border {
+                                    color: iced::Color::from_rgba(0.0, 0.5, 1.0, 1.0),
+                                    width: 2.0,
+                                    radius: 4.0.into(),
+                                },
+                                icon: iced::Color::WHITE,
+                                placeholder: iced::Color::from_rgba(0.7, 0.7, 0.7, 1.0),
+                                value: iced::Color::WHITE,
+                                selection: iced::Color::from_rgba(0.0, 0.5, 1.0, 0.3),
+                            }
+                        }),
+                    row![
+                        button("Save")
+                            .on_press(Message::FinishEditing)
+                            .padding([4, 8]),
+                        button("Cancel")
+                            .on_press(Message::CancelEditing)
+                            .padding([4, 8])
+                    ]
+                    .spacing(8)
+                ]
+                .spacing(8)
+                .padding(12)
+                .width(200)
+            )
+            .style(|_theme: &iced::Theme| {
+                card::Style {
+                    background: iced::Background::Color(iced::Color::from_rgba(0.15, 0.14, 0.15, 1.0)),
+                    border_radius: 4.0.into(),
+                    border_width: 1.0,
+                    border_color: iced::Color::from_rgba(0.4, 0.4, 0.4, 1.0),
+                    ..Default::default()
+                }
+            });
+
+            let edit_dialog_container = container(edit_dialog)
+                .center(iced::Length::Fill)
+                .style(|_theme: &iced::Theme| {
+                    container::Style {
+                        background: Some(iced::Color::from_rgba(0.0, 0.0, 0.0, 0.3).into()),
+                        ..Default::default()
+                    }
+                });
+            
+            final_content = iced::widget::stack![final_content, edit_dialog_container].into();
+        }
+
+        if self.check_input_dialog_open {
+            let check_input_dialog = self.create_check_input_dialog();
+            final_content = iced::widget::stack![final_content, check_input_dialog].into();
+        }
+
+        if self.check_result_popup_open {
+            let check_result_popup = self.create_check_result_popup();
+            final_content = iced::widget::stack![final_content, check_result_popup].into();
+        }
+
+        final_content
+    }
+}
+

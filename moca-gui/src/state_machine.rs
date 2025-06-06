@@ -124,6 +124,12 @@ impl State {
     pub fn reset_id_counter(&mut self) {
         self.next_id = 0;
     }
+
+    pub fn check_input(&self, _input: &str) -> bool {
+        // For now, return false as a placeholder
+        // This will be implemented properly when we integrate with the finite automata logic
+        false
+    }
 }
 
 struct StateMachine<'a> {
@@ -240,11 +246,6 @@ impl canvas::Program<CanvasMessage> for StateMachine<'_> {
                         None | Some(PendingTransition::ClickTracking { .. }) => {
                             if let Some(node) = clicked_node {
                                 if self.state.is_deletion_mode() { 
-                                    *state = Some(PendingTransition::ClickTracking {
-                                        last_click_time: now,
-                                        last_clicked_state: Some(node.id),
-                                        last_clicked_transition: None,
-                                    });
                                     return (canvas::event::Status::Captured, Some(CanvasMessage::StateClicked(node.id)));
                                 }
 
@@ -274,23 +275,18 @@ impl canvas::Program<CanvasMessage> for StateMachine<'_> {
                                         state_id: node.id,
                                         offset
                                     });
+                                    return (canvas::event::Status::Captured, None);
                                 } else {
                                     *state = Some(PendingTransition::Start {
                                         from_state_id: node.id,
                                         from_point: node.position
                                     });
+                                    return (canvas::event::Status::Captured, None);
                                 }
-                                (canvas::event::Status::Captured, None)
                             } else if let Some(transition_index) = clicked_transition_index {
-
-                                 if self.state.is_deletion_mode() { 
-                                    *state = Some(PendingTransition::ClickTracking {
-                                        last_click_time: now,
-                                        last_clicked_transition: Some(transition_index),
-                                        last_clicked_state: None,
-                                    });
+                                if self.state.is_deletion_mode() { 
                                     return (canvas::event::Status::Captured, Some(CanvasMessage::TransitionClicked(transition_index)));
-                                } 
+                                }
 
                                 if now.duration_since(last_click_time) < double_click_threshold
                                     && last_clicked_transition == Some(transition_index) {
@@ -307,8 +303,7 @@ impl canvas::Program<CanvasMessage> for StateMachine<'_> {
                                     last_clicked_transition: Some(transition_index),
                                     last_clicked_state: None,
                                 });
-
-                                (canvas::event::Status::Captured, None)
+                                return (canvas::event::Status::Captured, None);
                             } else {
                                 // Dynamically assign a label using the current next_id from State
                                 let label = format!("q{}", self.state.get_current_next_id()); 
@@ -325,12 +320,10 @@ impl canvas::Program<CanvasMessage> for StateMachine<'_> {
                                         to_state_id: to_node.id,
                                         from_point,
                                         to_point: to_node.position,
-                                        label: "ε",
+                                        label: Box::leak("ε".to_string().into_boxed_str()),
                                     };
                                     (canvas::event::Status::Captured, Some(CanvasMessage::AddTransition(transition)))
                                 } else {
-                                    // Clicked on same node, cancel, but it will change to draw
-                                    // loops
                                     *state = None;
                                     (canvas::event::Status::Captured, None)
                                 }
@@ -703,7 +696,7 @@ impl Transition {
         )
     }
 
-    fn draw_arrowhead(&self, frame: &mut Frame, theme: &Theme, tip: Point, direction: Vector) {
+    fn draw_arrowhead(&self, frame: &mut Frame, _theme: &Theme, tip: Point, direction: Vector) {
         let arrow_length = 12.0;
         let arrow_angle = std::f32::consts::PI / 6.0; // 30 degrees
 

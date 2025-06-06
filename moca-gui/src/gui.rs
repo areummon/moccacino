@@ -1,7 +1,6 @@
 use iced::keyboard;
-use iced::widget::pane_grid::state;
-use iced::widget::{button, container, horizontal_space, hover, row, text_input, text, column, stack};
-use iced::{Element, Alignment, Point, Event, Subscription, Task, Length};
+use iced::widget::{button, container, horizontal_space, hover, row, text, column, stack};
+use iced::{Element, Alignment, Event, Subscription, Task, Length};
 use std::collections::HashMap;
 
 use crate::state_machine;
@@ -32,10 +31,14 @@ pub enum Message {
     CloseCheckResultPopup,
     DeleteState(usize),
     DeleteTransition(usize),
+    // New tab-related messages
+    AddTab,
+    RemoveTab(usize),
+    SwitchTab(usize),
 }
 
 #[derive(Default)]
-pub struct App {
+struct Tab {
     state_machine: state_machine::State,
     transitions: Vec<state_machine::Transition>,
     states: Vec<state_machine::StateNode>,
@@ -51,13 +54,30 @@ pub struct App {
     check_input_dialog_open: bool,
     check_input_text: String,
     check_result_popup_open: bool,
-    check_result: Option<bool>,
+    check_input_result: Option<bool>,
     deletion_mode: bool, 
+}
+
+impl Tab {
+    fn new() -> Self {
+        let mut tab = Self::default();
+        tab.state_machine.reset_id_counter();
+        tab.machine = FiniteAutomata::default(); // Ensure finite automata is initialized
+        tab
+    }
+}
+
+#[derive(Default)]
+pub struct App {
+    tabs: Vec<Box<Tab>>,
+    active_tab: usize,
 }
 
 impl App {
     pub fn new() -> (Self, Task<Message>) {
-        (Self::default(), Task::none())
+        let mut app = Self::default();
+        app.tabs.push(Box::new(Tab::new()));
+        (app, Task::none())
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
@@ -72,435 +92,452 @@ impl App {
         })
     }
 
-    pub fn update(&mut self, message: Message) {
-        // Flag to determine if sync_gui_to_finite_automata should be called
-        let mut should_sync_automata = false; 
+    fn get_active_tab(&self) -> &Tab {
+        &self.tabs[self.active_tab]
+    }
 
+    fn get_active_tab_mut(&mut self) -> &mut Tab {
+        &mut self.tabs[self.active_tab]
+    }
+
+    pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::Canvas(canvas_msg) => {
-                match canvas_msg {
+            Message::Canvas(canvas_message) => {
+                let active_tab = self.get_active_tab_mut();
+                match canvas_message {
                     state_machine::CanvasMessage::AddState(mut state) => {
-                        // Assign the new state a unique ID and increment the counter
-                        let assigned_id = self.state_machine.next_id;
-                        state.id = assigned_id; 
-                        
-                        let index = self.states.len();
-                        self.states.push(state);
-                        self.state_id_to_index.insert(assigned_id, index);
-                        
-                        self.state_machine.next_id += 1; // Increment for the next state
-                        self.state_machine.request_redraw();
-                        should_sync_automata = true; // State added, so sync is required
+                        let assigned_id = active_tab.state_machine.next_id;
+                        state.id = assigned_id;
+                        let index = active_tab.states.len();
+                        active_tab.states.push(state);
+                        active_tab.state_id_to_index.insert(assigned_id, index);
+                        active_tab.state_machine.next_id += 1;
+                        active_tab.state_machine.request_redraw();
                     }
                     state_machine::CanvasMessage::AddTransition(transition) => {
-                        self.transitions.push(transition);
-                        self.state_machine.request_redraw();
-                        should_sync_automata = true; // Transition added, so sync is required
+                        active_tab.transitions.push(transition);
+                        active_tab.state_machine.request_redraw();
                     }
                     state_machine::CanvasMessage::MoveState { state_id, new_position } => {
-                        // Update the position of the state and its connected transitions
-                        if let Some(&index) = self.state_id_to_index.get(&state_id) {
-                            if let Some(state) = self.states.get_mut(index) {
+                        if let Some(index) = active_tab.state_id_to_index.get(&state_id) {
+                            if let Some(state) = active_tab.states.get_mut(*index) {
                                 state.position = new_position;
-                                
-                                for transition in &mut self.transitions {
-                                    if transition.from_state_id == state_id {
-                                        transition.from_point = new_position;
-                                    }
-                                    if transition.to_state_id == state_id {
-                                        transition.to_point = new_position;
-                                    }
-                                }
-                                
-                                self.state_machine.request_redraw();
-                                // Moving a state changes its visual position but not its logical definition (ID, label, connections)
-                                // within the FiniteAutomata, thus no sync is strictly needed unless FiniteAutomata tracked positions.
                             }
+                        }
+                        for transition in &mut active_tab.transitions {
+                            if transition.from_state_id == state_id {
+                                transition.from_point = new_position;
+                            }
+                            if transition.to_state_id == state_id {
+                                transition.to_point = new_position;
+                            }
+                        }
+                        active_tab.state_machine.request_redraw();
+                        active_tab.state_id_to_index.clear();
+                        for (index, state) in active_tab.states.iter().enumerate() {
+                            active_tab.state_id_to_index.insert(state.id, index);
                         }
                     }
                     state_machine::CanvasMessage::StateClicked(state_id) => {
-                        if self.deletion_mode {
-                            // Deletion is handled by calling DeleteState, which will set should_sync_automata
-                            self.update(Message::DeleteState(state_id));
-                        } else if self.state_machine.is_shift_pressed() {
-                            // Toggling final state modifies the state machine structure
+                        if active_tab.deletion_mode {
+                            active_tab.states.retain(|s| s.id != state_id);
+                            active_tab.transitions.retain(|transition| {
+                                transition.from_state_id != state_id && transition.to_state_id != state_id
+                            });
+                            if active_tab.initial_state == Some(state_id) {
+                                active_tab.initial_state = None;
+                            }
+                            active_tab.final_states.remove(&state_id);
+                            active_tab.state_id_to_index.clear();
+                            for (index, state) in active_tab.states.iter().enumerate() {
+                                active_tab.state_id_to_index.insert(state.id, index);
+                            }
+                            active_tab.state_machine.request_redraw();
+                        } else if active_tab.state_machine.is_shift_pressed() {
                             self.toggle_final_state(state_id);
-                            should_sync_automata = true; 
-                        } else if self.state_machine.is_alt_pressed() {
-                            // Setting initial state modifies the state machine structure
+                        } else if active_tab.state_machine.is_alt_pressed() {
                             self.set_initial_state(state_id);
-                            should_sync_automata = true; 
+                        } else if let Some(index) = active_tab.state_id_to_index.get(&state_id) {
+                            if let Some(state) = active_tab.states.get(*index) {
+                                active_tab.editing_state = Some(state_id);
+                                active_tab.edit_text = state.label.to_string();
+                                active_tab.editing_transition = None;
+                            }
+                        }
+                    }
+                    state_machine::CanvasMessage::TransitionClicked(transition_index) => {
+                        if active_tab.deletion_mode {
+                            if transition_index < active_tab.transitions.len() {
+                                active_tab.transitions.remove(transition_index);
+                                active_tab.state_machine.request_redraw();
+                            }
+                        } else if let Some(transition) = active_tab.transitions.get(transition_index) {
+                            active_tab.editing_transition = Some(transition_index);
+                            active_tab.edit_text = transition.label.to_string();
+                            active_tab.editing_state = None;
                         }
                     }
                     state_machine::CanvasMessage::StateDoubleClicked(state_id) => {
-                        // Prepares for editing, but doesn't modify the state machine yet
-                        if let Some(&index) = self.state_id_to_index.get(&state_id) {
-                            if let Some(state) = self.states.get(index) {
-                                self.editing_state = Some(state_id);
-                                self.edit_text = state.label.to_string();
-                                self.editing_transition = None;
+                        if let Some(index) = active_tab.state_id_to_index.get(&state_id) {
+                            if let Some(state) = active_tab.states.get(*index) {
+                                active_tab.editing_state = Some(state_id);
+                                active_tab.edit_text = state.label.to_string();
+                                active_tab.editing_transition = None;
                             }
                         }
                     }
                     state_machine::CanvasMessage::TransitionDoubleClicked(transition_index) => {
-                        // Prepares for editing, but doesn't modify the state machine yet
-                        if let Some(transition) = self.transitions.get(transition_index) {
-                            self.editing_transition = Some(transition_index);
-                            self.edit_text = transition.label.to_string();
-                            self.editing_state = None;
-                        }
-                    }
-                    state_machine::CanvasMessage::TransitionClicked(transition_index) => {
-                        if self.deletion_mode {
-                            // Deletion is handled by calling DeleteTransition, which will set should_sync_automata
-                            self.update(Message::DeleteTransition(transition_index));
+                        if let Some(transition) = active_tab.transitions.get(transition_index) {
+                            active_tab.editing_transition = Some(transition_index);
+                            active_tab.edit_text = transition.label.to_string();
+                            active_tab.editing_state = None;
                         }
                     }
                 }
-                // Close operations menu when interacting with the canvas
-                self.operations_menu_open = false;
-            }
-            Message::EditTextChanged(text) => {
-                // Updates the text input buffer, but doesn't modify the state machine yet
-                self.edit_text = text;
-            }
-            Message::FinishEditing => {
-                // Applies the edited label to either a state or a transition
-                if let Some(state_id) = self.editing_state {
-                    if let Some(&index) = self.state_id_to_index.get(&state_id) {
-                        if let Some(state) = self.states.get_mut(index) {
-                            state.label = Box::leak(self.edit_text.clone().into_boxed_str());
-                            should_sync_automata = true; // State label changed, so sync is required
-                        }
-                    }
-                } else if let Some(transition_index) = self.editing_transition {
-                    if let Some(transition) = self.transitions.get_mut(transition_index) {
-                        transition.label = Box::leak(self.edit_text.clone().into_boxed_str());
-                        should_sync_automata = true; // Transition label changed, so sync is required
-                    }
-                }
-                // Reset editing state
-                self.editing_state = None;
-                self.editing_transition = None;
-                self.edit_text.clear();
-                self.state_machine.request_redraw();
-            }
-            Message::CancelEditing => {
-                // Resets editing state without modifying the state machine
-                self.editing_state = None;
-                self.editing_transition = None;
-                self.edit_text.clear();
+                Task::none()
             }
             Message::KeyPressed(key) => {
                 match key {
                     keyboard::Key::Named(keyboard::key::Named::Control) => {
-                        self.state_machine.set_ctrl_pressed(true);
+                        self.get_active_tab_mut().state_machine.set_ctrl_pressed(true);
                     }
                     keyboard::Key::Named(keyboard::key::Named::Shift) => {
-                        self.state_machine.set_shift_pressed(true);
+                        self.get_active_tab_mut().state_machine.set_shift_pressed(true);
                     }
                     keyboard::Key::Named(keyboard::key::Named::Alt) => {
-                        self.state_machine.set_alt_pressed(true);
+                        self.get_active_tab_mut().state_machine.set_alt_pressed(true);
                     }
                     keyboard::Key::Named(keyboard::key::Named::Tab) => {
-                        // Toggle deletion mode
-                        if self.editing_state.is_none() && self.editing_transition.is_none() && 
-                           !self.check_input_dialog_open {
-                           self.deletion_mode = true;
-                           self.state_machine.set_deletion_mode(true);
-                           self.state_machine.request_redraw();
-                        }
+                        let active_tab = self.get_active_tab_mut();
+                        active_tab.deletion_mode = !active_tab.deletion_mode;
+                        active_tab.state_machine.set_deletion_mode(active_tab.deletion_mode);
+                        active_tab.state_machine.request_redraw();
                     }
-                    keyboard::Key::Named(keyboard::key::Named::Enter) => {
-                        // Finish editing if an edit dialog is open
-                        if self.editing_state.is_some() || self.editing_transition.is_some() {
-                            self.update(Message::FinishEditing);
-                        }
-                    }
-                    keyboard::Key::Named(keyboard::key::Named::Escape) => {
-                        // Cancel editing or close menus
-                        if self.editing_state.is_some() || self.editing_transition.is_some() {
-                            self.update(Message::CancelEditing);
-                        } else {
-                            self.update(Message::CloseMenus);
-                        }
+                    keyboard::Key::Named(keyboard::key::Named::Delete) => {
+                        self.get_active_tab_mut().deletion_mode = true;
+                        self.get_active_tab_mut().state_machine.set_deletion_mode(true);
+                        self.get_active_tab_mut().state_machine.request_redraw();
                     }
                     _ => {}
                 }
+                Task::none()
             }
             Message::KeyReleased(key) => {
                 match key {
                     keyboard::Key::Named(keyboard::key::Named::Control) => {
-                        self.state_machine.set_ctrl_pressed(false);
+                        self.get_active_tab_mut().state_machine.set_ctrl_pressed(false);
                     }
                     keyboard::Key::Named(keyboard::key::Named::Shift) => {
-                        self.state_machine.set_shift_pressed(false);
+                        self.get_active_tab_mut().state_machine.set_shift_pressed(false);
                     }
                     keyboard::Key::Named(keyboard::key::Named::Alt) => {
-                        self.state_machine.set_alt_pressed(false);
+                        self.get_active_tab_mut().state_machine.set_alt_pressed(false);
                     }
-                    keyboard::Key::Named(keyboard::key::Named::Tab) => {
-                        // Exit deletion mode
-                        self.deletion_mode = false;
-                        self.state_machine.set_deletion_mode(false); 
-                        self.state_machine.request_redraw();
+                    keyboard::Key::Named(keyboard::key::Named::Delete) => {
+                        self.get_active_tab_mut().deletion_mode = false;
+                        self.get_active_tab_mut().state_machine.set_deletion_mode(false);
+                        self.get_active_tab_mut().state_machine.request_redraw();
                     }
                     _ => {}
                 }
+                Task::none()
             }
             Message::Clear => {
-                // Clear all state machine data
-                self.state_machine = state_machine::State::default();
-                self.state_machine.reset_id_counter(); 
-                self.transitions.clear();
-                self.states.clear();
-                self.state_id_to_index.clear();
-                self.initial_state = None;
-                self.final_states.clear();
-                self.machine = FiniteAutomata::default();
-                self.check_input_dialog_open = false;
-                self.check_input_text.clear();
-                self.check_result_popup_open = false;
-                self.check_result = None;
-                self.deletion_mode = false;
-                self.state_machine.set_deletion_mode(false);
-                should_sync_automata = true; // All cleared, so sync is required
+                self.get_active_tab_mut().state_machine.reset_id_counter();
+                self.get_active_tab_mut().state_machine.request_redraw();
+                self.get_active_tab_mut().transitions.clear();
+                self.get_active_tab_mut().states.clear();
+                self.get_active_tab_mut().state_id_to_index.clear();
+                self.get_active_tab_mut().initial_state = None;
+                self.get_active_tab_mut().final_states.clear();
+                self.get_active_tab_mut().machine = FiniteAutomata::default();
+                self.get_active_tab_mut().check_input_dialog_open = false;
+                self.get_active_tab_mut().check_input_text.clear();
+                self.get_active_tab_mut().check_result_popup_open = false;
+                self.get_active_tab_mut().check_input_result = None;
+                self.get_active_tab_mut().deletion_mode = false;
+                self.get_active_tab_mut().state_machine.set_deletion_mode(false);
+                Task::none()
             }
-            Message::SyncToFiniteAutomata => {
-                // Explicitly requested a sync
-                should_sync_automata = true;
+            Message::EditTextChanged(text) => {
+                self.get_active_tab_mut().edit_text = text;
+                Task::none()
             }
-            Message::LoadFromFiniteAutomata => {
-                // Loading changes the GUI's representation of the FA, so sync the internal machine
-                self.load_finite_automata_to_gui();
-                should_sync_automata = true; 
+            Message::FinishEditing => {
+                let active_tab = self.get_active_tab_mut();
+                if let Some(state_id) = active_tab.editing_state {
+                    if let Some(index) = active_tab.state_id_to_index.get(&state_id) {
+                        if let Some(state) = active_tab.states.get_mut(*index) {
+                            let edit_text = active_tab.edit_text.clone();
+                            state.label = Box::leak(edit_text.into_boxed_str());
+                        }
+                    }
+                }
+                if let Some(transition_index) = active_tab.editing_transition {
+                    if let Some(transition) = active_tab.transitions.get_mut(transition_index) {
+                        let edit_text = active_tab.edit_text.clone();
+                        transition.label = Box::leak(edit_text.into_boxed_str());
+                    }
+                }
+                active_tab.editing_state = None;
+                active_tab.editing_transition = None;
+                active_tab.edit_text.clear();
+                active_tab.state_machine.request_redraw();
+                Task::none()
+            }
+            Message::CancelEditing => {
+                self.get_active_tab_mut().editing_state = None;
+                self.get_active_tab_mut().editing_transition = None;
+                self.get_active_tab_mut().edit_text.clear();
+                Task::none()
             }
             Message::ToggleOperationsMenu => {
-                self.operations_menu_open = !self.operations_menu_open;
+                self.get_active_tab_mut().operations_menu_open = !self.get_active_tab_mut().operations_menu_open;
+                Task::none()
             }
             Message::CloseMenus => {
-                self.operations_menu_open = false;
+                self.get_active_tab_mut().operations_menu_open = false;
+                Task::none()
             }
             Message::CheckInput => {
-                self.update(Message::OpenCheckInputDialog);
-                self.operations_menu_open = false;            
-            }
-            Message::OpenCheckInputDialog => {
-                self.check_input_dialog_open = true;
-                self.check_input_text.clear();
-            }
-            Message::CheckInputTextChanged(text) => {
-                self.check_input_text = text;
-            }
-            Message::SubmitCheckInput => {
-                let result = self.machine.check_input(&mut self.check_input_text);
-                self.check_result = Some(result);
-                self.check_input_dialog_open = false;
-                self.check_result_popup_open = true;
-                self.check_input_text.clear();
-            }
-            Message::CancelCheckInput => {
-                self.check_input_dialog_open = false;
-                self.check_input_text.clear();
-            }
-            Message::CloseCheckResultPopup => {
-                self.check_result_popup_open = false;
-                self.check_result = None;
+                self.get_active_tab_mut().operations_menu_open = false;
+                self.get_active_tab_mut().check_input_dialog_open = true;
+                self.get_active_tab_mut().check_input_text = String::new();
+                Task::none()
             }
             Message::DfaToNfa => {
-                println!("DFA to NFA clicked");
-                self.operations_menu_open = false;
-                // Assuming DFA to NFA conversion modifies the internal machine structure
-                should_sync_automata = true;
+                self.get_active_tab_mut().operations_menu_open = false;
+                Task::none()
             }
             Message::Minimize => {
-                println!("Minimize clicked");
-                self.operations_menu_open = false;
-                // Assuming minimization modifies the internal machine structure
-                should_sync_automata = true;
+                self.get_active_tab_mut().operations_menu_open = false;
+                Task::none()
+            }
+            Message::OpenCheckInputDialog => {
+                self.get_active_tab_mut().check_input_dialog_open = true;
+                self.get_active_tab_mut().check_input_text.clear();
+                Task::none()
+            }
+            Message::CheckInputTextChanged(text) => {
+                self.get_active_tab_mut().check_input_text = text;
+                Task::none()
+            }
+            Message::SubmitCheckInput => {
+                let mut input = self.get_active_tab().check_input_text.clone();
+                if !input.is_empty() {
+                    // First sync the GUI state to the finite automata
+                    self.sync_gui_to_finite_automata();
+                    // Then check the input using the finite automata
+                    let result = self.get_active_tab().machine.check_input(&mut input);
+                    self.get_active_tab_mut().check_input_result = Some(result);
+                    self.get_active_tab_mut().check_result_popup_open = true;
+                }
+                self.get_active_tab_mut().check_input_dialog_open = false;
+                Task::none()
+            }
+            Message::CancelCheckInput => {
+                self.get_active_tab_mut().check_input_dialog_open = false;
+                Task::none()
+            }
+            Message::CloseCheckResultPopup => {
+                self.get_active_tab_mut().check_result_popup_open = false;
+                Task::none()
             }
             Message::DeleteState(state_id) => {
-                self.delete_state(state_id); // Deletes state, associated transitions, updates initial/final
-                self.state_machine.request_redraw();
-                should_sync_automata = true; // State deleted, so sync is required
+                self.delete_state(state_id);
+                Task::none()
             }
             Message::DeleteTransition(transition_index) => {
-                self.delete_transition(transition_index); // Deletes a transition
-                self.state_machine.request_redraw();
-                should_sync_automata = true; // Transition deleted, so sync is required
+                self.delete_transition(transition_index);
+                Task::none()
             }
-        }
-
-        // Only synchronize the GUI to the finite automata if changes occurred
-        if should_sync_automata {
-            self.sync_gui_to_finite_automata();
-            println!("-----------------------------------------\n");
-            println!("{:?}", self.machine);
-            println!("-----------------------------------------\n");
+            Message::SyncToFiniteAutomata => {
+                self.sync_gui_to_finite_automata();
+                self.get_active_tab_mut().state_machine.request_redraw();
+                Task::none()
+            }
+            Message::LoadFromFiniteAutomata => {
+                self.load_finite_automata_to_gui();
+                self.get_active_tab_mut().state_machine.request_redraw();
+                Task::none()
+            }
+            Message::AddTab => {
+                self.tabs.push(Box::new(Tab::new()));
+                self.active_tab = self.tabs.len() - 1;
+                Task::none()
+            }
+            Message::RemoveTab(index) => {
+                if self.tabs.len() > 1 {
+                    self.tabs.remove(index);
+                    if self.active_tab >= self.tabs.len() {
+                        self.active_tab = self.tabs.len() - 1;
+                    }
+                }
+                Task::none()
+            }
+            Message::SwitchTab(index) => {
+                if index < self.tabs.len() {
+                    self.active_tab = index;
+                }
+                Task::none()
+            }
         }
     }
 
     fn set_initial_state(&mut self, state_id: usize) {
-        if self.initial_state == Some(state_id) {
-            self.initial_state = None;
+        if self.get_active_tab_mut().initial_state == Some(state_id) {
+            self.get_active_tab_mut().initial_state = None;
         } else {
-            self.initial_state = Some(state_id);
+            self.get_active_tab_mut().initial_state = Some(state_id);
         }
-        self.state_machine.request_redraw();
+        self.get_active_tab_mut().state_machine.request_redraw();
     }
 
     fn toggle_final_state(&mut self, state_id: usize) {
-        if self.final_states.contains(&state_id) {
-            self.final_states.remove(&state_id);
+        if self.get_active_tab_mut().final_states.contains(&state_id) {
+            self.get_active_tab_mut().final_states.remove(&state_id);
         } else {
-            self.final_states.insert(state_id);
+            self.get_active_tab_mut().final_states.insert(state_id);
         }
-        self.state_machine.request_redraw();
+        self.get_active_tab_mut().state_machine.request_redraw();
     }
 
     fn sync_gui_to_finite_automata(&mut self) {
-        self.machine.clear();
-        // Create a map from state ID to state label for easy lookup
-        let mut state_map: HashMap<usize, String> = HashMap::new();
-        for state_node in &self.states {
-            let state_label = state_node.label.to_string();
-            state_map.insert(state_node.id, state_label.clone());
-            self.machine.add_state_with_id_label(state_node.id as u64, state_node.label);
+        let active_tab = self.get_active_tab_mut();
+        active_tab.machine.clear();
+
+        // Add all states
+        for state_node in &active_tab.states {
+            active_tab.machine.add_state_with_id_label(state_node.id as u64, state_node.label);
         }
-        
-        for state_node in &self.states {
-            let is_initial = self.initial_state == Some(state_node.id);
-            let is_final = self.final_states.contains(&state_node.id);
-            let id = state_node.id as u64;
-            if is_final {
-                self.machine.make_final(id);
-            }
-            if is_initial {
-                self.machine.make_initial(id);
-            }
+
+        // Set final states
+        for &state_id in &active_tab.final_states {
+            active_tab.machine.make_final(state_id as u64);
         }
-        
-        for gui_transition in &self.transitions {
-            if let (Some(_), Some(_)) = (
-                state_map.get(&gui_transition.from_state_id),
-                state_map.get(&gui_transition.to_state_id)
-            ) {
-                self.machine.add_transition(gui_transition.from_state_id as u64, gui_transition.to_state_id as u64, gui_transition.label.to_string());
-            }
+
+        // Set initial state
+        if let Some(initial_id) = active_tab.initial_state {
+            active_tab.machine.make_initial(initial_id as u64);
+        }
+
+        // Add all transitions
+        for gui_transition in &active_tab.transitions {
+            active_tab.machine.add_transition(
+                gui_transition.from_state_id as u64,
+                gui_transition.to_state_id as u64,
+                gui_transition.label.to_string()
+            );
         }
     }
 
     fn delete_state(&mut self, state_id: usize) {
-        // Remove the state from the vector
-        self.states.retain(|s| s.id != state_id);
+        let active_tab = self.get_active_tab_mut();
         
-        // Remove transitions connected to the deleted state
-        self.transitions.retain(|transition| {
+        // Remove the state
+        active_tab.states.retain(|s| s.id != state_id);
+
+        // Remove all transitions connected to this state
+        active_tab.transitions.retain(|transition| {
             transition.from_state_id != state_id && transition.to_state_id != state_id
         });
-        
-        // Update initial and final states if the deleted state was one of them
-        if self.initial_state == Some(state_id) {
-            self.initial_state = None;
-        }
-        
-        self.final_states.remove(&state_id);
 
-        // Rebuild the state_id_to_index map as indices may have shifted
-        self.state_id_to_index.clear();
-        for (index, state) in self.states.iter().enumerate() {
-            self.state_id_to_index.insert(state.id, index);
+        // Update initial state if needed
+        if active_tab.initial_state == Some(state_id) {
+            active_tab.initial_state = None;
         }
-        // self.machine.remove_state(state_id as u64); // This line is commented out as per previous versions
+
+        // Remove from final states
+        active_tab.final_states.remove(&state_id);
+
+        // Update state_id_to_index map
+        active_tab.state_id_to_index.clear();
+        for (index, state) in active_tab.states.iter().enumerate() {
+            active_tab.state_id_to_index.insert(state.id, index);
+        }
     }
 
     fn delete_transition(&mut self, transition_index: usize) {
-        if transition_index < self.transitions.len() {
-            let transition_to_remove = self.transitions.remove(transition_index);
-            // self.machine.remove_transition(transition_to_remove.from_state_id as u64, transition_to_remove.to_state_id as u64, transition_to_remove.label); // This line is commented out as per previous versions
+        if transition_index < self.get_active_tab_mut().transitions.len() {
+            let _transition_to_remove = self.get_active_tab_mut().transitions.remove(transition_index);
         }
     }
 
     fn is_deletion_mode(&self) -> bool {
-        self.deletion_mode
+        self.get_active_tab().deletion_mode
     }
 
     fn load_finite_automata_to_gui(&mut self) {
-        self.states.clear();
-        self.transitions.clear();
-        self.state_id_to_index.clear();
-        self.initial_state = None;
-        self.final_states.clear();
+        let active_tab = self.get_active_tab_mut();
         
-        // Convert FiniteAutomata to GUI representation
-        let mut states_from_machine: Vec<_> = self.machine.get_states_by_id_ref().into_iter().collect();
-        states_from_machine.sort_by(|x,y| x.0.cmp(&y.0));
-        
-        // Basic positioning algorithm, will change to something that looks better
-        for (idx, state) in states_from_machine.iter() {
-            let position = Point::new(
-                100.0 + (**idx as f32 * 150.0) % 600.0,
-                100.0 + ((**idx as f32 * 150.0) / 600.0).floor() * 100.0,
-            );
-            
-            // Assign the ID directly from the loaded machine's state ID
-            let id = **idx as usize; // Use the actual ID from the loaded automaton
+        // Clear current GUI state
+        active_tab.states.clear();
+        active_tab.transitions.clear();
+        active_tab.state_id_to_index.clear();
+        active_tab.initial_state = None;
+        active_tab.final_states.clear();
+
+        // Load states
+        let mut max_id_after_load = 0;
+        for (id, state) in active_tab.machine.get_states_by_id_ref() {
             let state_node = state_machine::StateNode::new(
-                id,
-                position,
-                30.0,
+                *id as usize,
+                iced::Point::new(100.0, 100.0), // Default position
+                20.0, // Default radius
                 Box::leak(state.name.clone().into_boxed_str())
             );
-            
-            let index = self.states.len();
-            self.states.push(state_node);
-            self.state_id_to_index.insert(id, index);
+            let index = active_tab.states.len();
+            active_tab.states.push(state_node);
+            active_tab.state_id_to_index.insert(*id as usize, index);
+            max_id_after_load = max_id_after_load.max(*id as usize);
         }
-        
-        // Set next_id to be greater than any loaded ID, ensuring uniqueness for new states
-        let max_id_after_load = self.states.iter().map(|s| s.id).max().unwrap_or(0);
-        self.state_machine.next_id = max_id_after_load + 1;
 
-        // Convert transitions
-        for (state_id, state) in states_from_machine {
-            for (transition_id, input) in state.iter_by_transition() {
-                if let (Some(from_state), Some(to_state)) = (
-                    self.states.iter().find(|s| s.id as u64 == *state_id),
-                    self.states.iter().find(|s| s.id as u64 == *transition_id),
-                ) {
-                    // This joins the hashset as "word1, word2, word3, ...
-                    let label: String = input
-                        .iter()
-                        .map(|s| s.as_str())
-                        .collect::<Vec<&str>>()
-                        .join(", ");
-                    let gui_transition = state_machine::Transition {
-                        from_state_id: from_state.id,
-                        to_state_id: to_state.id,
-                        from_point: from_state.position,
-                        to_point: to_state.position,
-                        label: Box::leak(label.into_boxed_str()),
-                    };
-                    self.transitions.push(gui_transition);
-                }
+        // Update next_id to be after the highest loaded ID
+        active_tab.state_machine.next_id = max_id_after_load + 1;
+
+        // Load transitions
+        for (from_id, state) in active_tab.machine.get_states_by_id_ref() {
+            for (to_id, inputs) in state.iter_by_transition() {
+                let from_state = active_tab.states.iter()
+                    .find(|s| s.id == *from_id as usize)
+                    .unwrap();
+                let to_state = active_tab.states.iter()
+                    .find(|s| s.id == *to_id as usize)
+                    .unwrap();
+
+                let label = inputs.iter()
+                    .map(|s| s.as_str())
+                    .collect::<Vec<&str>>()
+                    .join(", ");
+
+                let gui_transition = state_machine::Transition {
+                    from_state_id: *from_id as usize,
+                    to_state_id: *to_id as usize,
+                    from_point: from_state.position,
+                    to_point: to_state.position,
+                    label: Box::leak(label.into_boxed_str())
+                };
+                active_tab.transitions.push(gui_transition);
             }
         }
-        
+
         // Set initial state
-        if let Some(initial) = self.machine.get_initial_state_id() {
-            if let Some(state) = self.states.iter().find(|s| s.id as u64 == *initial) {
-                self.initial_state = Some(state.id);
+        if let Some(initial_id) = active_tab.machine.get_initial_state_id() {
+            if let Some(state) = active_tab.states.iter()
+                .find(|s| s.id == *initial_id as usize) {
+                active_tab.initial_state = Some(state.id);
             }
         }
-        
+
         // Set final states
-        for final_state in self.machine.get_final_states() {
-            if let Some(state) = self.states.iter().find(|s| s.id as u64 == *final_state) {
-                self.final_states.insert(state.id);
+        for final_id in active_tab.machine.get_final_states() {
+            if let Some(state) = active_tab.states.iter()
+                .find(|s| s.id == *final_id as usize) {
+                active_tab.final_states.insert(state.id);
             }
         }
-        
-        self.state_machine.request_redraw();
+
+        active_tab.state_machine.request_redraw();
     }
 
     fn create_menu_bar(&self) -> Element<Message> {
@@ -662,7 +699,7 @@ impl App {
                     iced::widget::text("Input String:")
                         .size(17)
                         .color(text_color),
-                    iced::widget::text_input("Enter input string...", &self.check_input_text)
+                    iced::widget::text_input("Enter input string...", &self.get_active_tab().check_input_text)
                         .on_input(Message::CheckInputTextChanged)
                         .on_submit(Message::SubmitCheckInput)
                         .width(200)
@@ -721,45 +758,30 @@ impl App {
         let menu_background_color = iced::Color::from_rgba(0.15, 0.14, 0.15, 1.0);
         let text_color = iced::Color::WHITE;
         let border_color = iced::Color::from_rgba(0.4, 0.4, 0.4, 1.0);
-        
-        let result_text = match self.check_result {
-            Some(true) => "Accepted!",
-            Some(false) => "Not Accepted :(",
-            None => "Error"
+
+        let result_text = if let Some(result) = self.get_active_tab().check_input_result {
+            if result {
+                "Input is accepted by the automaton"
+            } else {
+                "Input is rejected by the automaton"
+            }
+        } else {
+            "No result available"
         };
 
-        let popup = container(
+        let dialog = container(
             container(
                 iced::widget::column![
-                    row![
-                        iced::widget::text(result_text)
-                            .size(18)
-                            .color(text_color),
-                        horizontal_space(),
-                        button("×")
-                            .on_press(Message::CloseCheckResultPopup)
-                            .style(|_theme: &iced::Theme, status| {
-                                match status {
-                                    button::Status::Hovered => button::Style {
-                                        background: Some(iced::Color::from_rgba(0.8, 0.2, 0.2, 1.0).into()),
-                                        text_color: iced::Color::WHITE,
-                                        border: iced::Border::default(),
-                                        ..Default::default()
-                                    },
-                                    _ => button::Style {
-                                        background: Some(iced::Color::TRANSPARENT.into()),
-                                        text_color: iced::Color::WHITE,
-                                        border: iced::Border::default(),
-                                        ..Default::default()
-                                    }
-                                }
-                            })
-                            .padding([2, 6]),
-                    ]
-                    .align_y(Alignment::Center)
+                    iced::widget::text(result_text)
+                        .size(17)
+                        .color(text_color),
+                    button("Close")
+                        .on_press(Message::CloseCheckResultPopup)
+                        .padding([4, 8])
                 ]
+                .spacing(8)
                 .padding(12)
-                .width(200)
+                .width(250)
             )
             .style(move |_theme: &iced::Theme| {
                 container::Style {
@@ -781,16 +803,140 @@ impl App {
             }
         });
 
-        popup.into()
+        dialog.into()
+    }
+
+    fn create_tab_bar(&self) -> Element<Message> {
+        let tab_bar_background = iced::Color::from_rgba(0.176, 0.172, 0.176, 1.0);
+        let active_tab_background = iced::Color::from_rgba(0.25, 0.24, 0.25, 1.0);
+        let text_color = iced::Color::WHITE;
+        let hover_color = iced::Color::from_rgba(0.3, 0.29, 0.3, 1.0);
+
+        let mut tab_buttons = row![].spacing(2);
+
+        // Add tabs
+        for (index, _tab) in self.tabs.iter().enumerate() {
+            let is_active = index == self.active_tab;
+            let tab_button = button(
+                row![
+                    text(format!("Automata {}", index + 1))
+                        .size(14)
+                        .color(text_color),
+                    if self.tabs.len() > 1 {
+                        button("×")
+                            .on_press(Message::RemoveTab(index))
+                            .style(move |_theme: &iced::Theme, status| {
+                                match status {
+                                    button::Status::Hovered => button::Style {
+                                        background: Some(iced::Color::from_rgba(0.8, 0.2, 0.2, 1.0).into()),
+                                        text_color: iced::Color::WHITE,
+                                        border: iced::Border::default(),
+                                        ..Default::default()
+                                    },
+                                    _ => button::Style {
+                                        background: Some(iced::Color::TRANSPARENT.into()),
+                                        text_color: iced::Color::WHITE,
+                                        border: iced::Border::default(),
+                                        ..Default::default()
+                                    }
+                                }
+                            })
+                            .padding([2, 6])
+                    } else {
+                        button("")
+                            .style(|_theme: &iced::Theme, _status| {
+                                button::Style {
+                                    background: Some(iced::Color::TRANSPARENT.into()),
+                                    text_color: iced::Color::TRANSPARENT,
+                                    border: iced::Border::default(),
+                                    ..Default::default()
+                                }
+                            })
+                            .padding([2, 6])
+                    }
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center)
+            )
+            .on_press(Message::SwitchTab(index))
+            .style(move |_theme: &iced::Theme, status| {
+                let background = match (is_active, status) {
+                    (true, _) => active_tab_background,
+                    (false, button::Status::Hovered) => hover_color,
+                    _ => tab_bar_background,
+                };
+                button::Style {
+                    background: Some(background.into()),
+                    text_color,
+                    border: iced::Border {
+                        color: iced::Color::from_rgba(0.3, 0.3, 0.3, 1.0),
+                        width: 1.0,
+                        radius: 0.0.into(),
+                    },
+                    ..Default::default()
+                }
+            })
+            .padding([4, 12]);
+
+            tab_buttons = tab_buttons.push(tab_button);
+        }
+
+        // Add new tab button
+        let new_tab_button = button(
+            text("+")
+                .size(16)
+                .color(text_color)
+        )
+        .on_press(Message::AddTab)
+        .style(move |_theme: &iced::Theme, status| {
+            let background = match status {
+                button::Status::Hovered => hover_color,
+                _ => tab_bar_background,
+            };
+            button::Style {
+                background: Some(background.into()),
+                text_color,
+                border: iced::Border {
+                    color: iced::Color::from_rgba(0.3, 0.3, 0.3, 1.0),
+                    width: 1.0,
+                    radius: 0.0.into(),
+                },
+                ..Default::default()
+            }
+        })
+        .padding([4, 12]);
+
+        tab_buttons = tab_buttons.push(new_tab_button);
+
+        container(tab_buttons)
+            .style(move |_theme: &iced::Theme| {
+                container::Style {
+                    background: Some(tab_bar_background.into()),
+                    border: iced::Border {
+                        color: iced::Color::from_rgba(0.3, 0.3, 0.3, 1.0),
+                        width: 1.0,
+                        radius: 0.0.into(),
+                    },
+                    ..Default::default()
+                }
+            })
+            .padding([4, 8])
+            .width(Length::Fill)
+            .into()
     }
 
     pub fn view(&self) -> Element<Message> {
         let menu_bar = self.create_menu_bar();
+        let tab_bar = self.create_tab_bar();
 
         let main_content = container(hover(
-            self.state_machine.view(&self.states, &self.transitions, self.initial_state, &self.final_states)
-                .map(Message::Canvas),
-            if self.states.is_empty() && self.transitions.is_empty() {
+            self.get_active_tab().state_machine.view(
+                &self.get_active_tab().states,
+                &self.get_active_tab().transitions,
+                self.get_active_tab().initial_state,
+                &self.get_active_tab().final_states
+            ).map(Message::Canvas),
+            if self.get_active_tab().states.is_empty() && self.get_active_tab().transitions.is_empty() {
                 container(horizontal_space())
             } else {
                 container(row![
@@ -819,11 +965,12 @@ impl App {
 
         let content_with_menu = column![
             menu_bar,
+            tab_bar,
             main_content
         ]
         .spacing(0);
         
-        let mut final_content = if self.operations_menu_open {
+        let mut final_content = if self.get_active_tab().operations_menu_open {
             let operations_menu = container(
                 self.create_operations_menu()
             );
@@ -846,7 +993,7 @@ impl App {
                     }
                 })
                 .padding(iced::Padding {
-                    top: 32.0,  // Height of menu bar + small gap
+                    top: 64.0,  // Height of menu bar + tab bar + small gap
                     left: 141.0, // Approximate position of Operations button
                     right: 0.0,
                     bottom: 0.0,
@@ -856,7 +1003,7 @@ impl App {
             content_with_menu.into()
         };
 
-        if self.editing_state.is_some() || self.editing_transition.is_some() {
+        if self.get_active_tab().editing_state.is_some() || self.get_active_tab().editing_transition.is_some() {
             let menu_background_color = iced::Color::from_rgba(0.15, 0.14, 0.15, 1.0); 
             let text_color = iced::Color::WHITE;
             let border_color = iced::Color::from_rgba(0.4, 0.4, 0.4, 1.0);
@@ -864,10 +1011,10 @@ impl App {
             let edit_dialog = container(
                 container(
                     iced::widget::column![
-                        iced::widget::text(if self.editing_state.is_some() { "Edit State:" } else { "Edit Transition:" })
+                        iced::widget::text(if self.get_active_tab().editing_state.is_some() { "Edit State:" } else { "Edit Transition:" })
                             .size(17)
                             .color(text_color),
-                        iced::widget::text_input("Enter label...", &self.edit_text)
+                        iced::widget::text_input("Enter label...", &self.get_active_tab().edit_text)
                             .on_input(Message::EditTextChanged)
                             .on_submit(Message::FinishEditing)
                             .width(150)
@@ -922,12 +1069,12 @@ impl App {
             final_content = iced::widget::stack![final_content, edit_dialog].into();
         }
 
-        if self.check_input_dialog_open {
+        if self.get_active_tab().check_input_dialog_open {
             let check_input_dialog = self.create_check_input_dialog();
             final_content = iced::widget::stack![final_content, check_input_dialog].into();
         }
 
-        if self.check_result_popup_open {
+        if self.get_active_tab().check_result_popup_open {
             let check_result_popup = self.create_check_result_popup();
             final_content = iced::widget::stack![final_content, check_result_popup].into();
         }
