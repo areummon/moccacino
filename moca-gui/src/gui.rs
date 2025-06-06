@@ -2,6 +2,8 @@ use iced::keyboard;
 use iced::widget::{button, container, horizontal_space, hover, row, text, column, stack};
 use iced::{Element, Alignment, Event, Subscription, Task, Length};
 use std::collections::HashMap;
+use std::collections::HashSet;
+use std::collections::VecDeque;
 
 use crate::state_machine;
 
@@ -35,6 +37,9 @@ pub enum Message {
     AddTab,
     RemoveTab(usize),
     SwitchTab(usize),
+    // New error message
+    ShowError(String),
+    CloseError,
 }
 
 #[derive(Default)]
@@ -55,7 +60,9 @@ struct Tab {
     check_input_text: String,
     check_result_popup_open: bool,
     check_input_result: Option<bool>,
-    deletion_mode: bool, 
+    deletion_mode: bool,
+    name: String, // Add name field for tab
+    error_message: Option<String>, // Add error message field
 }
 
 impl Tab {
@@ -63,6 +70,13 @@ impl Tab {
         let mut tab = Self::default();
         tab.state_machine.reset_id_counter();
         tab.machine = FiniteAutomata::default(); // Ensure finite automata is initialized
+        tab.name = "Machine".to_string(); // Default name
+        tab
+    }
+
+    fn new_with_name(name: String) -> Self {
+        let mut tab = Self::new();
+        tab.name = name;
         tab
     }
 }
@@ -71,6 +85,7 @@ impl Tab {
 pub struct App {
     tabs: Vec<Box<Tab>>,
     active_tab: usize,
+    error_message: Option<String>, // Add error message field
 }
 
 impl App {
@@ -307,10 +322,52 @@ impl App {
             }
             Message::DfaToNfa => {
                 self.get_active_tab_mut().operations_menu_open = false;
+                
+                // First sync the GUI state to the finite automata
+                self.sync_gui_to_finite_automata();
+                
+                // Check if the automaton is deterministic
+                if self.get_active_tab().machine.is_deterministic() {
+                    self.error_message = Some("Cannot convert: The automaton is already deterministic.".to_string());
+                    return Task::none();
+                }
+
+                // Convert to DFA
+                let dfa = self.get_active_tab().machine.to_dfa();
+                
+                // Create new tab with DFA
+                let mut new_tab = Tab::new_with_name("DFA".to_string());
+                new_tab.machine = dfa;
+                self.tabs.push(Box::new(new_tab));
+                self.active_tab = self.tabs.len() - 1;
+                
+                // Load the DFA into the GUI
+                self.load_finite_automata_to_gui();
                 Task::none()
             }
             Message::Minimize => {
                 self.get_active_tab_mut().operations_menu_open = false;
+                
+                // First sync the GUI state to the finite automata
+                self.sync_gui_to_finite_automata();
+                
+                // Check if the automaton is deterministic
+                if !self.get_active_tab().machine.is_deterministic() {
+                    self.error_message = Some("Cannot minimize: The automaton must be deterministic.".to_string());
+                    return Task::none();
+                }
+
+                // Minimize the DFA
+                let minimized = self.get_active_tab().machine.minimize();
+                
+                // Create new tab with minimized DFA
+                let mut new_tab = Tab::new_with_name("Minimized".to_string());
+                new_tab.machine = minimized;
+                self.tabs.push(Box::new(new_tab));
+                self.active_tab = self.tabs.len() - 1;
+                
+                // Load the minimized DFA into the GUI
+                self.load_finite_automata_to_gui();
                 Task::none()
             }
             Message::OpenCheckInputDialog => {
@@ -379,6 +436,14 @@ impl App {
                 if index < self.tabs.len() {
                     self.active_tab = index;
                 }
+                Task::none()
+            }
+            Message::ShowError(message) => {
+                self.error_message = Some(message);
+                Task::none()
+            }
+            Message::CloseError => {
+                self.error_message = None;
                 Task::none()
             }
         }
@@ -482,8 +547,8 @@ impl App {
         for (id, state) in active_tab.machine.get_states_by_id_ref() {
             let state_node = state_machine::StateNode::new(
                 *id as usize,
-                iced::Point::new(100.0, 100.0), // Default position
-                20.0, // Default radius
+                iced::Point::new(100.0, 100.0), // Default position, will be updated by layout
+                30.0, // Consistent radius for all states
                 Box::leak(state.name.clone().into_boxed_str())
             );
             let index = active_tab.states.len();
@@ -537,7 +602,156 @@ impl App {
             }
         }
 
+        // Apply layout
+        if active_tab.initial_state.is_some() {
+            Self::apply_tree_layout_to_tab(active_tab);
+        } else {
+            Self::apply_grid_layout_to_tab(active_tab);
+        }
+
+        // Request redraw after all modifications are done
         active_tab.state_machine.request_redraw();
+    }
+
+    fn apply_tree_layout_to_tab(active_tab: &mut Tab) {
+        use std::collections::{HashMap, HashSet};
+
+        // Build parent-to-children map (tree structure only)
+        let mut children_map: HashMap<usize, Vec<usize>> = HashMap::new();
+        let mut parent_map: HashMap<usize, usize> = HashMap::new();
+        let mut all_ids: HashSet<usize> = HashSet::new();
+        for state in &active_tab.states {
+            all_ids.insert(state.id);
+        }
+        // Only use the first outgoing edge for each state to build a tree
+        for transition in &active_tab.transitions {
+            // Only add the first parent for each child (tree structure)
+            if !parent_map.contains_key(&transition.to_state_id) {
+                children_map.entry(transition.from_state_id).or_default().push(transition.to_state_id);
+                parent_map.insert(transition.to_state_id, transition.from_state_id);
+            }
+        }
+
+        // Find the root (initial state)
+        let root_id = match active_tab.initial_state {
+            Some(id) => id,
+            None => return,
+        };
+
+        // Recursively assign positions
+        let mut x_counter = 0.0;
+        let x_spacing = 90.0;
+        let y_spacing = 120.0;
+        let start_x = 100.0;
+        let start_y = 100.0;
+
+        fn assign_positions(
+            node_id: usize,
+            depth: usize,
+            children_map: &HashMap<usize, Vec<usize>>,
+            state_map: &mut HashMap<usize, &mut state_machine::StateNode>,
+            x_counter: &mut f32,
+            x_spacing: f32,
+            y_spacing: f32,
+            start_x: f32,
+            start_y: f32,
+        ) -> f32 {
+            let children = children_map.get(&node_id);
+            let mut x = 0.0;
+            if let Some(children) = children {
+                let mut child_xs = Vec::new();
+                for &child_id in children {
+                    let cx = assign_positions(child_id, depth + 1, children_map, state_map, x_counter, x_spacing, y_spacing, start_x, start_y);
+                    child_xs.push(cx);
+                }
+                // Center this node above its children
+                if !child_xs.is_empty() {
+                    x = (child_xs[0] + child_xs[child_xs.len() - 1]) / 2.0;
+                } else {
+                    x = *x_counter;
+                    *x_counter += x_spacing;
+                }
+            } else {
+                // Leaf node
+                x = *x_counter;
+                *x_counter += x_spacing;
+            }
+            if let Some(state) = state_map.get_mut(&node_id) {
+                state.position = iced::Point::new(start_x + x, start_y + (depth as f32) * y_spacing);
+            }
+            x
+        }
+
+        // Build a map for mutable access
+        let mut state_map: HashMap<usize, &mut state_machine::StateNode> =
+            active_tab.states.iter_mut().map(|s| (s.id, s)).collect();
+        assign_positions(
+            root_id,
+            0,
+            &children_map,
+            &mut state_map,
+            &mut x_counter,
+            x_spacing,
+            y_spacing,
+            start_x,
+            start_y,
+        );
+
+        // Place unreachable states in a row at the bottom
+        let placed: HashSet<usize> = state_map.keys().copied().collect();
+        let unreachable: Vec<usize> = all_ids.difference(&placed).copied().collect();
+        let unreachable_y = start_y + 4.0 * y_spacing;
+        for (i, id) in unreachable.iter().enumerate() {
+            if let Some(state) = state_map.get_mut(id) {
+                state.position = iced::Point::new(start_x + (i as f32) * x_spacing, unreachable_y);
+            }
+        }
+
+        // Update transition positions (all transitions, not just tree edges)
+        for transition in &mut active_tab.transitions {
+            if let (Some(from_state), Some(to_state)) = (
+                active_tab.states.iter().find(|s| s.id == transition.from_state_id),
+                active_tab.states.iter().find(|s| s.id == transition.to_state_id)
+            ) {
+                transition.from_point = from_state.position;
+                transition.to_point = to_state.position;
+            }
+        }
+    }
+
+    fn apply_grid_layout_to_tab(active_tab: &mut Tab) {
+        let states = &mut active_tab.states;
+        
+        if states.is_empty() {
+            return;
+        }
+
+        // Calculate grid dimensions
+        let grid_size = (states.len() as f32).sqrt().ceil() as usize;
+        let spacing = 150.0; // Space between states
+        let start_x = 100.0;
+        let start_y = 100.0;
+
+        // Position states in a grid
+        for (i, state) in states.iter_mut().enumerate() {
+            let row = i / grid_size;
+            let col = i % grid_size;
+            state.position = iced::Point::new(
+                start_x + (col as f32 * spacing),
+                start_y + (row as f32 * spacing)
+            );
+        }
+
+        // Update transition positions
+        for transition in &mut active_tab.transitions {
+            if let (Some(from_state), Some(to_state)) = (
+                active_tab.states.iter().find(|s| s.id == transition.from_state_id),
+                active_tab.states.iter().find(|s| s.id == transition.to_state_id)
+            ) {
+                transition.from_point = from_state.position;
+                transition.to_point = to_state.position;
+            }
+        }
     }
 
     fn create_menu_bar(&self) -> Element<Message> {
@@ -761,9 +975,9 @@ impl App {
 
         let result_text = if let Some(result) = self.get_active_tab().check_input_result {
             if result {
-                "Input is accepted by the automaton"
+                "Input is accepted by the automaton :)"
             } else {
-                "Input is rejected by the automaton"
+                "Input is rejected by the automaton ㅜㅜ"
             }
         } else {
             "No result available"
@@ -815,11 +1029,11 @@ impl App {
         let mut tab_buttons = row![].spacing(2);
 
         // Add tabs
-        for (index, _tab) in self.tabs.iter().enumerate() {
+        for (index, tab) in self.tabs.iter().enumerate() {
             let is_active = index == self.active_tab;
             let tab_button = button(
                 row![
-                    text(format!("Automata {}", index + 1))
+                    text(&tab.name)
                         .size(14)
                         .color(text_color),
                     if self.tabs.len() > 1 {
@@ -925,6 +1139,118 @@ impl App {
             .into()
     }
 
+    fn create_error_popup(&self) -> Element<Message> {
+        if let Some(error_message) = &self.error_message {
+            let menu_background_color = iced::Color::from_rgba(0.15, 0.14, 0.15, 1.0);
+            let text_color = iced::Color::WHITE;
+            let border_color = iced::Color::from_rgba(0.4, 0.4, 0.4, 1.0);
+
+            let dialog = container(
+                container(
+                    iced::widget::column![
+                        iced::widget::text(error_message)
+                            .size(17)
+                            .color(text_color),
+                        button("Close")
+                            .on_press(Message::CloseError)
+                            .padding([4, 8])
+                    ]
+                    .spacing(8)
+                    .padding(12)
+                    .width(250)
+                )
+                .style(move |_theme: &iced::Theme| {
+                    container::Style {
+                        background: Some(menu_background_color.into()),
+                        border: iced::Border {
+                            color: border_color,
+                            width: 1.0,
+                            radius: 4.0.into(),
+                        },
+                        ..Default::default()
+                    }
+                })
+            )
+            .center(iced::Length::Fill)
+            .style(|_theme: &iced::Theme| {
+                container::Style {
+                    background: Some(iced::Color::from_rgba(0.0, 0.0, 0.0, 0.3).into()),
+                    ..Default::default()
+                }
+            });
+
+            dialog.into()
+        } else {
+            container(horizontal_space()).into()
+        }
+    }
+
+    fn create_edit_dialog(&self) -> Element<Message> {
+        let menu_background_color = iced::Color::from_rgba(0.15, 0.14, 0.15, 1.0); 
+        let text_color = iced::Color::WHITE;
+        let border_color = iced::Color::from_rgba(0.4, 0.4, 0.4, 1.0);
+
+        let edit_dialog = container(
+            container(
+                iced::widget::column![
+                    iced::widget::text(if self.get_active_tab().editing_state.is_some() { "Edit State:" } else { "Edit Transition:" })
+                        .size(17)
+                        .color(text_color),
+                    iced::widget::text_input("Enter label...", &self.get_active_tab().edit_text)
+                        .on_input(Message::EditTextChanged)
+                        .on_submit(Message::FinishEditing)
+                        .width(150)
+                        .style(|_theme: &iced::Theme, _status| {
+                            iced::widget::text_input::Style {
+                                background: iced::Background::Color(iced::Color::from_rgba(0.15, 0.14, 0.15, 1.0)),
+                                border: iced::Border {
+                                    color: iced::Color::from_rgba(0.0, 0.5, 1.0, 1.0),
+                                    width: 2.0,
+                                    radius: 4.0.into(), 
+                                },
+                                icon: iced::Color::WHITE,
+                                placeholder: iced::Color::from_rgba(0.7, 0.7, 0.7, 1.0),
+                                value: iced::Color::WHITE,
+                                selection: iced::Color::from_rgba(0.0, 0.5, 1.0, 0.3),
+                            }
+                        }),
+                    row![
+                        button("Save")
+                            .on_press(Message::FinishEditing)
+                            .padding([4, 8]),
+                        button("Cancel")
+                            .on_press(Message::CancelEditing)
+                            .padding([4, 8])
+                    ]
+                    .spacing(8)
+                ]
+                .spacing(8)
+                .padding(12)
+                .width(200)
+            )
+            .style(move |_theme: &iced::Theme| {
+                container::Style {
+                    background: Some(menu_background_color.into()),
+                    border: iced::Border {
+                        color: border_color,
+                        width: 1.0,
+                        radius: 4.0.into(),
+                    },
+                    ..Default::default()
+                }
+            })
+        )
+        .center(iced::Length::Fill)
+        .style(|_theme: &iced::Theme| {
+            container::Style {
+                background: Some(iced::Color::from_rgba(0.0, 0.0, 0.0, 0.3).into()),
+                ..Default::default()
+            }
+        });
+
+        edit_dialog.into()
+    }
+
     pub fn view(&self) -> Element<Message> {
         let menu_bar = self.create_menu_bar();
         let tab_bar = self.create_tab_bar();
@@ -993,8 +1319,8 @@ impl App {
                     }
                 })
                 .padding(iced::Padding {
-                    top: 64.0,  // Height of menu bar + tab bar + small gap
-                    left: 141.0, // Approximate position of Operations button
+                    top: 40.0,  // Reduced from 64.0 to account for menu bar height
+                    left: 141.0, // Keep the same horizontal position
                     right: 0.0,
                     bottom: 0.0,
                 })
@@ -1004,68 +1330,7 @@ impl App {
         };
 
         if self.get_active_tab().editing_state.is_some() || self.get_active_tab().editing_transition.is_some() {
-            let menu_background_color = iced::Color::from_rgba(0.15, 0.14, 0.15, 1.0); 
-            let text_color = iced::Color::WHITE;
-            let border_color = iced::Color::from_rgba(0.4, 0.4, 0.4, 1.0);
-
-            let edit_dialog = container(
-                container(
-                    iced::widget::column![
-                        iced::widget::text(if self.get_active_tab().editing_state.is_some() { "Edit State:" } else { "Edit Transition:" })
-                            .size(17)
-                            .color(text_color),
-                        iced::widget::text_input("Enter label...", &self.get_active_tab().edit_text)
-                            .on_input(Message::EditTextChanged)
-                            .on_submit(Message::FinishEditing)
-                            .width(150)
-                            .style(|_theme: &iced::Theme, _status| {
-                                iced::widget::text_input::Style {
-                                    background: iced::Background::Color(iced::Color::from_rgba(0.15, 0.14, 0.15, 1.0)),
-                                    border: iced::Border {
-                                        color: iced::Color::from_rgba(0.0, 0.5, 1.0, 1.0),
-                                        width: 2.0,
-                                        radius: 4.0.into(), 
-                                    },
-                                    icon: iced::Color::WHITE,
-                                    placeholder: iced::Color::from_rgba(0.7, 0.7, 0.7, 1.0),
-                                    value: iced::Color::WHITE,
-                                    selection: iced::Color::from_rgba(0.0, 0.5, 1.0, 0.3),
-                                }
-                            }),
-                        row![
-                            button("Save")
-                                .on_press(Message::FinishEditing)
-                                .padding([4, 8]),
-                            button("Cancel")
-                                .on_press(Message::CancelEditing)
-                                .padding([4, 8])
-                        ]
-                        .spacing(8)
-                    ]
-                    .spacing(8)
-                    .padding(12)
-                    .width(200)
-                )
-                .style(move |_theme: &iced::Theme| {
-                    container::Style {
-                        background: Some(menu_background_color.into()),
-                        border: iced::Border {
-                            color: border_color,
-                            width: 1.0,
-                            radius: 4.0.into(),
-                        },
-                        ..Default::default()
-                    }
-                })
-            )
-            .center(iced::Length::Fill)
-            .style(|_theme: &iced::Theme| {
-                container::Style {
-                    background: Some(iced::Color::from_rgba(0.0, 0.0, 0.0, 0.3).into()),
-                    ..Default::default()
-                }
-            });
-            
+            let edit_dialog = self.create_edit_dialog();
             final_content = iced::widget::stack![final_content, edit_dialog].into();
         }
 
@@ -1077,6 +1342,11 @@ impl App {
         if self.get_active_tab().check_result_popup_open {
             let check_result_popup = self.create_check_result_popup();
             final_content = iced::widget::stack![final_content, check_result_popup].into();
+        }
+
+        if self.error_message.is_some() {
+            let error_popup = self.create_error_popup();
+            final_content = iced::widget::stack![final_content, error_popup].into();
         }
 
         final_content
