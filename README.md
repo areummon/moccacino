@@ -66,7 +66,12 @@ This project uses a workspace structure with two main crates:
 
 - `iced`: GUI library for Rust
 
-> **Note:** This is a student project I created and worked on a few years ago. I don't feel like developing it further right now, so I'll leave it as is. I might update it in the future.
+
+> [!NOTE]
+>
+> This is a project I created and worked on a few years ago. 
+> I don't feel like developing it further right now, so 
+> I'll leave it as is. I might update it in the future.
 
 ## License
 
