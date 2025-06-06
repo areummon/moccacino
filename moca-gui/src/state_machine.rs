@@ -313,20 +313,16 @@ impl canvas::Program<CanvasMessage> for StateMachine<'_> {
                         }
                         Some(PendingTransition::Start { from_state_id, from_point }) => {
                             if let Some(to_node) = clicked_node {
-                                if from_state_id != to_node.id {
-                                    *state = None;
-                                    let transition = Transition {
-                                        from_state_id,
-                                        to_state_id: to_node.id,
-                                        from_point,
-                                        to_point: to_node.position,
-                                        label: Box::leak("ε".to_string().into_boxed_str()),
-                                    };
-                                    (canvas::event::Status::Captured, Some(CanvasMessage::AddTransition(transition)))
-                                } else {
-                                    *state = None;
-                                    (canvas::event::Status::Captured, None)
-                                }
+                                // Allow self-loops: always create the transition
+                                *state = None;
+                                let transition = Transition {
+                                    from_state_id,
+                                    to_state_id: to_node.id,
+                                    from_point,
+                                    to_point: to_node.position,
+                                    label: Box::leak("ε".to_string().into_boxed_str()),
+                                };
+                                (canvas::event::Status::Captured, Some(CanvasMessage::AddTransition(transition)))
                             } else {
                                 *state = None;
                                 (canvas::event::Status::Captured, None)
@@ -418,16 +414,15 @@ impl canvas::Program<CanvasMessage> for StateMachine<'_> {
         cursor: mouse::Cursor,
     ) -> Vec<Geometry> {
         let content = self.state.cache.draw(renderer, bounds.size(), |frame| {
+            // Set dark background for canvas
+            frame.fill(
+                &Path::rectangle(Point::ORIGIN, frame.size()),
+                iced::Color::from_rgb(0.1, 0.1, 0.1), // Dark background
+            );
+
             Transition::draw_all(self.transitions, frame, theme, self.states);
 
             StateNode::draw_all(self.states, frame, theme, self.initial_state, self.final_states);
-
-            frame.stroke(
-                &Path::rectangle(Point::ORIGIN, frame.size()),
-                Stroke::default()
-                    .with_width(2.0)
-                    .with_color(theme.palette().text),
-            );
         });
 
         let mut geometries = vec![content];
@@ -494,14 +489,14 @@ impl StateNode {
         // Draw main circle
         frame.fill(
             &Path::circle(self.position, self.radius),
-            theme.palette().background,
+            iced::Color::from_rgb(0.2, 0.7, 0.4), // Softer, more muted green
         );
 
         frame.stroke(
             &Path::circle(self.position, self.radius),
             Stroke::default()
                 .with_width(2.0)
-                .with_color(theme.palette().text),
+                .with_color(iced::Color::WHITE), // White border
         );
 
         if is_final {
@@ -510,13 +505,13 @@ impl StateNode {
                 &Path::circle(self.position, inner_radius),
                 Stroke::default()
                     .with_width(1.5)
-                    .with_color(theme.palette().text),
+                    .with_color(iced::Color::WHITE), // White inner circle
             );
         }
 
         if is_initial {
-            let arrow_size = 12.0;
-            let arrow_height = 12.0;
+            let arrow_size = 20.0; // Increased from 12.0
+            let arrow_height = 20.0; // Increased from 12.0
 
             let triangle_start_x = self.position.x - self.radius - arrow_size;
             let triangle_y = self.position.y;
@@ -532,13 +527,19 @@ impl StateNode {
             path_builder.close();
             let triangle_path = path_builder.build();
 
-            frame.fill(&triangle_path, iced::Color::BLACK);
+            // Draw outlined arrow instead of filled
+            frame.stroke(
+                &triangle_path,
+                Stroke::default()
+                    .with_width(2.0)
+                    .with_color(iced::Color::WHITE),
+            );
         }
 
         frame.fill_text(Text {
             content: self.label.to_string(),
             position: self.position,
-            color: theme.palette().text,
+            color: iced::Color::WHITE, // White text
             size: 14.0.into(),
             horizontal_alignment: alignment::Horizontal::Center,
             vertical_alignment: alignment::Vertical::Center,
@@ -587,7 +588,87 @@ impl Transition {
         let to_state = states.iter().find(|s| s.id == self.to_state_id);
 
         if let (Some(from_state), Some(to_state)) = (from_state, to_state) {
-            if has_reverse {
+            if self.from_state_id == self.to_state_id {
+                // Draw a self-loop as a Bezier curve above the state
+                let center = from_state.position;
+                let r = from_state.radius;
+                // Start and end points: left and right top edge of the state
+                let theta = std::f32::consts::PI / 4.0; // 45 degrees
+                let start = iced::Point::new(
+                    (center.x - r * theta.cos()) + 4.0,
+                    (center.y - r * theta.sin()) + 4.0,
+                );
+                let end = iced::Point::new(
+                    (center.x + r * theta.cos()) - 4.0,
+                    (center.y - r * theta.sin()) - 4.0,
+                );
+                // Control point: much higher above the state for more height
+                let control = iced::Point::new(center.x, center.y - r * 3.8);
+
+                // Draw the Bezier curve
+                let mut path_builder = canvas::path::Builder::new();
+                path_builder.move_to(start);
+                path_builder.quadratic_curve_to(control, end);
+                let curve_path = path_builder.build();
+                frame.stroke(
+                    &curve_path,
+                    Stroke::default()
+                        .with_width(2.0)
+                        .with_color(iced::Color::WHITE),
+                );
+
+                // Arrowhead: place it at the end of the curve (t=1.0), touching the border of the circle
+                let t = 0.05;
+                let one_minus_t = 1.0 - t;
+                // Quadratic Bezier formula
+                let arrow_pos = iced::Point::new(
+                    one_minus_t * one_minus_t * start.x + 2.0 * one_minus_t * t * control.x + t * t * end.x,
+                    one_minus_t * one_minus_t * start.y + 2.0 * one_minus_t * t * control.y + t * t * end.y,
+                );
+                // Derivative for tangent direction at t=1.0
+                let tangent = iced::Vector::new(
+                    2.0 * (one_minus_t * (control.x - start.x) + t * (end.x - control.x)),
+                    2.0 * (one_minus_t * (control.y - start.y) + t * (end.y - control.y)),
+                ).unit();
+                // Arrowhead points along the curve (tangent direction)
+                let arrow_dir = tangent;
+                let arrow_length = 12.0;
+                let arrow_angle = std::f32::consts::PI / 6.0; // 30 degrees
+                let cos_angle = arrow_angle.cos();
+                let sin_angle = arrow_angle.sin();
+                let left = iced::Point::new(
+                    arrow_pos.x + arrow_length * (arrow_dir.x * cos_angle - arrow_dir.y * sin_angle),
+                    arrow_pos.y + arrow_length * (arrow_dir.x * sin_angle + arrow_dir.y * cos_angle),
+                );
+                let right = iced::Point::new(
+                    arrow_pos.x + arrow_length * (arrow_dir.x * cos_angle + arrow_dir.y * sin_angle),
+                    arrow_pos.y + arrow_length * (-arrow_dir.x * sin_angle + arrow_dir.y * cos_angle),
+                );
+                let mut arrow_path = canvas::path::Builder::new();
+                arrow_path.move_to(arrow_pos);
+                arrow_path.line_to(left);
+                arrow_path.move_to(arrow_pos);
+                arrow_path.line_to(right);
+                let arrow_path = arrow_path.build();
+                frame.stroke(
+                    &arrow_path,
+                    Stroke::default()
+                        .with_width(2.0)
+                        .with_color(iced::Color::WHITE),
+                );
+
+                // Label above the apex of the loop
+                let label_pos = iced::Point::new(control.x, control.y + 30.0);
+                frame.fill_text(Text {
+                    content: self.label.to_string(),
+                    position: label_pos,
+                    color: iced::Color::WHITE,
+                    size: 14.0.into(),
+                    horizontal_alignment: alignment::Horizontal::Center,
+                    vertical_alignment: alignment::Vertical::Center,
+                    ..Text::default()
+                });
+            } else if has_reverse {
                 self.draw_curved_transition(frame, theme, from_state, to_state);
             } else {
                 self.draw_straight_transition(frame, theme, from_state, to_state);
@@ -606,7 +687,7 @@ impl Transition {
             &Path::line(start_point, end_point),
             Stroke::default()
                 .with_width(1.5)
-                .with_color(theme.palette().text),
+                .with_color(iced::Color::WHITE), // White line
         );
 
         self.draw_arrowhead(frame, theme, end_point, direction_unit);
@@ -621,8 +702,8 @@ impl Transition {
         frame.fill_text(Text {
             content: self.label.to_string(),
             position: midpoint + perpendicular_vec,
-            color: theme.palette().text,
-            size: 12.0.into(),
+            color: iced::Color::WHITE, // White text
+            size: 14.0.into(),
             horizontal_alignment: alignment::Horizontal::Center,
             vertical_alignment: alignment::Vertical::Center,
             ..Text::default()
@@ -666,7 +747,7 @@ impl Transition {
             &curve_path,
             Stroke::default()
                 .with_width(1.5)
-                .with_color(theme.palette().text),
+                .with_color(iced::Color::WHITE), // White curved line
         );
 
         self.draw_arrowhead(frame, theme, end_point, end_direction);
@@ -677,8 +758,8 @@ impl Transition {
         frame.fill_text(Text {
             content: self.label.to_string(),
             position: label_position + label_offset,
-            color: theme.palette().text,
-            size: 12.0.into(),
+            color: iced::Color::WHITE, // White text
+            size: 14.0.into(),
             horizontal_alignment: alignment::Horizontal::Center,
             vertical_alignment: alignment::Vertical::Center,
             ..Text::default()
@@ -705,24 +786,29 @@ impl Transition {
 
         let reverse_dir = direction * -arrow_length;
 
-        let wing1 = Point::new(
+        let left = Point::new(
             tip.x + reverse_dir.x * cos_angle - reverse_dir.y * sin_angle,
             tip.y + reverse_dir.x * sin_angle + reverse_dir.y * cos_angle,
         );
 
-        let wing2 = Point::new(
+        let right = Point::new(
             tip.x + reverse_dir.x * cos_angle + reverse_dir.y * sin_angle,
             tip.y - reverse_dir.x * sin_angle + reverse_dir.y * cos_angle,
         );
 
-        let mut path_builder = canvas::path::Builder::new();
-        path_builder.move_to(tip);
-        path_builder.line_to(wing1);
-        path_builder.line_to(wing2);
-        path_builder.close();
-        let triangle_path = path_builder.build();
+        let mut arrow_path = canvas::path::Builder::new();
+        arrow_path.move_to(tip);
+        arrow_path.line_to(left);
+        arrow_path.move_to(tip);
+        arrow_path.line_to(right);
+        let arrow_path = arrow_path.build();
 
-        frame.fill(&triangle_path, iced::Color::BLACK);
+        frame.stroke(
+            &arrow_path,
+            Stroke::default()
+                .with_width(2.0)
+                .with_color(iced::Color::WHITE),
+        );
     }
 }
 
@@ -762,7 +848,7 @@ impl PendingTransition {
                         &line,
                         Stroke::default()
                             .with_width(2.0)
-                            .with_color(theme.palette().text),
+                            .with_color(iced::Color::WHITE),
                     );
                 }
                 PendingTransition::Dragging { state_id, offset } => {
@@ -778,7 +864,7 @@ impl PendingTransition {
                             &Path::circle(drag_position, node.radius),
                             Stroke::default()
                                 .with_width(2.0)
-                                .with_color(theme.palette().text),
+                                .with_color(iced::Color::WHITE),
                         );
                     }
                 }

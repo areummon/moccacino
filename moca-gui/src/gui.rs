@@ -121,13 +121,15 @@ impl App {
                 let active_tab = self.get_active_tab_mut();
                 match canvas_message {
                     state_machine::CanvasMessage::AddState(mut state) => {
-                        let assigned_id = active_tab.state_machine.next_id;
-                        state.id = assigned_id;
-                        let index = active_tab.states.len();
-                        active_tab.states.push(state);
-                        active_tab.state_id_to_index.insert(assigned_id, index);
-                        active_tab.state_machine.next_id += 1;
-                        active_tab.state_machine.request_redraw();
+                        if !active_tab.deletion_mode {
+                            let assigned_id = active_tab.state_machine.next_id;
+                            state.id = assigned_id;
+                            let index = active_tab.states.len();
+                            active_tab.states.push(state);
+                            active_tab.state_id_to_index.insert(assigned_id, index);
+                            active_tab.state_machine.next_id += 1;
+                            active_tab.state_machine.request_redraw();
+                        }
                     }
                     state_machine::CanvasMessage::AddTransition(transition) => {
                         active_tab.transitions.push(transition);
@@ -1278,16 +1280,12 @@ impl App {
         ))
         .style(|_theme: &iced::Theme| {
             container::Style {
-                background: Some(iced::Color::WHITE.into()),
-                border: iced::Border {
-                    color: iced::Color::from_rgba(0.3, 0.3, 0.3, 1.0),
-                    width: 1.0,
-                    radius: 0.0.into(),
-                },
+                background: None,
+                border: iced::Border::default(),
                 ..Default::default()
             }
         })
-        .padding(20);
+        .padding(0);
 
         let content_with_menu = column![
             menu_bar,
@@ -1296,7 +1294,7 @@ impl App {
         ]
         .spacing(0);
         
-        let mut final_content = if self.get_active_tab().operations_menu_open {
+        let mut final_content: Element<Message> = if self.get_active_tab().operations_menu_open {
             let operations_menu = container(
                 self.create_operations_menu()
             );
@@ -1349,7 +1347,18 @@ impl App {
             final_content = iced::widget::stack![final_content, error_popup].into();
         }
 
-        final_content
+        container(final_content)
+            .style(|_theme: &iced::Theme| {
+                container::Style {
+                    background: Some(iced::Color::from_rgb(0.1, 0.1, 0.1).into()), // Match canvas background
+                    border: iced::Border::default(),
+                    ..Default::default()
+                }
+            })
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .padding(0)
+            .into()
     }
 }
 
