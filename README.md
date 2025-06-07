@@ -70,7 +70,7 @@ This project uses a workspace structure with two main crates:
 
 > [!NOTE]
 >
-> This is a project I created and worked on a few years ago. 
+> This is a project I created and worked on a long ago. 
 > I don't feel like developing it further right now, so 
 > I'll leave it as is. I might update it in the future.
 
