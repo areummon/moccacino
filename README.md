@@ -52,6 +52,18 @@ cargo run --release
 - **DFA to NFA**: Convert a deterministic finite automaton to a non-deterministic one
 - **Minimize**: Minimize a deterministic finite automaton
 
+### LaTeX
+
+You can get the LaTeX code for the state machine you have drawn—just click the button and you will get the code. It uses the tikz package and the automata, arrows.meta, and positioning libraries from TikZ.
+
+You can also change the settings by modifying the `moca-gui/tikz_export.rs` file with your desired preferences.
+
+> [!NOTE]
+>
+> Currently, you cannot change the position of loops in the GUI. If you want to change the position 
+> of a loop in the resulting TikZ code, simply change `edge[loop above]` to `edge[loop below]`.
+
+
 ## Project Structure
 
 - `moca-data/`: Core library for finite automata implementation

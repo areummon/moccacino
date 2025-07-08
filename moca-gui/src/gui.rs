@@ -4,6 +4,7 @@ use iced::{Element, Alignment, Event, Subscription, Task, Length};
 use std::collections::HashMap;
 
 use crate::state_machine;
+use crate::tikz_export;
 
 use moca_data::finite_automata::FiniteAutomata;
 use moca_data::state_machine::StateMachine;
@@ -29,6 +30,9 @@ pub enum Message {
     RemoveTab(usize),
     SwitchTab(usize),
     CloseError,
+    OpenLatexExport,
+    CloseLatexExport,
+    CopyLatexExport,
 }
 
 #[derive(Default)]
@@ -73,6 +77,8 @@ pub struct App {
     tabs: Vec<Box<Tab>>,
     active_tab: usize,
     error_message: Option<String>, 
+    latex_export_dialog_open: bool,
+    latex_export_code: Option<String>,
 }
 
 impl App {
@@ -392,6 +398,28 @@ impl App {
                 self.error_message = None;
                 Task::none()
             }
+            Message::OpenLatexExport => {
+                let code = tikz_export::export_to_tikz(
+                    &self.get_active_tab().states,
+                    &self.get_active_tab().transitions,
+                    self.get_active_tab().initial_state,
+                    &self.get_active_tab().final_states,
+                );
+                self.latex_export_code = Some(code);
+                self.latex_export_dialog_open = true;
+                Task::none()
+            }
+            Message::CloseLatexExport => {
+                self.latex_export_dialog_open = false;
+                self.latex_export_code = None;
+                Task::none()
+            }
+            Message::CopyLatexExport => {
+                if let Some(code) = &self.latex_export_code {
+                    return iced::clipboard::write(code.clone()).map(|_msg: ()| Message::CopyLatexExport);
+                }
+                Task::none()
+            }
         }
     }
 
@@ -675,10 +703,34 @@ impl App {
             })
             .padding([4, 12]);
 
+        let latex_button = button(text("LaTeX"))
+            .on_press(Message::OpenLatexExport)
+            .style(|_theme: &iced::Theme, status| {
+                let background_color = iced::Color::from_rgba(0.176, 0.172, 0.176, 1.0);
+                let hover_color = iced::Color::from_rgba(0.25, 0.24, 0.25, 1.0);
+                let text_color = iced::Color::WHITE;
+                match status {
+                    button::Status::Hovered => button::Style {
+                        background: Some(hover_color.into()),
+                        text_color,
+                        border: iced::Border::default(),
+                        ..Default::default()
+                    },
+                    _ => button::Style {
+                        background: Some(background_color.into()),
+                        text_color,
+                        border: iced::Border::default(),
+                        ..Default::default()
+                    }
+                }
+            })
+            .padding([4, 12]);
+
         let menu_bar = container(
             row![
                 abstract_machine_button,
                 operations_button,
+                latex_button,
                 horizontal_space(),
             ]
             .spacing(4)
@@ -1134,6 +1186,70 @@ impl App {
         edit_dialog.into()
     }
 
+    fn create_latex_export_dialog(&self) -> Element<Message> {
+        let menu_background_color = iced::Color::from_rgba(0.15, 0.14, 0.15, 1.0);
+        let text_color = iced::Color::WHITE;
+        let border_color = iced::Color::from_rgba(0.4, 0.4, 0.4, 1.0);
+        let code = self.latex_export_code.as_deref().unwrap_or("");
+        let dialog = container(
+            container(
+                iced::widget::column![
+                    iced::widget::text("LaTeX (TikZ) code for this automaton:")
+                        .size(17)
+                        .color(text_color),
+                    iced::widget::text_input("", code)
+                        .width(400)
+                        .on_input(|_| Message::OpenLatexExport) 
+                        .style(move |_theme: &iced::Theme, _status| {
+                            iced::widget::text_input::Style {
+                                background: iced::Background::Color(menu_background_color),
+                                border: iced::Border {
+                                    color: border_color,
+                                    width: 1.0,
+                                    radius: 4.0.into(),
+                                },
+                                icon: iced::Color::WHITE,
+                                placeholder: iced::Color::from_rgba(0.7, 0.7, 0.7, 1.0),
+                                value: iced::Color::WHITE,
+                                selection: iced::Color::from_rgba(0.0, 0.5, 1.0, 0.3),
+                            }
+                        }),
+                    row![
+                        button("Copy")
+                            .on_press(Message::CopyLatexExport)
+                            .padding([4, 8]),
+                        button("Close")
+                            .on_press(Message::CloseLatexExport)
+                            .padding([4, 8])
+                    ]
+                    .spacing(8)
+                ]
+                .spacing(8)
+                .padding(12)
+                .width(500)
+            )
+            .style(move |_theme: &iced::Theme| {
+                container::Style {
+                    background: Some(menu_background_color.into()),
+                    border: iced::Border {
+                        color: border_color,
+                        width: 1.0,
+                        radius: 4.0.into(),
+                    },
+                    ..Default::default()
+                }
+            })
+        )
+        .center(iced::Length::Fill)
+        .style(|_theme: &iced::Theme| {
+            container::Style {
+                background: Some(iced::Color::from_rgba(0.0, 0.0, 0.0, 0.3).into()),
+                ..Default::default()
+            }
+        });
+        dialog.into()
+    }
+
     pub fn view(&self) -> Element<Message> {
         let menu_bar = self.create_menu_bar();
         let tab_bar = self.create_tab_bar();
@@ -1226,6 +1342,11 @@ impl App {
         if self.error_message.is_some() {
             let error_popup = self.create_error_popup();
             final_content = iced::widget::stack![final_content, error_popup].into();
+        }
+
+        if self.latex_export_dialog_open {
+            let latex_dialog = self.create_latex_export_dialog();
+            final_content = iced::widget::stack![final_content, latex_dialog].into();
         }
 
         container(final_content)
