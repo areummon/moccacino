@@ -2,6 +2,7 @@ use iced::keyboard;
 use iced::widget::{button, container, horizontal_space, hover, row, text, column, stack};
 use iced::{Element, Alignment, Event, Subscription, Task, Length};
 use std::collections::HashMap;
+use indexmap::IndexSet;
 
 use crate::state_machine;
 use crate::tikz_export;
@@ -33,12 +34,18 @@ pub enum Message {
     OpenLatexExport,
     CloseLatexExport,
     CopyLatexExport,
+    OpenEditTransition((usize, usize)),
+    EditTransitionLabelChanged(usize, String),
+    SaveEditTransitionLabels,
+    DeleteEditTransitionLabel(usize),
+    AddEditTransitionLabel,
+    CancelEditTransitionLabels,
 }
 
 #[derive(Default)]
 struct Tab {
     state_machine: state_machine::State,
-    transitions: Vec<state_machine::Transition>,
+    transitions: HashMap<(usize, usize), IndexSet<String>>,
     states: Vec<state_machine::StateNode>,
     state_id_to_index: HashMap<usize, usize>,
     machine: FiniteAutomata,
@@ -54,6 +61,13 @@ struct Tab {
     check_input_result: Option<bool>,
     deletion_mode: bool,
     name: String, 
+    pending_transition: Option<(usize, usize, iced::Point, iced::Point)>,
+    pending_transition_label: String,
+    pending_transition_dialog_open: bool,
+    editing_transition_pair: Option<(usize, usize)>,
+    editing_transition_labels: Vec<String>,
+    editing_transition_dialog_open: bool,
+    editing_transition_label_inputs: Vec<String>,
 }
 
 impl Tab {
@@ -62,12 +76,14 @@ impl Tab {
         tab.state_machine.reset_id_counter();
         tab.machine = FiniteAutomata::default(); 
         tab.name = "Machine".to_string(); 
+        tab.transitions = HashMap::new();
         tab
     }
 
     fn new_with_name(name: String) -> Self {
         let mut tab = Self::new();
         tab.name = name;
+        tab.transitions = HashMap::new();
         tab
     }
 }
@@ -125,8 +141,13 @@ impl App {
                         }
                     }
                     state_machine::CanvasMessage::AddTransition(transition) => {
-                        active_tab.transitions.push(transition);
-                        active_tab.state_machine.request_redraw();
+                        let key = (transition.from_state_id, transition.to_state_id);
+                        let label = transition.label.to_string();
+                        let entry = active_tab.transitions.entry(key).or_insert_with(IndexSet::new);
+                        if !entry.contains(&label) {
+                            entry.insert(label);
+                            active_tab.state_machine.request_redraw();
+                        }
                     }
                     state_machine::CanvasMessage::MoveState { state_id, new_position } => {
                         if let Some(index) = active_tab.state_id_to_index.get(&state_id) {
@@ -134,14 +155,7 @@ impl App {
                                 state.position = new_position;
                             }
                         }
-                        for transition in &mut active_tab.transitions {
-                            if transition.from_state_id == state_id {
-                                transition.from_point = new_position;
-                            }
-                            if transition.to_state_id == state_id {
-                                transition.to_point = new_position;
-                            }
-                        }
+                        // No need to update transition points, as they are not stored per transition anymore
                         active_tab.state_machine.request_redraw();
                         active_tab.state_id_to_index.clear();
                         for (index, state) in active_tab.states.iter().enumerate() {
@@ -151,9 +165,7 @@ impl App {
                     state_machine::CanvasMessage::StateClicked(state_id) => {
                         if active_tab.deletion_mode {
                             active_tab.states.retain(|s| s.id != state_id);
-                            active_tab.transitions.retain(|transition| {
-                                transition.from_state_id != state_id && transition.to_state_id != state_id
-                            });
+                            active_tab.transitions.retain(|&(from, to), _| from != state_id && to != state_id);
                             if active_tab.initial_state == Some(state_id) {
                                 active_tab.initial_state = None;
                             }
@@ -176,15 +188,24 @@ impl App {
                         }
                     }
                     state_machine::CanvasMessage::TransitionClicked(transition_index) => {
+                        let active_tab = self.get_active_tab_mut();
+                        // Map index to (from, to) pair by order
+                        let (from, to) = active_tab.transitions.iter().enumerate()
+                            .find(|(idx, _)| *idx == transition_index)
+                            .map(|(_, ((f, t), _))| (*f, *t))
+                            .unwrap();
+                        
                         if active_tab.deletion_mode {
-                            if transition_index < active_tab.transitions.len() {
-                                active_tab.transitions.remove(transition_index);
-                                active_tab.state_machine.request_redraw();
-                            }
-                        } else if let Some(transition) = active_tab.transitions.get(transition_index) {
-                            active_tab.editing_transition = Some(transition_index);
-                            active_tab.edit_text = transition.label.to_string();
-                            active_tab.editing_state = None;
+                            // Remove the transition in deletion mode
+                            active_tab.transitions.remove(&(from, to));
+                            active_tab.state_machine.request_redraw();
+                        } else {
+                            // Open edit dialog in normal mode
+                            active_tab.editing_transition_pair = Some((from, to));
+                            active_tab.editing_transition_labels = active_tab.transitions.get(&(from, to)).unwrap().iter().cloned().collect();
+                            active_tab.editing_transition_label_inputs = active_tab.editing_transition_labels.clone();
+                            active_tab.editing_transition_dialog_open = true;
+                            active_tab.state_machine.request_redraw();
                         }
                     }
                     state_machine::CanvasMessage::StateDoubleClicked(state_id) => {
@@ -196,12 +217,15 @@ impl App {
                             }
                         }
                     }
-                    state_machine::CanvasMessage::TransitionDoubleClicked(transition_index) => {
-                        if let Some(transition) = active_tab.transitions.get(transition_index) {
-                            active_tab.editing_transition = Some(transition_index);
-                            active_tab.edit_text = transition.label.to_string();
-                            active_tab.editing_state = None;
-                        }
+                    // TODO: TransitionDoubleClicked editing logic will be updated later
+                    state_machine::CanvasMessage::TransitionDoubleClicked(_transition_index) => {
+                        // No-op for now
+                    }
+                    state_machine::CanvasMessage::RequestTransitionLabel { from_state_id, to_state_id, from_point, to_point } => {
+                        active_tab.pending_transition = Some((from_state_id, to_state_id, from_point, to_point));
+                        active_tab.pending_transition_label = String::new();
+                        active_tab.pending_transition_dialog_open = true;
+                        active_tab.state_machine.request_redraw();
                     }
                 }
                 Task::none()
@@ -270,23 +294,45 @@ impl App {
                 Task::none()
             }
             Message::EditTextChanged(text) => {
-                self.get_active_tab_mut().edit_text = text;
+                let text_clone = text.clone();
+                self.get_active_tab_mut().edit_text = text_clone;
+                self.get_active_tab_mut().pending_transition_label = text;
                 Task::none()
             }
             Message::FinishEditing => {
                 let active_tab = self.get_active_tab_mut();
+                // Handle pending transition dialog
+                if active_tab.pending_transition_dialog_open {
+                    if let Some((from_state_id, to_state_id, from_point, to_point)) = active_tab.pending_transition.take() {
+                        let label = if active_tab.pending_transition_label.trim().is_empty() {
+                            Box::leak("ε".to_string().into_boxed_str())
+                        } else {
+                            Box::leak(active_tab.pending_transition_label.clone().into_boxed_str())
+                        };
+                        let transition = state_machine::Transition {
+                            from_state_id,
+                            to_state_id,
+                            from_point,
+                            to_point,
+                            label,
+                        };
+                        let key = (transition.from_state_id, transition.to_state_id);
+                        let entry = active_tab.transitions.entry(key).or_insert_with(IndexSet::new);
+                        if !entry.contains(&transition.label.to_string()) {
+                            entry.insert(transition.label.to_string());
+                        }
+                        active_tab.pending_transition_dialog_open = false;
+                        active_tab.pending_transition_label.clear();
+                        active_tab.state_machine.request_redraw();
+                        return Task::none();
+                    }
+                }
                 if let Some(state_id) = active_tab.editing_state {
                     if let Some(index) = active_tab.state_id_to_index.get(&state_id) {
                         if let Some(state) = active_tab.states.get_mut(*index) {
                             let edit_text = active_tab.edit_text.clone();
                             state.label = Box::leak(edit_text.into_boxed_str());
                         }
-                    }
-                }
-                if let Some(transition_index) = active_tab.editing_transition {
-                    if let Some(transition) = active_tab.transitions.get_mut(transition_index) {
-                        let edit_text = active_tab.edit_text.clone();
-                        transition.label = Box::leak(edit_text.into_boxed_str());
                     }
                 }
                 active_tab.editing_state = None;
@@ -296,6 +342,10 @@ impl App {
                 Task::none()
             }
             Message::CancelEditing => {
+                // Cancel pending transition dialog
+                self.get_active_tab_mut().pending_transition = None;
+                self.get_active_tab_mut().pending_transition_label.clear();
+                self.get_active_tab_mut().pending_transition_dialog_open = false;
                 self.get_active_tab_mut().editing_state = None;
                 self.get_active_tab_mut().editing_transition = None;
                 self.get_active_tab_mut().edit_text.clear();
@@ -399,9 +449,22 @@ impl App {
                 Task::none()
             }
             Message::OpenLatexExport => {
+                // Convert transitions HashMap to Vec<Transition> for export
+                let mut export_transitions = Vec::new();
+                for (&(from, to), labels) in &self.get_active_tab().transitions {
+                    for label in labels {
+                        export_transitions.push(state_machine::Transition {
+                            from_state_id: from,
+                            to_state_id: to,
+                            from_point: iced::Point::ORIGIN, // dummy
+                            to_point: iced::Point::ORIGIN,   // dummy
+                            label: Box::leak(label.clone().into_boxed_str()),
+                        });
+                    }
+                }
                 let code = tikz_export::export_to_tikz(
                     &self.get_active_tab().states,
-                    &self.get_active_tab().transitions,
+                    &export_transitions,
                     self.get_active_tab().initial_state,
                     &self.get_active_tab().final_states,
                 );
@@ -418,6 +481,71 @@ impl App {
                 if let Some(code) = &self.latex_export_code {
                     return iced::clipboard::write(code.clone()).map(|_msg: ()| Message::CopyLatexExport);
                 }
+                Task::none()
+            }
+            Message::OpenEditTransition((from, to)) => {
+                let active_tab = self.get_active_tab_mut();
+                if let Some(labels) = active_tab.transitions.get(&(from, to)) {
+                    active_tab.editing_transition_pair = Some((from, to));
+                    active_tab.editing_transition_labels = labels.iter().cloned().collect();
+                    active_tab.editing_transition_label_inputs = active_tab.editing_transition_labels.clone();
+                    active_tab.editing_transition_dialog_open = true;
+                }
+                Task::none()
+            }
+            Message::EditTransitionLabelChanged(idx, text) => {
+                let active_tab = self.get_active_tab_mut();
+                if idx < active_tab.editing_transition_label_inputs.len() {
+                    active_tab.editing_transition_label_inputs[idx] = text;
+                }
+                Task::none()
+            }
+            Message::SaveEditTransitionLabels => {
+                let active_tab = self.get_active_tab_mut();
+                if let Some((from, to)) = active_tab.editing_transition_pair {
+                    // Filter out empty labels and convert empty strings to "ε"
+                    let new_labels: Vec<String> = active_tab.editing_transition_label_inputs.iter()
+                        .filter(|s| !s.trim().is_empty()) // Remove completely empty labels
+                        .map(|s| if s.trim().is_empty() { "ε".to_string() } else { s.clone() })
+                        .collect();
+                    
+                    if new_labels.is_empty() {
+                        // If no labels remain, remove the entire transition
+                        active_tab.transitions.remove(&(from, to));
+                    } else {
+                        // Otherwise, update with the new labels
+                        let mut set = indexmap::IndexSet::new();
+                        for label in new_labels {
+                            set.insert(label);
+                        }
+                        active_tab.transitions.insert((from, to), set);
+                    }
+                }
+                active_tab.editing_transition_pair = None;
+                active_tab.editing_transition_labels.clear();
+                active_tab.editing_transition_label_inputs.clear();
+                active_tab.editing_transition_dialog_open = false;
+                active_tab.state_machine.request_redraw();
+                Task::none()
+            }
+            Message::DeleteEditTransitionLabel(idx) => {
+                let active_tab = self.get_active_tab_mut();
+                if idx < active_tab.editing_transition_label_inputs.len() {
+                    active_tab.editing_transition_label_inputs.remove(idx);
+                }
+                Task::none()
+            }
+            Message::AddEditTransitionLabel => {
+                let active_tab = self.get_active_tab_mut();
+                active_tab.editing_transition_label_inputs.push(String::new());
+                Task::none()
+            }
+            Message::CancelEditTransitionLabels => {
+                let active_tab = self.get_active_tab_mut();
+                active_tab.editing_transition_pair = None;
+                active_tab.editing_transition_labels.clear();
+                active_tab.editing_transition_label_inputs.clear();
+                active_tab.editing_transition_dialog_open = false;
                 Task::none()
             }
         }
@@ -457,12 +585,33 @@ impl App {
             active_tab.machine.make_initial(initial_id as u64);
         }
 
-        for gui_transition in &active_tab.transitions {
-            active_tab.machine.add_transition(
-                gui_transition.from_state_id as u64,
-                gui_transition.to_state_id as u64,
-                gui_transition.label.to_string()
-            );
+        for (from_id, state) in active_tab.machine.get_states_by_id_ref() {
+            for (to_id, inputs) in state.iter_by_transition() {
+                let from_state = active_tab.states.iter()
+                    .find(|s| s.id == *from_id as usize)
+                    .unwrap();
+                let to_state = active_tab.states.iter()
+                    .find(|s| s.id == *to_id as usize)
+                    .unwrap();
+
+                let label = inputs.iter()
+                    .map(|s| s.as_str())
+                    .collect::<Vec<&str>>()
+                    .join(", ");
+
+                let gui_transition = state_machine::Transition {
+                    from_state_id: *from_id as usize,
+                    to_state_id: *to_id as usize,
+                    from_point: from_state.position,
+                    to_point: to_state.position,
+                    label: Box::leak(label.into_boxed_str())
+                };
+                let key = (gui_transition.from_state_id, gui_transition.to_state_id);
+                let entry = active_tab.transitions.entry(key).or_insert_with(IndexSet::new);
+                if !entry.contains(&gui_transition.label.to_string()) {
+                    entry.insert(gui_transition.label.to_string());
+                }
+            }
         }
     }
 
@@ -512,7 +661,11 @@ impl App {
                     to_point: to_state.position,
                     label: Box::leak(label.into_boxed_str())
                 };
-                active_tab.transitions.push(gui_transition);
+                let key = (gui_transition.from_state_id, gui_transition.to_state_id);
+                let entry = active_tab.transitions.entry(key).or_insert_with(IndexSet::new);
+                if !entry.contains(&gui_transition.label.to_string()) {
+                    entry.insert(gui_transition.label.to_string());
+                }
             }
         }
 
@@ -548,10 +701,10 @@ impl App {
         for state in &active_tab.states {
             all_ids.insert(state.id);
         }
-        for transition in &active_tab.transitions {
-            if !parent_map.contains_key(&transition.to_state_id) {
-                children_map.entry(transition.from_state_id).or_default().push(transition.to_state_id);
-                parent_map.insert(transition.to_state_id, transition.from_state_id);
+        for (&(from, to), _) in &active_tab.transitions {
+            if !parent_map.contains_key(&to) {
+                children_map.entry(from).or_default().push(to);
+                parent_map.insert(to, from);
             }
         }
 
@@ -624,15 +777,7 @@ impl App {
             }
         }
 
-        for transition in &mut active_tab.transitions {
-            if let (Some(from_state), Some(to_state)) = (
-                active_tab.states.iter().find(|s| s.id == transition.from_state_id),
-                active_tab.states.iter().find(|s| s.id == transition.to_state_id)
-            ) {
-                transition.from_point = from_state.position;
-                transition.to_point = to_state.position;
-            }
-        }
+        // No-op: no from_point/to_point to update
     }
 
     fn apply_grid_layout_to_tab(active_tab: &mut Tab) {
@@ -656,15 +801,7 @@ impl App {
             );
         }
 
-        for transition in &mut active_tab.transitions {
-            if let (Some(from_state), Some(to_state)) = (
-                active_tab.states.iter().find(|s| s.id == transition.from_state_id),
-                active_tab.states.iter().find(|s| s.id == transition.to_state_id)
-            ) {
-                transition.from_point = from_state.position;
-                transition.to_point = to_state.position;
-            }
-        }
+        // No-op: no from_point/to_point to update
     }
 
     fn create_menu_bar(&self) -> Element<Message> {
@@ -1125,6 +1262,110 @@ impl App {
         let text_color = iced::Color::WHITE;
         let border_color = iced::Color::from_rgba(0.4, 0.4, 0.4, 1.0);
 
+        if self.get_active_tab().pending_transition_dialog_open {
+            let edit_dialog = container(
+                container(
+                    iced::widget::column![
+                        iced::widget::text("Enter transition label:")
+                            .size(17)
+                            .color(text_color),
+                        iced::widget::text_input("Enter label...", &self.get_active_tab().pending_transition_label)
+                            .on_input(Message::EditTextChanged)
+                            .on_submit(Message::FinishEditing)
+                            .width(150)
+                            .style(|_theme: &iced::Theme, _status| {
+                                iced::widget::text_input::Style {
+                                    background: iced::Background::Color(iced::Color::from_rgba(0.15, 0.14, 0.15, 1.0)),
+                                    border: iced::Border {
+                                        color: iced::Color::from_rgba(0.0, 0.5, 1.0, 1.0),
+                                        width: 2.0,
+                                        radius: 4.0.into(), 
+                                    },
+                                    icon: iced::Color::WHITE,
+                                    placeholder: iced::Color::from_rgba(0.7, 0.7, 0.7, 1.0),
+                                    value: iced::Color::WHITE,
+                                    selection: iced::Color::from_rgba(0.0, 0.5, 1.0, 0.3),
+                                }
+                            }),
+                        row![
+                            button("Save")
+                                .on_press(Message::FinishEditing)
+                                .padding([4, 8]),
+                            button("Cancel")
+                                .on_press(Message::CancelEditing)
+                                .padding([4, 8])
+                        ]
+                        .spacing(8)
+                    ]
+                    .spacing(8)
+                    .padding(12)
+                    .width(200)
+                )
+                .style(move |_theme: &iced::Theme| {
+                    container::Style {
+                        background: Some(menu_background_color.into()),
+                        border: iced::Border {
+                            color: border_color,
+                            width: 1.0,
+                            radius: 4.0.into(),
+                        },
+                        ..Default::default()
+                    }
+                })
+            )
+            .center(iced::Length::Fill)
+            .style(|_theme: &iced::Theme| {
+                container::Style {
+                    background: Some(iced::Color::from_rgba(0.0, 0.0, 0.0, 0.3).into()),
+                    ..Default::default()
+                }
+            });
+            return edit_dialog.into();
+        }
+        if self.get_active_tab().editing_transition_dialog_open {
+            let active_tab = self.get_active_tab();
+            let mut label_inputs = column![];
+            for (i, label) in active_tab.editing_transition_label_inputs.iter().enumerate() {
+                label_inputs = label_inputs.push(
+                    row![
+                        iced::widget::text_input("Label", label)
+                            .on_input(move |text| Message::EditTransitionLabelChanged(i, text))
+                            .width(120),
+                        button("Delete")
+                            .on_press(Message::DeleteEditTransitionLabel(i))
+                            .padding([2, 6])
+                    ].spacing(8)
+                );
+            }
+            let dialog = container(
+                container(
+                    column![
+                        iced::widget::text("Edit Transition Labels:")
+                            .size(17)
+                            .style(|_| iced::widget::text::Style { color: Some(iced::Color::WHITE), ..Default::default() }),
+                        iced::widget::scrollable(label_inputs.padding([0, 16])).height(Length::Fixed(180.0)),
+                        button("Add Label").on_press(Message::AddEditTransitionLabel).padding([4, 8]),
+                        row![
+                            button("Save").on_press(Message::SaveEditTransitionLabels).padding([4, 8]),
+                            button("Cancel").on_press(Message::CancelEditTransitionLabels).padding([4, 8])
+                        ].spacing(8)
+                    ].spacing(8).padding(12).width(250)
+                ).style(|_theme: &iced::Theme| container::Style {
+                    background: Some(iced::Color::from_rgba(0.15, 0.14, 0.15, 1.0).into()),
+                    border: iced::Border {
+                        color: iced::Color::from_rgba(0.4, 0.4, 0.4, 1.0),
+                        width: 1.0,
+                        radius: 4.0.into(),
+                    },
+                    ..Default::default()
+                })
+            ).center(iced::Length::Fill)
+            .style(|_theme: &iced::Theme| container::Style {
+                background: Some(iced::Color::from_rgba(0.0, 0.0, 0.0, 0.3).into()),
+                ..Default::default()
+            });
+            return dialog.into();
+        }
         let edit_dialog = container(
             container(
                 iced::widget::column![
@@ -1347,6 +1588,18 @@ impl App {
         if self.latex_export_dialog_open {
             let latex_dialog = self.create_latex_export_dialog();
             final_content = iced::widget::stack![final_content, latex_dialog].into();
+        }
+
+        // Always show the pending transition dialog on top if open
+        if self.get_active_tab().pending_transition_dialog_open {
+            let pending_dialog = self.create_edit_dialog();
+            final_content = iced::widget::stack![final_content, pending_dialog].into();
+        }
+
+        // Always show the edit transition labels dialog on top if open
+        if self.get_active_tab().editing_transition_dialog_open {
+            let edit_labels_dialog = self.create_edit_dialog();
+            final_content = iced::widget::stack![final_content, edit_labels_dialog].into();
         }
 
         container(final_content)

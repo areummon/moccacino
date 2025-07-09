@@ -34,6 +34,12 @@ pub enum CanvasMessage {
     StateDoubleClicked(usize),
     TransitionDoubleClicked(usize),
     TransitionClicked(usize),
+    RequestTransitionLabel {
+        from_state_id: usize,
+        to_state_id: usize,
+        from_point: Point,
+        to_point: Point,
+    },
 }
 
 pub struct State {
@@ -62,7 +68,7 @@ impl State {
     pub fn view<'a>(
         &'a self,
         states: &'a [StateNode],
-        transitions: &'a [Transition],
+        transitions: &'a std::collections::HashMap<(usize, usize), indexmap::IndexSet<String>>,
         initial_state: Option<usize>,
         final_states: &'a HashSet<usize>
     ) -> Element<'a, CanvasMessage> {
@@ -131,30 +137,122 @@ impl State {
 struct StateMachine<'a> {
     state: &'a State,
     states: &'a [StateNode],
-    transitions: &'a [Transition],
+    transitions: &'a std::collections::HashMap<(usize, usize), indexmap::IndexSet<String>>,
     initial_state: Option<usize>,
     final_states: &'a HashSet<usize>,
 }
 
 impl StateMachine<'_> {
     fn find_transition_at_point(&self, point: Point) -> Option<usize> {
-        for (index, transition) in self.transitions.iter().enumerate() {
+        for (index, (key, labels)) in self.transitions.iter().enumerate() {
             if let (Some(from_state), Some(to_state)) = (
-                self.states.iter().find(|s| s.id == transition.from_state_id),
-                self.states.iter().find(|s| s.id == transition.to_state_id)
+                self.states.iter().find(|s| s.id == key.0),
+                self.states.iter().find(|s| s.id == key.1)
             ) {
-                if transition.from_state_id == transition.to_state_id {
+                if key.0 == key.1 {
                     let center = from_state.position;
                     let control = Point::new(center.x, center.y - from_state.radius * 3.8);
-                    let label_pos = Point::new(control.x, control.y + 30.0);
-                    let distance = (point - label_pos).length();
-                    if distance <= 20.0 {
+                    // Calculate loop curve points for label positioning (same as drawing)
+                    let r = from_state.radius;
+                    let theta = std::f32::consts::PI / 4.0;
+                    let start = Point::new(
+                        (center.x - r * theta.cos()) + 4.0,
+                        (center.y - r * theta.sin()) + 4.0,
+                    );
+                    let end = Point::new(
+                        (center.x + r * theta.cos()) - 4.0,
+                        (center.y - r * theta.sin()) - 4.0,
+                    );
+                    
+                    // Calculate label position (same as drawing)
+                    let t = 0.5;
+                    let one_minus_t = 1.0 - t;
+                    let midpoint = Point::new(
+                        one_minus_t * one_minus_t * start.x + 2.0 * one_minus_t * t * control.x + t * t * end.x,
+                        one_minus_t * one_minus_t * start.y + 2.0 * one_minus_t * t * control.y + t * t * end.y,
+                    );
+                    let label_pos = Point::new(midpoint.x, midpoint.y - 10.0);
+                    
+                    let label_count = labels.len().max(1);
+                    let label_height = (label_count as f32) * 18.0 + 16.0;
+                    let width = 80.0;
+                    
+                    // Extended rectangular area: covers both the label stack above and the loop curve area below
+                    let rect_left = label_pos.x - width / 2.0;
+                    let rect_right = label_pos.x + width / 2.0;
+                    let rect_top = label_pos.y - label_height; // Start from top of label stack
+                    let rect_bottom = label_pos.y + 60.0; // Extend down to cover the loop curve area
+                    
+                    if point.x >= rect_left && point.x <= rect_right && point.y >= rect_top && point.y <= rect_bottom {
                         return Some(index);
                     }
                 } else {
-                    let label_pos = self.calculate_transition_label_position(transition, from_state, to_state);
-                    let distance = (point - label_pos).length();
-                    if distance <= 20.0 {
+                    // Calculate label position and stack direction
+                    let has_reverse = self.transitions.contains_key(&(key.1, key.0));
+                    let from_state = from_state;
+                    let to_state = to_state;
+                    let label_count = labels.len().max(1);
+                    let height = (label_count as f32) * 18.0 + 16.0;
+                    let width = 80.0;
+                    let (label_pos, stack_vec) = if has_reverse {
+                        // Curved: use the same logic as drawing
+                        let center_to_center = to_state.position - from_state.position;
+                        let distance = center_to_center.length();
+                        let (node_a_pos, node_b_pos) = if key.0 < key.1 {
+                            (from_state.position, to_state.position)
+                        } else {
+                            (to_state.position, from_state.position)
+                        };
+                        let consistent_direction = node_b_pos - node_a_pos;
+                        let consistent_perpendicular = Vector::new(-consistent_direction.y, consistent_direction.x).unit();
+                        let curve_side_multiplier = if key.0 < key.1 { 1.0 } else { -1.0 };
+                        let curve_offset = distance * 0.4;
+                        let midpoint = Point::new(
+                            (from_state.position.x + to_state.position.x) / 2.0,
+                            (from_state.position.y + to_state.position.y) / 2.0,
+                        );
+                        let control_point = midpoint + consistent_perpendicular * curve_offset * curve_side_multiplier;
+                        let start_direction = (control_point - from_state.position).unit();
+                        let end_direction = (to_state.position - control_point).unit();
+                        let start_point = from_state.position + start_direction * from_state.radius;
+                        let end_point = to_state.position - end_direction * to_state.radius;
+                        let t = 0.5;
+                        let one_minus_t = 1.0 - t;
+                        let curve_midpoint = Point::new(
+                            one_minus_t * one_minus_t * start_point.x + 2.0 * one_minus_t * t * control_point.x + t * t * end_point.x,
+                            one_minus_t * one_minus_t * start_point.y + 2.0 * one_minus_t * t * control_point.y + t * t * end_point.y,
+                        );
+                        let label_offset = consistent_perpendicular * (25.0 * curve_side_multiplier);
+                        (curve_midpoint + label_offset, label_offset.unit())
+                    } else {
+                        // Straight: use -perpendicular_vec as in drawing
+                        let direction = to_state.position - from_state.position;
+                        let midpoint = Point::new(
+                            (from_state.position.x + to_state.position.x) / 2.0,
+                            (from_state.position.y + to_state.position.y) / 2.0,
+                        );
+                        let perpendicular_vec = Vector::new(-direction.y, direction.x).unit() * 15.0;
+                        (midpoint - perpendicular_vec, (-perpendicular_vec).unit())
+                    };
+                    // Rectangle starts at the top of the label stack and extends downward in the stack direction
+                    let rect_top_left = label_pos - stack_vec * 0.0 - Vector::new(width / 2.0, 0.0);
+                    let rect_bottom_right = label_pos + stack_vec * height + Vector::new(width / 2.0, 0.0);
+                    // Check if point is inside the rectangle (project point onto stack direction)
+                    let rel = point - rect_top_left;
+                    let stack_proj = rel.x * stack_vec.x + rel.y * stack_vec.y;
+                    let ortho_vec = Vector::new(-stack_vec.y, stack_vec.x);
+                    let ortho_proj = rel.x * ortho_vec.x + rel.y * ortho_vec.y;
+                    if stack_proj >= 0.0 && stack_proj <= height && ortho_proj >= 0.0 && ortho_proj <= width {
+                        return Some(index);
+                    }
+                    // Also allow clicking near the line (legacy behavior)
+                    let direction = to_state.position - from_state.position;
+                    let direction_unit = direction.unit();
+                    let start_point = from_state.position + direction_unit * from_state.radius;
+                    let end_point = to_state.position - direction_unit * to_state.radius;
+                    let line_midpoint = Point::new((start_point.x + end_point.x) / 2.0, (start_point.y + end_point.y) / 2.0);
+                    let line_distance = (point - line_midpoint).length();
+                    if line_distance <= 20.0 {
                         return Some(index);
                     }
                 }
@@ -163,23 +261,23 @@ impl StateMachine<'_> {
         None
     }
 
-    fn calculate_transition_label_position(&self, transition: &Transition, from_state: &StateNode, to_state: &StateNode) -> Point {
+    fn calculate_transition_label_position(&self, transition: &(usize, usize), from_state: &StateNode, to_state: &StateNode) -> Point {
         let has_reverse = self.transitions.iter().any(|other_trans|
-            other_trans.from_state_id == transition.to_state_id &&
-            other_trans.to_state_id == transition.from_state_id
+            other_trans.0.0 == transition.1 &&
+            other_trans.0.1 == transition.0
         );
 
         if has_reverse {
             let center_to_center = to_state.position - from_state.position;
             let distance = center_to_center.length();
-            let (node_a_pos, node_b_pos) = if transition.from_state_id < transition.to_state_id {
+            let (node_a_pos, node_b_pos) = if transition.0 < transition.1 {
                 (from_state.position, to_state.position)
             } else {
                 (to_state.position, from_state.position)
             };
             let consistent_direction = node_b_pos - node_a_pos;
             let consistent_perpendicular = Vector::new(-consistent_direction.y, consistent_direction.x).unit();
-            let curve_side_multiplier = if transition.from_state_id < transition.to_state_id { 1.0 } else { -1.0 };
+            let curve_side_multiplier = if transition.0 < transition.1 { 1.0 } else { -1.0 };
             let curve_offset = distance * 0.4;
             let midpoint = Point::new(
                 (from_state.position.x + to_state.position.x) / 2.0,
@@ -315,14 +413,13 @@ impl canvas::Program<CanvasMessage> for StateMachine<'_> {
                         Some(PendingTransition::Start { from_state_id, from_point }) => {
                             if let Some(to_node) = clicked_node {
                                 *state = None;
-                                let transition = Transition {
+                                // Instead of adding the transition here, request a label from the GUI
+                                return (canvas::event::Status::Captured, Some(CanvasMessage::RequestTransitionLabel {
                                     from_state_id,
                                     to_state_id: to_node.id,
                                     from_point,
                                     to_point: to_node.position,
-                                    label: Box::leak("ε".to_string().into_boxed_str()),
-                                };
-                                (canvas::event::Status::Captured, Some(CanvasMessage::AddTransition(transition)))
+                                }));
                             } else {
                                 *state = None;
                                 (canvas::event::Status::Captured, None)
@@ -419,7 +516,240 @@ impl canvas::Program<CanvasMessage> for StateMachine<'_> {
                 iced::Color::from_rgb(0.1, 0.1, 0.1), 
             );
 
-            Transition::draw_all(self.transitions, frame, _theme, self.states);
+            for ((from_id, to_id), labels) in self.transitions.iter() {
+                let from_state = self.states.iter().find(|s| s.id == *from_id);
+                let to_state = self.states.iter().find(|s| s.id == *to_id);
+                if let (Some(from_state), Some(to_state)) = (from_state, to_state) {
+                    if from_id == to_id {
+                        // Draw self-loop
+                        let center = from_state.position;
+                        let r = from_state.radius;
+                        let theta = std::f32::consts::PI / 4.0;
+                        let start = iced::Point::new(
+                            (center.x - r * theta.cos()) + 4.0,
+                            (center.y - r * theta.sin()) + 4.0,
+                        );
+                        let end = iced::Point::new(
+                            (center.x + r * theta.cos()) - 4.0,
+                            (center.y - r * theta.sin()) - 4.0,
+                        );
+                        let control = iced::Point::new(center.x, center.y - r * 3.8);
+                        let mut path_builder = canvas::path::Builder::new();
+                        path_builder.move_to(start);
+                        path_builder.quadratic_curve_to(control, end);
+                        let curve_path = path_builder.build();
+                        frame.stroke(
+                            &curve_path,
+                            Stroke::default()
+                                .with_width(2.0)
+                                .with_color(iced::Color::WHITE),
+                        );
+                        // Draw arrowhead for loop
+                        let t = 0.05;
+                        let one_minus_t = 1.0 - t;
+                        let arrow_pos = iced::Point::new(
+                            one_minus_t * one_minus_t * start.x + 2.0 * one_minus_t * t * control.x + t * t * end.x,
+                            one_minus_t * one_minus_t * start.y + 2.0 * one_minus_t * t * control.y + t * t * end.y,
+                        );
+                        let tangent = iced::Vector::new(
+                            2.0 * (one_minus_t * (control.x - start.x) + t * (end.x - control.x)),
+                            2.0 * (one_minus_t * (control.y - start.y) + t * (end.y - control.y)),
+                        ).unit();
+                        let arrow_dir = tangent;
+                        let arrow_length = 12.0;
+                        let arrow_angle = std::f32::consts::PI / 6.0;
+                        let cos_angle = arrow_angle.cos();
+                        let sin_angle = arrow_angle.sin();
+                        let left = iced::Point::new(
+                            arrow_pos.x + arrow_length * (arrow_dir.x * cos_angle - arrow_dir.y * sin_angle),
+                            arrow_pos.y + arrow_length * (arrow_dir.x * sin_angle + arrow_dir.y * cos_angle),
+                        );
+                        let right = iced::Point::new(
+                            arrow_pos.x + arrow_length * (arrow_dir.x * cos_angle + arrow_dir.y * sin_angle),
+                            arrow_pos.y + arrow_length * (-arrow_dir.x * sin_angle + arrow_dir.y * cos_angle),
+                        );
+                        let mut arrow_path = canvas::path::Builder::new();
+                        arrow_path.move_to(arrow_pos);
+                        arrow_path.line_to(left);
+                        arrow_path.move_to(arrow_pos);
+                        arrow_path.line_to(right);
+                        let arrow_path = arrow_path.build();
+                        frame.stroke(
+                            &arrow_path,
+                            Stroke::default()
+                                .with_width(2.0)
+                                .with_color(iced::Color::WHITE),
+                        );
+                        // Draw stacked labels above the loop
+                        // Place label at midpoint of the loop curve (t=0.5), with a small offset above
+                        let t = 0.5;
+                        let one_minus_t = 1.0 - t;
+                        let midpoint = iced::Point::new(
+                            one_minus_t * one_minus_t * start.x + 2.0 * one_minus_t * t * control.x + t * t * end.x,
+                            one_minus_t * one_minus_t * start.y + 2.0 * one_minus_t * t * control.y + t * t * end.y,
+                        );
+                        let label_pos = iced::Point::new(midpoint.x, midpoint.y - 10.0);
+                        let mut y_offset = 0.0;
+                        for label in labels {
+                            frame.fill_text(Text {
+                                content: label.to_string(),
+                                position: label_pos - Vector::new(0.0, y_offset),
+                                color: iced::Color::WHITE,
+                                size: 14.0.into(),
+                                horizontal_alignment: alignment::Horizontal::Center,
+                                vertical_alignment: alignment::Vertical::Center,
+                                ..Text::default()
+                            });
+                            y_offset += 18.0;
+                        }
+                    } else {
+                        // Check for reverse transition
+                        let has_reverse = self.transitions.contains_key(&(*to_id, *from_id));
+                        if has_reverse {
+                            // Draw a curved line for both directions
+                            let center_to_center = to_state.position - from_state.position;
+                            let distance = center_to_center.length();
+                            let (node_a_pos, node_b_pos) = if from_id < to_id {
+                                (from_state.position, to_state.position)
+                            } else {
+                                (to_state.position, from_state.position)
+                            };
+                            let consistent_direction = node_b_pos - node_a_pos;
+                            let consistent_perpendicular = Vector::new(-consistent_direction.y, consistent_direction.x).unit();
+                            let curve_side_multiplier = if from_id < to_id { 1.0 } else { -1.0 };
+                            let curve_offset = distance * 0.4;
+                            let midpoint = Point::new(
+                                (from_state.position.x + to_state.position.x) / 2.0,
+                                (from_state.position.y + to_state.position.y) / 2.0,
+                            );
+                            let control_point = midpoint + consistent_perpendicular * curve_offset * curve_side_multiplier;
+                            let start_direction = (control_point - from_state.position).unit();
+                            let end_direction = (to_state.position - control_point).unit();
+                            let start_point = from_state.position + start_direction * from_state.radius;
+                            let end_point = to_state.position - end_direction * to_state.radius;
+                            let mut path_builder = canvas::path::Builder::new();
+                            path_builder.move_to(start_point);
+                            path_builder.quadratic_curve_to(control_point, end_point);
+                            let curve_path = path_builder.build();
+                            frame.stroke(
+                                &curve_path,
+                                Stroke::default()
+                                    .with_width(1.5)
+                                    .with_color(iced::Color::WHITE),
+                            );
+                            // Draw the arrowhead
+                            let tip = end_point;
+                            let arrow_length = 12.0;
+                            let arrow_angle = std::f32::consts::PI / 6.0;
+                            let cos_angle = arrow_angle.cos();
+                            let sin_angle = arrow_angle.sin();
+                            let reverse_dir = end_direction * -arrow_length;
+                            let left = Point::new(
+                                tip.x + reverse_dir.x * cos_angle - reverse_dir.y * sin_angle,
+                                tip.y + reverse_dir.x * sin_angle + reverse_dir.y * cos_angle,
+                            );
+                            let right = Point::new(
+                                tip.x + reverse_dir.x * cos_angle + reverse_dir.y * sin_angle,
+                                tip.y - reverse_dir.x * sin_angle + reverse_dir.y * cos_angle,
+                            );
+                            let mut arrow_path = canvas::path::Builder::new();
+                            arrow_path.move_to(tip);
+                            arrow_path.line_to(left);
+                            arrow_path.move_to(tip);
+                            arrow_path.line_to(right);
+                            let arrow_path = arrow_path.build();
+                            frame.stroke(
+                                &arrow_path,
+                                Stroke::default()
+                                    .with_width(2.0)
+                                    .with_color(iced::Color::WHITE),
+                            );
+                            // Draw stacked labels above the curve
+                            let label_position = {
+                                // Midpoint of the curve
+                                let t = 0.5;
+                                let one_minus_t = 1.0 - t;
+                                Point::new(
+                                    one_minus_t * one_minus_t * start_point.x + 2.0 * one_minus_t * t * control_point.x + t * t * end_point.x,
+                                    one_minus_t * one_minus_t * start_point.y + 2.0 * one_minus_t * t * control_point.y + t * t * end_point.y,
+                                )
+                            };
+                            let label_offset = consistent_perpendicular * (25.0 * curve_side_multiplier);
+                            let mut y_offset = 0.0;
+                            for label in labels {
+                                frame.fill_text(Text {
+                                    content: label.to_string(),
+                                    position: label_position + label_offset - Vector::new(0.0, y_offset),
+                                    color: iced::Color::WHITE,
+                                    size: 14.0.into(),
+                                    horizontal_alignment: alignment::Horizontal::Center,
+                                    vertical_alignment: alignment::Vertical::Center,
+                                    ..Text::default()
+                                });
+                                y_offset += 18.0;
+                            }
+                        } else {
+                            // Draw the arrow (straight line)
+                            let direction = to_state.position - from_state.position;
+                            let direction_unit = direction.unit();
+                            let start_point = from_state.position + direction_unit * from_state.radius;
+                            let end_point = to_state.position - direction_unit * to_state.radius;
+                            frame.stroke(
+                                &Path::line(start_point, end_point),
+                                Stroke::default()
+                                    .with_width(1.5)
+                                    .with_color(iced::Color::WHITE),
+                            );
+                            // Draw the arrowhead
+                            let arrow_length = 12.0;
+                            let arrow_angle = std::f32::consts::PI / 6.0;
+                            let cos_angle = arrow_angle.cos();
+                            let sin_angle = arrow_angle.sin();
+                            let reverse_dir = direction_unit * -arrow_length;
+                            let tip = end_point;
+                            let left = Point::new(
+                                tip.x + reverse_dir.x * cos_angle - reverse_dir.y * sin_angle,
+                                tip.y + reverse_dir.x * sin_angle + reverse_dir.y * cos_angle,
+                            );
+                            let right = Point::new(
+                                tip.x + reverse_dir.x * cos_angle + reverse_dir.y * sin_angle,
+                                tip.y - reverse_dir.x * sin_angle + reverse_dir.y * cos_angle,
+                            );
+                            let mut arrow_path = canvas::path::Builder::new();
+                            arrow_path.move_to(tip);
+                            arrow_path.line_to(left);
+                            arrow_path.move_to(tip);
+                            arrow_path.line_to(right);
+                            let arrow_path = arrow_path.build();
+                            frame.stroke(
+                                &arrow_path,
+                                Stroke::default()
+                                    .with_width(2.0)
+                                    .with_color(iced::Color::WHITE),
+                            );
+                            // Draw stacked labels above the line
+                            let midpoint = Point::new(
+                                (start_point.x + end_point.x) / 2.0,
+                                (start_point.y + end_point.y) / 2.0,
+                            );
+                            let perpendicular_vec = Vector::new(-direction.y, direction.x).unit() * 15.0;
+                            let mut y_offset = 0.0;
+                            for label in labels {
+                                frame.fill_text(Text {
+                                    content: label.to_string(),
+                                    position: midpoint - perpendicular_vec - Vector::new(0.0, y_offset),
+                                    color: iced::Color::WHITE,
+                                    size: 14.0.into(),
+                                    horizontal_alignment: alignment::Horizontal::Center,
+                                    vertical_alignment: alignment::Vertical::Center,
+                                    ..Text::default()
+                                });
+                                y_offset += 18.0;
+                            }
+                        }
+                    }
+                }
+            }
 
             StateNode::draw_all(self.states, frame, _theme, self.initial_state, self.final_states);
         });

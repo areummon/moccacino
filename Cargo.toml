@@ -15,6 +15,7 @@ license = "MIT"
 
 [dependencies]
 iced = { version = "0.13.1", features = ["canvas"] }
+indexmap = "2.10.0"
 moca-data = { path = "./moca-data" }
 moca-gui = { path = "./moca-gui" }
 
