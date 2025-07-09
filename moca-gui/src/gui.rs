@@ -407,12 +407,11 @@ impl App {
             }
             Message::SubmitCheckInput => {
                 let mut input = self.get_active_tab().check_input_text.clone();
-                if !input.is_empty() {
-                    self.sync_gui_to_finite_automata();
-                    let result = self.get_active_tab().machine.check_input(&mut input);
-                    self.get_active_tab_mut().check_input_result = Some(result);
-                    self.get_active_tab_mut().check_result_popup_open = true;
-                }
+                // Allow blank inputs to be processed (don't convert to epsilon)
+                self.sync_gui_to_finite_automata();
+                let result = self.get_active_tab().machine.check_input(&mut input);
+                self.get_active_tab_mut().check_input_result = Some(result);
+                self.get_active_tab_mut().check_result_popup_open = true;
                 self.get_active_tab_mut().check_input_dialog_open = false;
                 Task::none()
             }
@@ -503,10 +502,10 @@ impl App {
             Message::SaveEditTransitionLabels => {
                 let active_tab = self.get_active_tab_mut();
                 if let Some((from, to)) = active_tab.editing_transition_pair {
-                    // Filter out empty labels and convert empty strings to "ε"
+                    // Convert empty strings to "ε" and filter out completely empty labels
                     let new_labels: Vec<String> = active_tab.editing_transition_label_inputs.iter()
-                        .filter(|s| !s.trim().is_empty()) // Remove completely empty labels
                         .map(|s| if s.trim().is_empty() { "ε".to_string() } else { s.clone() })
+                        .filter(|s| s != "ε" || active_tab.editing_transition_label_inputs.iter().any(|input| !input.trim().is_empty())) // Keep ε only if there are other non-empty labels
                         .collect();
                     
                     if new_labels.is_empty() {
@@ -573,45 +572,27 @@ impl App {
         let active_tab = self.get_active_tab_mut();
         active_tab.machine.clear();
 
+        // Add all states
         for state_node in &active_tab.states {
             active_tab.machine.add_state_with_id_label(state_node.id as u64, state_node.label);
         }
 
+        // Add all transitions (multi-label)
+        for (&(from, to), labels) in &active_tab.transitions {
+            for label in labels {
+                let label = if label.trim().is_empty() || label == "ε" { "ε" } else { label };
+                active_tab.machine.add_transition(from as u64, to as u64, label.to_string());
+            }
+        }
+
+        // Set final states
         for &state_id in &active_tab.final_states {
             active_tab.machine.make_final(state_id as u64);
         }
 
+        // Set initial state
         if let Some(initial_id) = active_tab.initial_state {
             active_tab.machine.make_initial(initial_id as u64);
-        }
-
-        for (from_id, state) in active_tab.machine.get_states_by_id_ref() {
-            for (to_id, inputs) in state.iter_by_transition() {
-                let from_state = active_tab.states.iter()
-                    .find(|s| s.id == *from_id as usize)
-                    .unwrap();
-                let to_state = active_tab.states.iter()
-                    .find(|s| s.id == *to_id as usize)
-                    .unwrap();
-
-                let label = inputs.iter()
-                    .map(|s| s.as_str())
-                    .collect::<Vec<&str>>()
-                    .join(", ");
-
-                let gui_transition = state_machine::Transition {
-                    from_state_id: *from_id as usize,
-                    to_state_id: *to_id as usize,
-                    from_point: from_state.position,
-                    to_point: to_state.position,
-                    label: Box::leak(label.into_boxed_str())
-                };
-                let key = (gui_transition.from_state_id, gui_transition.to_state_id);
-                let entry = active_tab.transitions.entry(key).or_insert_with(IndexSet::new);
-                if !entry.contains(&gui_transition.label.to_string()) {
-                    entry.insert(gui_transition.label.to_string());
-                }
-            }
         }
     }
 
@@ -640,31 +621,14 @@ impl App {
 
         active_tab.state_machine.next_id = max_id_after_load + 1;
 
+        // Add all transitions (multi-label)
         for (from_id, state) in active_tab.machine.get_states_by_id_ref() {
             for (to_id, inputs) in state.iter_by_transition() {
-                let from_state = active_tab.states.iter()
-                    .find(|s| s.id == *from_id as usize)
-                    .unwrap();
-                let to_state = active_tab.states.iter()
-                    .find(|s| s.id == *to_id as usize)
-                    .unwrap();
-
-                let label = inputs.iter()
-                    .map(|s| s.as_str())
-                    .collect::<Vec<&str>>()
-                    .join(", ");
-
-                let gui_transition = state_machine::Transition {
-                    from_state_id: *from_id as usize,
-                    to_state_id: *to_id as usize,
-                    from_point: from_state.position,
-                    to_point: to_state.position,
-                    label: Box::leak(label.into_boxed_str())
-                };
-                let key = (gui_transition.from_state_id, gui_transition.to_state_id);
-                let entry = active_tab.transitions.entry(key).or_insert_with(IndexSet::new);
-                if !entry.contains(&gui_transition.label.to_string()) {
-                    entry.insert(gui_transition.label.to_string());
+                let key = (*from_id as usize, *to_id as usize);
+                let entry = active_tab.transitions.entry(key).or_insert_with(indexmap::IndexSet::new);
+                for label in inputs {
+                    let label = if label.trim().is_empty() || label == "ε" { "ε".to_string() } else { label.clone() };
+                    entry.insert(label);
                 }
             }
         }
