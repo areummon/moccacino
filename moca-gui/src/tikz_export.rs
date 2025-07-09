@@ -77,41 +77,72 @@ pub fn export_to_tikz(
             style,
             name,
             x,
-            -y, // TikZ y axis is up, GUI is down
+            -y, 
             latex_label
         ));
     }
 
-    // Draw transitions using automata library edge shapes
+    // Group transitions by (from, to) pairs to handle multiple labels
+    let mut transition_groups: std::collections::HashMap<(usize, usize), Vec<String>> = std::collections::HashMap::new();
+    
     for t in transitions {
-        let from = id_to_name.get(&t.from_state_id).unwrap();
-        let to = id_to_name.get(&t.to_state_id).unwrap();
+        let key = (t.from_state_id, t.to_state_id);
         let mut label = t.label.to_string();
         if label.trim() == "ε" {
             label = String::from("$\\varepsilon$");
         }
-        if t.from_state_id == t.to_state_id {
-            // Use loop above for self-loops
-            // You can change it to below per case
-            tikz.push_str(&format!(
-                "  \\path[->] ({}) edge[loop above] node{{{}}} ({});\n",
-                from, label, to
-            ));
-        } else {
-            // Check for reverse edge for curve
-            let has_reverse = transitions.iter().any(|other|
-                other.from_state_id == t.to_state_id && other.to_state_id == t.from_state_id
-            );
-            if has_reverse {
+        transition_groups.entry(key).or_insert_with(Vec::new).push(label);
+    }
+
+    // Draw transitions with stacked labels
+    for ((from_id, to_id), labels) in &transition_groups {
+        let from = id_to_name.get(from_id).unwrap();
+        let to = id_to_name.get(to_id).unwrap();
+        
+        if from_id == to_id {
+            // Self-loop with stacked labels
+            if labels.len() == 1 {
                 tikz.push_str(&format!(
-                    "  \\path[->] ({}) edge[bend left] node{{{}}} ({}) ;\n",
-                    from, label, to
+                    "  \\path[->] ({}) edge[loop above] node{{{}}} ({});\n",
+                    from, labels[0], to
                 ));
             } else {
+                // Multiple labels for loop - stack them vertically
                 tikz.push_str(&format!(
-                    "  \\path[->] ({}) edge node{{{}}} ({}) ;\n",
-                    from, label, to
+                    "  \\path[->] ({}) edge[loop above] node[align=center]{{{}}} ({});\n",
+                    from, labels.join("\\\\"), to
                 ));
+            }
+        } else {
+            // Check for reverse edge for curve
+            let has_reverse = transition_groups.contains_key(&(*to_id, *from_id));
+            
+            if has_reverse {
+                if labels.len() == 1 {
+                    tikz.push_str(&format!(
+                        "  \\path[->] ({}) edge[bend left] node{{{}}} ({}) ;\n",
+                        from, labels[0], to
+                    ));
+                } else {
+                    // Multiple labels for curved edge - stack them vertically
+                    tikz.push_str(&format!(
+                        "  \\path[->] ({}) edge[bend left] node[align=center]{{{}}} ({}) ;\n",
+                        from, labels.join("\\\\"), to
+                    ));
+                }
+            } else {
+                if labels.len() == 1 {
+                    tikz.push_str(&format!(
+                        "  \\path[->] ({}) edge node{{{}}} ({}) ;\n",
+                        from, labels[0], to
+                    ));
+                } else {
+                    // Multiple labels for straight edge - stack them vertically
+                    tikz.push_str(&format!(
+                        "  \\path[->] ({}) edge node[align=center]{{{}}} ({}) ;\n",
+                        from, labels.join("\\\\"), to
+                    ));
+                }
             }
         }
     }

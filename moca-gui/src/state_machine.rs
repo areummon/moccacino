@@ -245,15 +245,53 @@ impl StateMachine<'_> {
                     if stack_proj >= 0.0 && stack_proj <= height && ortho_proj >= 0.0 && ortho_proj <= width {
                         return Some(index);
                     }
-                    // Also allow clicking near the line (legacy behavior)
-                    let direction = to_state.position - from_state.position;
-                    let direction_unit = direction.unit();
-                    let start_point = from_state.position + direction_unit * from_state.radius;
-                    let end_point = to_state.position - direction_unit * to_state.radius;
-                    let line_midpoint = Point::new((start_point.x + end_point.x) / 2.0, (start_point.y + end_point.y) / 2.0);
-                    let line_distance = (point - line_midpoint).length();
-                    if line_distance <= 20.0 {
-                        return Some(index);
+                    
+                    // For curved transitions, also check distance to the curve itself
+                    if has_reverse {
+                        let center_to_center = to_state.position - from_state.position;
+                        let distance = center_to_center.length();
+                        let (node_a_pos, node_b_pos) = if key.0 < key.1 {
+                            (from_state.position, to_state.position)
+                        } else {
+                            (to_state.position, from_state.position)
+                        };
+                        let consistent_direction = node_b_pos - node_a_pos;
+                        let consistent_perpendicular = Vector::new(-consistent_direction.y, consistent_direction.x).unit();
+                        let curve_side_multiplier = if key.0 < key.1 { 1.0 } else { -1.0 };
+                        let curve_offset = distance * 0.4;
+                        let midpoint = Point::new(
+                            (from_state.position.x + to_state.position.x) / 2.0,
+                            (from_state.position.y + to_state.position.y) / 2.0,
+                        );
+                        let control_point = midpoint + consistent_perpendicular * curve_offset * curve_side_multiplier;
+                        let start_direction = (control_point - from_state.position).unit();
+                        let end_direction = (to_state.position - control_point).unit();
+                        let start_point = from_state.position + start_direction * from_state.radius;
+                        let end_point = to_state.position - end_direction * to_state.radius;
+                        
+                        // Check distance to the curve at multiple points
+                        for t in [0.2, 0.4, 0.6, 0.8] {
+                            let one_minus_t = 1.0 - t;
+                            let curve_point = Point::new(
+                                one_minus_t * one_minus_t * start_point.x + 2.0 * one_minus_t * t * control_point.x + t * t * end_point.x,
+                                one_minus_t * one_minus_t * start_point.y + 2.0 * one_minus_t * t * control_point.y + t * t * end_point.y,
+                            );
+                            let curve_distance = (point - curve_point).length();
+                            if curve_distance <= 25.0 {
+                                return Some(index);
+                            }
+                        }
+                    } else {
+                        // For straight transitions, allow clicking near the line (legacy behavior)
+                        let direction = to_state.position - from_state.position;
+                        let direction_unit = direction.unit();
+                        let start_point = from_state.position + direction_unit * from_state.radius;
+                        let end_point = to_state.position - direction_unit * to_state.radius;
+                        let line_midpoint = Point::new((start_point.x + end_point.x) / 2.0, (start_point.y + end_point.y) / 2.0);
+                        let line_distance = (point - line_midpoint).length();
+                        if line_distance <= 20.0 {
+                            return Some(index);
+                        }
                     }
                 }
             }
