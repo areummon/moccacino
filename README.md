@@ -63,22 +63,20 @@ You can also change the settings by modifying the `moca-gui/tikz_export.rs` file
 > Currently, you cannot change the position of loops in the GUI. If you want to change the position 
 > of a loop in the resulting TikZ code, simply change `edge[loop above]` to `edge[loop below]`.
 
-
-## Project Structure
-
-- `moca-data/`: Core library for finite automata implementation
-- `moca-gui/`: GUI application built with Iced framework
-
 ## Development
 
-This project uses a workspace structure with two main crates:
-- `moca-data`: Contains the core finite automata implementation
-- `moca-gui`: Contains the GUI implementation using Iced
+This project uses a [rust workspace](https://doc.rust-lang.org/book/ch14-03-cargo-workspaces.html) structure with two main crates:
 
-### Dependencies
+- `moca-data`: Contains the core state machine implementation.
+- `moca-gui`: Contains the GUI implementation using the [Iced](https://github.com/iced-rs/iced) library.
 
-- `iced`: GUI library for Rust
+The project uses [Nix flakes](https://nixos.wiki/wiki/Flakes) to provide a reproducible development environment and build process, leveraging [Crane](https://github.com/ipetkov/crane) for Rust builds.
 
+### Prerequisites
+
+- Install [Nix](https://nixos.org/download.html) with flake support enabled:
+  ```bash
+  nix-env -iA nixpkgs.nixFlakes
 
 > [!NOTE]
 >

@@ -1,1 +1,17 @@
+# Rust artifacts
 /target
+
+# Nix artifacts
+/result
+/result-*
+
+# Editor and OS files
+*.swp
+*.swo
+.DS_Store
+.idea/
+.vscode/
+*.bak
+
+# Rust-specific
+*.rs.bk
