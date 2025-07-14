@@ -72,12 +72,6 @@ This project uses a [rust workspace](https://doc.rust-lang.org/book/ch14-03-carg
 
 The project uses [Nix flakes](https://nixos.wiki/wiki/Flakes) to provide a reproducible development environment and build process, leveraging [Crane](https://github.com/ipetkov/crane) for Rust builds.
 
-### Prerequisites
-
-- Install [Nix](https://nixos.org/download.html) with flake support enabled:
-  ```bash
-  nix-env -iA nixpkgs.nixFlakes
-
 > [!NOTE]
 >
 > This is a project I created and worked on a long ago. 
