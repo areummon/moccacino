@@ -88,7 +88,7 @@ fn state_machine_add_transition_test() {
     let mut automata = FiniteAutomata::new();
     automata.add_state();
     automata.add_transition(0, 1, "lovelyz".to_string());
-    for (k,v) in automata.iter_by_state() {
+    for (_k,v) in automata.iter_by_state() {
         assert_ne!(1, v.iter_by_transition().len());
     }
     automata.add_state();
@@ -96,12 +96,10 @@ fn state_machine_add_transition_test() {
     automata.add_state();
     automata.add_transition(1, 2, "for you".to_string());
     let mut len = 0;
-    let mut state_id = 1;
-    for (k,v) in automata.iter_by_state() {
-        for (x,y) in v.iter_by_transition() {
+    for (_k,v) in automata.iter_by_state() {
+        for (_x,y) in v.iter_by_transition() {
             if y.contains("lovelyz") || y.contains("for you") {
                 len += 1;
-                state_id += 1;
             }
         }
     }
@@ -113,7 +111,7 @@ fn modify_name_test() {
     let mut automata = FiniteAutomata::new();
     automata.add_state();
     automata.modify_name(0, "jiyeon".to_string());
-    for (k,v) in automata.iter_by_state() {
+    for (_k,v) in automata.iter_by_state() {
         assert_eq!(v.name, "jiyeon");
     }
 }
@@ -152,8 +150,8 @@ fn state_machine_remove_state() {
     automata.remove_state(1);
     assert_eq!(automata.iter_by_state().len(),2);
     let mut len = 0;
-    for (k,v) in automata.iter_by_state() {
-        for (x,y) in v.iter_by_transition() {
+    for (_k,v) in automata.iter_by_state() {
+        for (x,_y) in v.iter_by_transition() {
             if *x == 1 {
                 len += 1;
             }
@@ -164,7 +162,7 @@ fn state_machine_remove_state() {
 
 /* Tests for the finite_automaton (DFA) module. */
 #[test]
-fn check_input_DFA_test() {
+fn check_input_dfa_test() {
     // automata that recognizes strings with an odd number of 'a'
     let mut automata = FiniteAutomata::new();
     automata.add_state();
@@ -215,7 +213,7 @@ fn check_input_DFA_test() {
 
 /* Tests for the finite_automaton (NFA) module. */
 #[test]
-fn check_input_NFA_test() {
+fn check_input_nfa_test() {
     /* NDA that recognizes strings that contains 01 or 10 */
     let mut automata = FiniteAutomata::new();
     automata.add_n_states(4);
@@ -362,7 +360,7 @@ fn minimize_test() {
     bloated_automata.add_transition(5,5, "0".to_string());
     bloated_automata.add_transition(5,5, "1".to_string());
     let debloated_automata = bloated_automata.minimize();
-    let mut states_by_id = debloated_automata.get_states_by_id_ref();
+    let states_by_id = debloated_automata.get_states_by_id_ref();
     assert_eq!(states_by_id.len(), 3);
     if let Some(initial_state_id) = debloated_automata.get_initial_state_id() {
         if let Some(state) = states_by_id.get(initial_state_id) {
@@ -425,7 +423,7 @@ fn minimize_test() {
     bloated_automata.add_transition(4,2, "b".to_string());
     bloated_automata.add_transition(4,1, "a".to_string());
     let debloated_automata = bloated_automata.minimize();
-    let mut states_by_id = debloated_automata.get_states_by_id_ref();
+    let states_by_id = debloated_automata.get_states_by_id_ref();
     assert_eq!(states_by_id.len(), 4);
     if let Some(initial_state_id) = debloated_automata.get_initial_state_id() {
         if let Some(state) = states_by_id.get(initial_state_id) {

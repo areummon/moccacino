@@ -47,9 +47,11 @@ impl PushdownAutomata {
         match self.initial_state_id {
             Some(initial_id) => {
                 let mut stack: Vec<String> = vec![self.initial_stack_symbol.to_string()];
-                self.recursive_traversing(&initial_id, input, &mut stack)
+                let mut visited = HashSet::new();
+                self.recursive_traversing(&initial_id, input, &mut stack, &mut visited)
             },
-            None => todo!(), // Future implementation of an error
+            // Without an initial state no input can be accepted.
+            None => false,
         }
     }
 
@@ -63,65 +65,70 @@ impl PushdownAutomata {
     /* Function to traverse the automaton and checking the input string, i.e.
      * Check if the automaton accepts the input string. This function is very
      * similar to the implementation in the finite_automaton function with 
-     * the same name, with the stack added. */
-    fn recursive_traversing(&self, state_id: &StateID, input: &mut Input, stack: &mut Vec<String>) -> bool {
-        match self.states_by_id.get(&state_id) {
+     * the same name, with the stack added.
+     * Transitions have the form "input;pop/push". An input part of "" or "ε"
+     * does not consume input (it can still operate the stack), and a plain
+     * "ε" transition neither consumes input nor operates the stack. Every
+     * branch works on its own clone of the input and the stack, so sibling
+     * branches cannot corrupt each other on nondeterministic choices. The
+     * visited set memoizes already explored configurations (state, remaining
+     * input, stack), which prevents infinite recursion on loops/ε-cycles. */
+    fn recursive_traversing(&self, state_id: &StateID, input: &mut Input, stack: &mut Vec<String>, visited: &mut HashSet<(StateID, Input, Vec<String>)>) -> bool {
+        let key = (*state_id, input.clone(), stack.clone());
+        if visited.contains(&key) {
+            return false;
+        }
+        visited.insert(key);
+
+        match self.states_by_id.get(state_id) {
             Some(state) => {
-                print!("-------------------------------------\n");
-                print!("The stack is {:?}\n", stack);
-                print!("The input is {} and the state is {}\n", input, state_id);
-                print!("-------------------------------------");
-                if state.final_flag == true && input.is_empty() {
+                if state.final_flag && input.is_empty() {
                     return true;
                 }
-                let mut string_matches_id: Vec<u64> = Vec::new();
-                let mut stack_matches: Vec<String> = Vec::new();
-                let mut string_ref = "";
-                let mut string_len_max = 0;
                 let mut accepted_bool = false;
                 for (id, transition) in state.iter_by_transition() {
                     for string in transition.iter() {
                         if string == "ε" {
-                            accepted_bool = accepted_bool || self.recursive_traversing(&id, &mut input.clone(), stack);
+                            let mut branch_stack = stack.clone();
+                            accepted_bool = accepted_bool || self.recursive_traversing(id, &mut input.clone(), &mut branch_stack, visited);
                             continue;
                         }
                         let string_transitions: Vec<&str> = string.split(';').collect();
-                        let stack_transition: Vec<_> = string_transitions[1].split('/').collect();
-                        if let Some(value) = stack.get(stack.len()-1) {
-                            if stack_transition[0] != *value {
-                               continue;
-                            }
+                        if string_transitions.len() != 2 {
+                            continue;
                         }
-                        if input.starts_with(string_transitions[0]) {
-                            if string.len() == string_len_max {
-                                string_matches_id.push(*id);
-                                stack_matches.push((string_transitions[1]).to_string());
-                            }
-                            else if string.len() > string_len_max {
-                                string_len_max = string.len();
-                                string_ref = string_transitions[0];
-                                string_matches_id.clear();
-                                stack_matches.clear();
-                                string_matches_id.push(*id);
-                                stack_matches.push((string_transitions[1]).to_string());
-                            }
+                        let stack_transition: Vec<&str> = string_transitions[1].split('/').collect();
+                        if stack_transition.len() != 2 {
+                            continue;
                         }
-                        if (input.trim() == string_ref.trim()) && stack.len() == 1 {
-                            stack_matches.push(string.clone());
-                            string_matches_id.push(*id);
+                        let read_input = string_transitions[0];
+                        let pop_symbol = stack_transition[0];
+                        let push_symbols = stack_transition[1];
+                        // The transition is only valid if the symbol to pop is
+                        // at the top of the stack ("ε" acts as a wildcard).
+                        match stack.last() {
+                            Some(top) if top == &pop_symbol => (),
+                            None if pop_symbol == "ε" => (),
+                            _ => continue,
                         }
+                        if read_input == "ε" || read_input.is_empty() {
+                            let mut branch_stack = stack.clone();
+                            self.stack_transition(pop_symbol.to_string(), push_symbols.to_string(), &mut branch_stack);
+                            accepted_bool = accepted_bool || self.recursive_traversing(id, &mut input.clone(), &mut branch_stack, visited);
+                            continue;
+                        }
+                        if !input.starts_with(read_input) {
+                            continue;
+                        }
+                        let mut rest = input.clone();
+                        rest.replace_range(0..read_input.len(), "");
+                        let mut branch_stack = stack.clone();
+                        self.stack_transition(pop_symbol.to_string(), push_symbols.to_string(), &mut branch_stack);
+                        accepted_bool = accepted_bool || self.recursive_traversing(id, &mut rest, &mut branch_stack, visited);
                     }
-                }
-                if (string_len_max == 0 && string_matches_id.is_empty()) &&
-                    accepted_bool != true { return false; }
-                input.replace_range(0..string_ref.len(),"");
-                let mut count = 0;
-                for id in string_matches_id {
-                    let string = stack_matches[count].clone();
-                    let stack_string: Vec<_> = string.split('/').map(|s| s.to_string()).collect();
-                    self.stack_transition(stack_string[0].clone(), stack_string[1].clone(), stack);
-                    accepted_bool = accepted_bool || self.recursive_traversing(&id, &mut input.clone(), stack);
-                    count += count + 1;
+                    if accepted_bool {
+                        break;
+                    }
                 }
                 return accepted_bool;
             }
@@ -129,18 +136,18 @@ impl PushdownAutomata {
         }
     }
 
-    // Auxiliar function to modify the stack given a stack change 
-    fn stack_transition<'a> (&self, string1: String, string2: String, stack: &mut Vec<String>) {
-        if string2.contains(&string1) && string2.len() > string1.len() {
-            let (first,_) = string2.split_at(string1.len());
-            stack.push(first.to_string())
-        }
-        else if string2 == "ε" {
+    /* Auxiliar function to modify the stack given a stack transition:
+     * it pops the symbol at the top of the stack and pushes the new symbols,
+     * one by one in reverse order, so that the leftmost symbol ends on top.
+     * Popping or pushing "ε" means doing nothing. */
+    fn stack_transition(&self, pop_symbol: String, push_symbols: String, stack: &mut Vec<String>) {
+        if pop_symbol != "ε" {
             stack.pop();
         }
-        else if string1 != string2 {
-            stack.pop();
-            stack.push(string2)
+        if push_symbols != "ε" {
+            for symbol in push_symbols.chars().rev() {
+                stack.push(symbol.to_string());
+            }
         }
     }
 }

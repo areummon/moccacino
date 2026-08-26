@@ -5,6 +5,9 @@
 /result
 /result-*
 
+# direnv
+/.direnv/
+
 # Editor and OS files
 *.swp
 *.swo

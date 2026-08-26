@@ -48,7 +48,8 @@ impl FiniteAutomata {
             Some(initial_id) => {
                 self.recursive_traversing(&initial_id, input)
             },
-            None => todo!(), // implement an error or exception because there is not initial state.
+            // Without an initial state no input can be accepted.
+            None => false,
         }
     }
 
@@ -60,24 +61,13 @@ impl FiniteAutomata {
     }
 
     /* Auxiliary recursive function to travel between states.
-     * string_ref, string_len_max and string_id are used to know the largest
-     * substring in the set of transitions, this is do it like this
-     * to have a more accurate input reading than reading one character at
-     * a time. The input is "consumed" if there is a transition valid from
-     * one state to another, and that new input is passed in the recursive
-     * function. */
-    // ------ This note is to modify and optimize this function other day --------
-    // ------ because I implemented this only to see if it would work -------
-    /* Note: I create a vector of all the ids, because if a certain state have
-     * multiple transitions with the same string (i.e. is non deterministic)
-     * then i add them to the vector to apply te function recursively to all the
-     * the ids from the string matches, this works because if a string returns true in starts_with
-     * then all the strings that return true and have the same length are the same,
-     * so I use and or with accepted_bool that is going to be the bool value of the function.
-     * If there is one path that accepts the input, then the value will be true.
-     * If one string from the transitions is ε, it uses the function without
-     * check the other conditions by definition. I also use clone on the input string because
-     * in my implementation I "consume" it.
+     * The input is "consumed" by every traversed transition, and each branch
+     * of the traversal works on its own clone of the remaining input.
+     * Both "" and "ε" transitions do not consume input, and every label that
+     * prefixes the remaining input is explored (not only the longest one), so
+     * no accepting path of an NFA can be lost. The visited set memoizes the
+     * already explored (state, remaining input) pairs, which prevents infinite
+     * recursion on loops/ε-cycles and keeps the exploration finite.
      * It works for both, NFA and DFA.
      */
     fn recursive_traversing(&self, state_id: &StateID, input: &mut Input) -> bool {
@@ -95,38 +85,27 @@ impl FiniteAutomata {
         }
         visited.insert(key);
 
-        match self.states_by_id.get(&state_id) {
+        match self.states_by_id.get(state_id) {
             Some(state) => {
-                if state.final_flag == true && input.is_empty() {
+                if state.final_flag && input.is_empty() {
                     return true;
                 }
-                let mut string_matches_id: Vec<u64> = Vec::new();
-                let mut string_ref = "";
-                let mut string_len_max = 0;
                 let mut accepted_bool = false;
                 for (id, transition) in state.iter_by_transition() {
                     for string in transition.iter() {
-                        if string == "ε" {
-                            accepted_bool = accepted_bool || self.recursive_traversing_aux(&id, &mut input.clone(), visited);
+                        if string.is_empty() || string == "ε" {
+                            accepted_bool = accepted_bool || self.recursive_traversing_aux(id, &mut input.clone(), visited);
+                            continue;
                         }
-                        if input.starts_with(string) {
-                            if string.len() == string_len_max {
-                                string_matches_id.push(*id);
-                            }
-                            else if string.len() > string_len_max {
-                                string_len_max = string.len();
-                                string_ref = string;
-                                string_matches_id.clear();
-                                string_matches_id.push(*id);
-                            }
+                        if input.starts_with(string.as_str()) {
+                            let mut rest = input.clone();
+                            rest.replace_range(0..string.len(), "");
+                            accepted_bool = accepted_bool || self.recursive_traversing_aux(id, &mut rest, visited);
                         }
                     }
-                }
-                if (string_len_max == 0 || string_matches_id.is_empty()) &&
-                    accepted_bool != true { return false; } 
-                input.replace_range(0..string_ref.len(),"");
-                for id in string_matches_id {
-                    accepted_bool = accepted_bool || self.recursive_traversing_aux(&id, &mut input.clone(), visited);
+                    if accepted_bool {
+                        break;
+                    }
                 }
                 return accepted_bool;
             }
@@ -134,50 +113,47 @@ impl FiniteAutomata {
         }
     }
 
-    /*  ε-closure transition function of the DFA given a state and a string. */
+    /*  ε-closure transition function of the DFA given a state and a string.
+     *  It returns every state reachable from the given state by consuming the
+     *  input string (following transitions labelled exactly with it) and then
+     *  taking any number of ε/"" transitions. If the input string is empty it
+     *  returns just the ε-closure of the state. */
     pub fn lambda_closure(&self, state_id: StateID, input_string: &str) -> BTreeSet<StateID> {
         let mut closure_set: BTreeSet<StateID> = BTreeSet::new();
-        self.lambda_closure_aux(state_id, input_string,&mut closure_set);
-        closure_set
+        self.lambda_closure_aux(state_id, &mut closure_set);
+        if input_string.is_empty() {
+            return closure_set;
+        }
+        let mut reachable_set: BTreeSet<StateID> = BTreeSet::new();
+        for id in closure_set {
+            if let Some(state) = self.states_by_id.get(&id) {
+                for (next_id, transitions) in state.iter_by_transition() {
+                    if transitions.contains(input_string) {
+                        self.lambda_closure_aux(*next_id, &mut reachable_set);
+                    }
+                }
+            }
+        }
+        reachable_set
     }
 
 
-    /* The auxiliar recursive function of the lambda closure function. */
-    // If the state_id is the initial id of the automaton, then it will not be added in this
-    // function, so it needs to be added outside the function. It also "consumes" the input.
-    fn lambda_closure_aux(&self, state_id: StateID, input_string: &str, closure_set: &mut BTreeSet<StateID>) {
-        match self.states_by_id.get(&state_id) {
-            Some(state) => {
-                let mut valid_transitions = 0;
-                for (id, transitions) in state.iter_by_transition() {
-                    if closure_set.contains(id) {
-                        continue
-                    }
-                    for string in transitions {
-                        if string == "ε" || string == input_string {
-                            // If statement to add the states with loops
-                            if *id == state_id {
-                                closure_set.insert(*id);
-                            }
-                            // To add the states that have a lambda transition
-                            if string == "ε" && input_string.is_empty() {
-                                closure_set.insert(*id);
-                            }
-                            valid_transitions += 1;
-                            // It can have repeated states for the lambdas, but the replace handle
-                            // it.
-                            match input_string.strip_prefix(string) {
-                                Some(new_input) => self.lambda_closure_aux(*id, new_input, closure_set),
-                                None => self.lambda_closure_aux(*id, input_string, closure_set),
-                            }
-                        }
+    /* The auxiliar recursive function of the lambda closure function.
+     * It adds state_id to the closure set along with every state reachable
+     * from it using only ε/"" transitions (every reached state is inserted,
+     * so no reachable state can be missed). */
+    fn lambda_closure_aux(&self, state_id: StateID, closure_set: &mut BTreeSet<StateID>) {
+        if !closure_set.insert(state_id) {
+            return;
+        }
+        if let Some(state) = self.states_by_id.get(&state_id) {
+            for (id, transitions) in state.iter_by_transition() {
+                for string in transitions.iter() {
+                    if string.is_empty() || string == "ε" {
+                        self.lambda_closure_aux(*id, closure_set);
                     }
                 }
-                    if valid_transitions == 0 && input_string.len() == 0 {
-                        closure_set.replace(state_id);
-                }
-            },
-            None => panic!("This should never occurr"),
+            }
         }
     }
 
@@ -544,6 +520,7 @@ pub fn subset_construction(automata: &FiniteAutomata) -> HashMap<BTreeSet<StateI
     let mut current_subset = automata.lambda_closure(initial_id, "");
     current_subset.insert(initial_id); // This line is required in this implementation.
     sets_to_visit.push(current_subset.clone());
+    visited_sets.insert(current_subset.clone());
     transitions_by_subsets.insert(current_subset, Vec::new());
     while !sets_to_visit.is_empty() {
         let mut vector_transitions: Vec<(BTreeSet<u64>, &str)> = Vec::new();
@@ -571,8 +548,6 @@ pub fn subset_construction(automata: &FiniteAutomata) -> HashMap<BTreeSet<StateI
             *vector = vector_transitions;
         }
     }
-    println!("{:?}", transitions_by_subsets);
-    println!("{:?}", visited_sets);
     transitions_by_subsets
 }
 
