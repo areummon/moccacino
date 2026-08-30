@@ -1,10 +1,275 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use indexmap::IndexSet;
 
 use crate::state_machine;
 
-use moca_data::finite_automata::FiniteAutomata;
-use moca_data::state_machine::StateMachine;
+use moca_data::finite_automata::{FiniteAutomata, FiniteConfiguration};
+use moca_data::grammar::Grammar;
+use moca_data::pushdown_automata::{PdaConfiguration, PushdownAutomata};
+use moca_data::state::{State, StateID};
+use moca_data::state_machine::{Machine, MachineKind, StateMachine};
+use moca_data::turing_machine::{Configuration, RunOutcome, TuringMachine};
+
+/* Shared empty maps so grammar tabs can answer structural queries without
+ * per-call allocations. */
+static EMPTY_STATES: std::sync::OnceLock<HashMap<StateID, State>> = std::sync::OnceLock::new();
+static EMPTY_FINALS: std::sync::OnceLock<HashSet<u64>> = std::sync::OnceLock::new();
+
+fn empty_states() -> &'static HashMap<StateID, State> {
+    EMPTY_STATES.get_or_init(HashMap::new)
+}
+
+fn empty_finals() -> &'static HashSet<u64> {
+    EMPTY_FINALS.get_or_init(HashSet::new)
+}
+
+/* Snapshot of a running Turing machine shown in the tab's run panel. */
+#[derive(Debug, Clone)]
+pub(crate) struct TmRun {
+    pub(crate) config: Configuration,
+    pub(crate) steps: u64,
+    /* Set once the machine accepted or rejected; some branches never do. */
+    pub(crate) finished: Option<RunOutcome>,
+}
+
+/* Frontier of a running nondeterministic Turing machine: every live branch's
+ * configuration after `level` parallel steps. Mirrors
+ * `run_nondeterministic`'s level loop and dedup, one level per Step press. */
+#[derive(Debug, Clone)]
+pub(crate) struct NdFrontier {
+    pub(crate) level: u64,
+    pub(crate) alive: Vec<Configuration>,
+    pub(crate) visited: HashSet<Configuration>,
+    pub(crate) finished: Option<RunOutcome>,
+}
+
+/* Snapshot of a running pushdown automaton shown in the tab's run panel.
+ * The original input is kept so the ribbon can dim the consumed prefix. */
+#[derive(Debug, Clone)]
+pub(crate) struct PdaRun {
+    pub(crate) config: PdaConfiguration,
+    pub(crate) input: String,
+    pub(crate) steps: u64,
+    /* Some(true) = accepted, Some(false) = rejected (halt or bounds). */
+    pub(crate) finished: Option<bool>,
+}
+
+/* Snapshot of a running finite automaton shown in the tab's run panel. The
+ * original input is kept so the ribbon can dim the consumed prefix; the
+ * visited set mirrors `check_input`'s memoization: revisiting a (state,
+ * remaining input) pair is an ε-cycle dead end. */
+#[derive(Debug, Clone)]
+pub(crate) struct FiniteRun {
+    pub(crate) config: FiniteConfiguration,
+    pub(crate) input: String,
+    pub(crate) steps: u64,
+    pub(crate) visited: HashSet<FiniteConfiguration>,
+    /* Some(true) = accepted, Some(false) = rejected. */
+    pub(crate) finished: Option<bool>,
+}
+
+/* Frontier of a running nondeterministic machine: every live branch's
+ * configuration after `level` parallel transitions, deduped against the
+ * visited set. Mirrors the library traversals (arrival acceptance before
+ * expanding, empty frontier = rejected), one level per Step press. */
+#[derive(Debug, Clone)]
+pub(crate) struct FiniteNdFrontier {
+    pub(crate) level: u64,
+    pub(crate) alive: Vec<FiniteConfiguration>,
+    pub(crate) visited: HashSet<FiniteConfiguration>,
+    pub(crate) finished: Option<bool>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PdaNdFrontier {
+    pub(crate) level: u64,
+    pub(crate) alive: Vec<PdaConfiguration>,
+    pub(crate) visited: HashSet<PdaConfiguration>,
+    pub(crate) finished: Option<bool>,
+}
+
+/* The formal object behind a tab: machine families dispatch through the
+ * shared traits, grammars use their own surface (they are not state
+ * machines), and finite-only transformations stay explicit optional
+ * methods. */
+#[derive(Debug, Clone)]
+pub(crate) enum TabMachine {
+    Finite(FiniteAutomata),
+    Pushdown(PushdownAutomata),
+    Turing(TuringMachine),
+    Grammar(Grammar),
+}
+
+impl Default for TabMachine {
+    fn default() -> Self {
+        TabMachine::Finite(FiniteAutomata::default())
+    }
+}
+
+impl TabMachine {
+    pub(crate) fn new_turing() -> Self {
+        TabMachine::Turing(TuringMachine::new('_'))
+    }
+
+    pub(crate) fn new_pda() -> Self {
+        TabMachine::Pushdown(PushdownAutomata::new("Z".to_string()))
+    }
+
+    /* Machine families implementing the shared traits; grammars are not
+     * machines, so their tabs answer None here. */
+    pub(crate) fn machine_kind(&self) -> Option<MachineKind> {
+        match self {
+            TabMachine::Finite(_) => Some(MachineKind::Finite),
+            TabMachine::Pushdown(_) => Some(MachineKind::Pushdown),
+            TabMachine::Turing(_) => Some(MachineKind::Turing),
+            TabMachine::Grammar(_) => None,
+        }
+    }
+
+    pub(crate) fn is_grammar(&self) -> bool {
+        matches!(self, TabMachine::Grammar(_))
+    }
+
+    // ---- Structural API (StateMachine trait; grammar variant ignores it) ----
+
+    pub(crate) fn clear(&mut self) {
+        match self {
+            TabMachine::Finite(finite) => finite.clear(),
+            TabMachine::Pushdown(pda) => {
+                let stack_symbol = pda.get_initial_stack_symbol().to_string();
+                *pda = PushdownAutomata::new(stack_symbol);
+            },
+            TabMachine::Turing(turing) => {
+                let blank = turing.get_blank_symbol();
+                *turing = TuringMachine::new(blank);
+            },
+            TabMachine::Grammar(_) => (),
+        }
+    }
+
+    pub(crate) fn add_state_with_id_label(&mut self, id: u64, label: &str) {
+        match self {
+            TabMachine::Finite(finite) => finite.add_state_with_id_label(id, label),
+            TabMachine::Pushdown(pda) => pda.add_state_with_id_label(id, label),
+            TabMachine::Turing(turing) => turing.add_state_with_id_label(id, label),
+            TabMachine::Grammar(_) => (),
+        }
+    }
+
+    pub(crate) fn add_transition(&mut self, from: u64, to: u64, label: String) {
+        match self {
+            TabMachine::Finite(finite) => finite.add_transition(from, to, label),
+            TabMachine::Pushdown(pda) => pda.add_transition(from, to, label),
+            TabMachine::Turing(turing) => turing.add_transition(from, to, label),
+            TabMachine::Grammar(_) => (),
+        }
+    }
+
+    pub(crate) fn make_initial(&mut self, id: u64) {
+        match self {
+            TabMachine::Finite(finite) => finite.make_initial(id),
+            TabMachine::Pushdown(pda) => pda.make_initial(id),
+            TabMachine::Turing(turing) => turing.make_initial(id),
+            TabMachine::Grammar(_) => (),
+        }
+    }
+
+    pub(crate) fn make_final(&mut self, id: u64) {
+        match self {
+            TabMachine::Finite(finite) => finite.make_final(id),
+            TabMachine::Pushdown(pda) => pda.make_final(id),
+            TabMachine::Turing(turing) => turing.make_final(id),
+            TabMachine::Grammar(_) => (),
+        }
+    }
+
+    pub(crate) fn is_deterministic(&self) -> bool {
+        match self {
+            TabMachine::Finite(finite) => finite.is_deterministic(),
+            TabMachine::Pushdown(pda) => pda.is_deterministic(),
+            TabMachine::Turing(turing) => turing.is_deterministic(),
+            TabMachine::Grammar(_) => false,
+        }
+    }
+
+    pub(crate) fn states_ref(&self) -> &HashMap<StateID, State> {
+        match self {
+            TabMachine::Finite(finite) => finite.get_states_by_id_ref(),
+            TabMachine::Pushdown(pda) => pda.get_states_by_id_ref(),
+            TabMachine::Turing(turing) => turing.get_states_by_id_ref(),
+            // The canvas has nothing to show for grammar tabs; an empty map
+            // keeps load paths uniform.
+            TabMachine::Grammar(_) => empty_states(),
+        }
+    }
+
+    pub(crate) fn initial_id(&self) -> Option<StateID> {
+        match self {
+            TabMachine::Finite(finite) => *finite.get_initial_state_id(),
+            TabMachine::Pushdown(pda) => *pda.get_initial_state_id(),
+            TabMachine::Turing(turing) => *turing.get_initial_state_id(),
+            TabMachine::Grammar(_) => None,
+        }
+    }
+
+    pub(crate) fn final_states_ref(&self) -> &HashSet<u64> {
+        match self {
+            TabMachine::Finite(finite) => finite.get_final_states(),
+            TabMachine::Pushdown(pda) => pda.get_final_states(),
+            TabMachine::Turing(turing) => turing.get_final_states(),
+            TabMachine::Grammar(_) => empty_finals(),
+        }
+    }
+
+    // ---- Behavioral API ----
+
+    /* Grammars interpret "accepts" as CYK membership. */
+    pub(crate) fn accepts(&self, input: &str) -> bool {
+        match self {
+            TabMachine::Finite(finite) => Machine::accepts(finite, input),
+            TabMachine::Pushdown(pda) => Machine::accepts(pda, input),
+            TabMachine::Turing(turing) => Machine::accepts(turing, input),
+            TabMachine::Grammar(grammar) => grammar.generate(input),
+        }
+    }
+
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        match self {
+            TabMachine::Finite(finite) => Machine::validate(finite),
+            TabMachine::Pushdown(pda) => Machine::validate(pda),
+            TabMachine::Turing(turing) => Machine::validate(turing),
+            TabMachine::Grammar(grammar) => {
+                if grammar.productions().is_empty() {
+                    Err("The grammar has no productions.".to_string())
+                } else {
+                    Ok(())
+                }
+            },
+        }
+    }
+
+    // ---- Finite-only transformations ----
+
+    /* Subset construction into a DFA, for nondeterministic finite automata. */
+    pub(crate) fn into_dfa(&self) -> Option<TabMachine> {
+        match self {
+            TabMachine::Finite(finite) if !finite.is_deterministic() => {
+                Some(TabMachine::Finite(finite.to_dfa()))
+            },
+            _ => None,
+        }
+    }
+
+    /* Hopcroft minimization, for deterministic finite automata. */
+    pub(crate) fn minimized(&self) -> Option<TabMachine> {
+        match self {
+            TabMachine::Finite(finite) if finite.is_deterministic() => {
+                Some(TabMachine::Finite(finite.minimize()))
+            },
+            _ => None,
+        }
+    }
+}
 
 #[derive(Default)]
 pub(crate) struct Tab {
@@ -12,7 +277,7 @@ pub(crate) struct Tab {
     pub(crate) transitions: HashMap<(usize, usize), IndexSet<String>>,
     pub(crate) states: Vec<state_machine::StateNode>,
     pub(crate) state_id_to_index: HashMap<usize, usize>,
-    pub(crate) machine: FiniteAutomata,
+    pub(crate) machine: TabMachine,
     pub(crate) initial_state: Option<usize>,
     pub(crate) final_states: std::collections::HashSet<usize>,
     pub(crate) editing_state: Option<usize>,
@@ -23,7 +288,30 @@ pub(crate) struct Tab {
     pub(crate) check_input_text: String,
     pub(crate) check_result_popup_open: bool,
     pub(crate) check_input_result: Option<bool>,
-    pub(crate) deletion_mode: bool,
+    pub(crate) regex_dialog_open: bool,
+    pub(crate) regex_text: String,
+    // Turing run panel state.
+    pub(crate) tm_input_text: String,
+    pub(crate) tm_playing: bool,
+    // Pushdown run panel state.
+    pub(crate) pda_input_text: String,
+    pub(crate) pda_run: Option<PdaRun>,
+    pub(crate) pda_playing: bool,
+    pub(crate) pda_frontier: Option<PdaNdFrontier>,
+    // Finite run panel state.
+    pub(crate) finite_input_text: String,
+    pub(crate) finite_playing: bool,
+    pub(crate) finite_run: Option<FiniteRun>,
+    pub(crate) finite_frontier: Option<FiniteNdFrontier>,
+    // Grammar panel state: editor content, parsed result mirror and last
+    // outputs. The editor is the source of truth while typing; grammar_text
+    // mirrors it as a plain string for the parser calls.
+    pub(crate) grammar_content: iced::widget::text_editor::Content,
+    pub(crate) grammar_text: String,
+    pub(crate) grammar_word: String,
+    pub(crate) grammar_output: Option<String>,
+    pub(crate) tm_run: Option<TmRun>,
+    pub(crate) tm_frontier: Option<NdFrontier>,
     pub(crate) name: String,
     pub(crate) pending_transition: Option<(usize, usize, iced::Point, iced::Point)>,
     pub(crate) pending_transition_label: String,
@@ -38,9 +326,33 @@ impl Tab {
     pub(crate) fn new() -> Self {
         let mut tab = Self::default();
         tab.state_machine.reset_id_counter();
-        tab.machine = FiniteAutomata::default();
         tab.name = "Machine".to_string();
         tab.transitions = HashMap::new();
+        tab
+    }
+
+    /* A fresh tab holding an empty single-tape Turing machine. */
+    pub(crate) fn new_turing() -> Self {
+        let mut tab = Self::new();
+        tab.machine = TabMachine::new_turing();
+        tab.name = "Turing".to_string();
+        tab
+    }
+
+    pub(crate) fn new_pda() -> Self {
+        let mut tab = Self::new();
+        tab.machine = TabMachine::new_pda();
+        tab.name = "Pushdown".to_string();
+        tab
+    }
+
+    /* A fresh tab whose panel edits a context-free grammar. */
+    pub(crate) fn new_grammar() -> Self {
+        let mut tab = Self::new();
+        tab.machine = TabMachine::Grammar(Grammar::default());
+        tab.name = "Grammar".to_string();
+        tab.grammar_text = "S -> a S b | ε\nS -> ε".to_string();
+        tab.grammar_content = iced::widget::text_editor::Content::with_text(&tab.grammar_text);
         tab
     }
 
@@ -69,19 +381,39 @@ impl Tab {
         self.state_machine.request_redraw();
     }
 
-    pub(crate) fn sync_gui_to_finite_automata(&mut self) {
+    /* The active canvas editing tool, stored on the canvas state. */
+    pub(crate) fn active_tool(&self) -> crate::state_machine::EditorTool {
+        self.state_machine.active_tool()
+    }
+
+    pub(crate) fn set_active_tool(&mut self, tool: crate::state_machine::EditorTool) {
+        self.state_machine.set_tool(tool);
+        self.state_machine.request_redraw();
+    }
+
+    pub(crate) fn sync_gui_to_machine(&mut self) {
         self.machine.clear();
 
         // Add all states
         for state_node in &self.states {
-            self.machine.add_state_with_id_label(state_node.id as u64, state_node.label);
+            self.machine.add_state_with_id_label(state_node.id as u64, &state_node.label);
         }
 
         // Add all transitions (multi-label)
         for (&(from, to), labels) in &self.transitions {
             for label in labels {
-                let label = if label.trim().is_empty() || label == "ε" { "ε" } else { label };
-                self.machine.add_transition(from as u64, to as u64, label.to_string());
+                // A blank or whitespace-only label denotes ε on machine
+                // families that have ε-transitions; Turing tapes have no
+                // such concept, so blank labels stay as typed there and are
+                // reported by Machine::validate.
+                let normalized = if !matches!(self.machine, TabMachine::Turing(_))
+                    && (label.trim().is_empty() || label == "ε")
+                {
+                    "ε"
+                } else {
+                    label.as_str()
+                };
+                self.machine.add_transition(from as u64, to as u64, normalized.to_string());
             }
         }
 
@@ -96,7 +428,7 @@ impl Tab {
         }
     }
 
-    pub(crate) fn load_finite_automata_to_gui(&mut self) {
+    pub(crate) fn load_machine_to_gui(&mut self) {
         self.states.clear();
         self.transitions.clear();
         self.state_id_to_index.clear();
@@ -104,12 +436,12 @@ impl Tab {
         self.final_states.clear();
 
         let mut max_id_after_load = 0;
-        for (id, state) in self.machine.get_states_by_id_ref() {
+        for (id, state) in self.machine.states_ref() {
             let state_node = state_machine::StateNode::new(
                 *id as usize,
                 iced::Point::new(100.0, 100.0),
                 30.0,
-                Box::leak(state.name.clone().into_boxed_str())
+                state.name.clone()
             );
             let index = self.states.len();
             self.states.push(state_node);
@@ -120,7 +452,7 @@ impl Tab {
         self.state_machine.next_id = max_id_after_load + 1;
 
         // Add all transitions (multi-label)
-        for (from_id, state) in self.machine.get_states_by_id_ref() {
+        for (from_id, state) in self.machine.states_ref() {
             for (to_id, inputs) in state.iter_by_transition() {
                 let key = (*from_id as usize, *to_id as usize);
                 let entry = self.transitions.entry(key).or_insert_with(indexmap::IndexSet::new);
@@ -131,14 +463,14 @@ impl Tab {
             }
         }
 
-        if let Some(initial_id) = self.machine.get_initial_state_id() {
+        if let Some(initial_id) = self.machine.initial_id() {
             if let Some(state) = self.states.iter()
-                .find(|s| s.id == *initial_id as usize) {
+                .find(|s| s.id == initial_id as usize) {
                 self.initial_state = Some(state.id);
             }
         }
 
-        for final_id in self.machine.get_final_states() {
+        for final_id in self.machine.final_states_ref() {
             if let Some(state) = self.states.iter()
                 .find(|s| s.id == *final_id as usize) {
                 self.final_states.insert(state.id);
@@ -146,100 +478,233 @@ impl Tab {
         }
 
         if self.initial_state.is_some() {
-            Self::apply_tree_layout_to_tab(self);
+            Self::apply_layered_layout_to_tab(self);
         } else {
             Self::apply_grid_layout_to_tab(self);
         }
 
+        // Fresh content starts visible at the top-left of the canvas.
+        self.state_machine.set_scroll(iced::Vector::new(0.0, 0.0));
         self.state_machine.request_redraw();
     }
 
-    fn apply_tree_layout_to_tab(active_tab: &mut Tab) {
-        use std::collections::{HashMap, HashSet};
+    /* Deterministic layered (Sugiyama-lite) layout for loaded machines:
+     * states are stacked in top-down layers following the flow from the
+     * initial state. Cycle back-edges are excluded from the layering so
+     * star loops cannot fold the graph onto itself, crossing order is
+     * improved with barycenter sweeps, and the horizontal spacing adapts
+     * so small graphs breathe while wide ones stay navigable. */
+    fn apply_layered_layout_to_tab(active_tab: &mut Tab) {
+        use std::collections::BTreeSet;
 
-        let mut children_map: HashMap<usize, Vec<usize>> = HashMap::new();
-        let mut parent_map: HashMap<usize, usize> = HashMap::new();
-        let mut all_ids: HashSet<usize> = HashSet::new();
-        for state in &active_tab.states {
-            all_ids.insert(state.id);
+        let node_count = active_tab.states.len();
+        if node_count == 0 {
+            return;
         }
-        for (&(from, to), _) in &active_tab.transitions {
-            if !parent_map.contains_key(&to) {
-                children_map.entry(from).or_default().push(to);
-                parent_map.insert(to, from);
-            }
-        }
-
-        let root_id = match active_tab.initial_state {
+        let initial = match active_tab.initial_state {
             Some(id) => id,
             None => return,
         };
+        let index_of: HashMap<usize, usize> = active_tab
+            .states
+            .iter()
+            .enumerate()
+            .map(|(index, state)| (state.id, index))
+            .collect();
+        let root = match index_of.get(&initial) {
+            Some(&root) => root,
+            None => {
+                Self::apply_grid_layout_to_tab(active_tab);
+                return;
+            }
+        };
 
-        let mut x_counter = 0.0;
-        let x_spacing = 90.0;
-        let y_spacing = 120.0;
-        let start_x = 100.0;
-        let start_y = 100.0;
-
-        fn assign_positions(
-            node_id: usize,
-            depth: usize,
-            children_map: &HashMap<usize, Vec<usize>>,
-            state_map: &mut HashMap<usize, &mut state_machine::StateNode>,
-            x_counter: &mut f32,
-            x_spacing: f32,
-            y_spacing: f32,
-            start_x: f32,
-            start_y: f32,
-        ) -> f32 {
-            let children = children_map.get(&node_id);
-            let x;
-            if let Some(children) = children {
-                let mut child_xs = Vec::new();
-                for &child_id in children {
-                    let cx = assign_positions(child_id, depth + 1, children_map, state_map, x_counter, x_spacing, y_spacing, start_x, start_y);
-                    child_xs.push(cx);
+        // Adjacency over the drawn states, self-loops excluded, iteration
+        // order deterministic (sorted ids).
+        let neighbors: Vec<Vec<usize>> = {
+            let mut adjacency: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); node_count];
+            for (&(from, to), _) in &active_tab.transitions {
+                if from != to {
+                    if let (Some(&fi), Some(&ti)) = (index_of.get(&from), index_of.get(&to)) {
+                        adjacency[fi].insert(ti);
+                    }
                 }
-                if !child_xs.is_empty() {
-                    x = (child_xs[0] + child_xs[child_xs.len() - 1]) / 2.0;
+            }
+            adjacency
+                .into_iter()
+                .map(|set| set.into_iter().collect())
+                .collect()
+        };
+
+        // Depth-first search from the initial state with gray/black
+        // coloring: an edge into a gray node closes a cycle (back edge)
+        // and is dropped from the layering graph.
+        let mut color = vec![0u8; node_count];
+        let mut back_edge = vec![BTreeSet::new(); node_count];
+        let mut preorder: Vec<usize> = Vec::new();
+        {
+            let mut iter_pos = vec![0usize; node_count];
+            let mut stack: Vec<usize> = vec![root];
+            color[root] = 1;
+            preorder.push(root);
+            while let Some(&u) = stack.last() {
+                if iter_pos[u] < neighbors[u].len() {
+                    let v = neighbors[u][iter_pos[u]];
+                    iter_pos[u] += 1;
+                    match color[v] {
+                        0 => {
+                            color[v] = 1;
+                            preorder.push(v);
+                            stack.push(v);
+                        }
+                        1 => {
+                            back_edge[u].insert(v);
+                        }
+                        _ => {}
+                    }
                 } else {
-                    x = *x_counter;
-                    *x_counter += x_spacing;
+                    color[u] = 2;
+                    stack.pop();
                 }
+            }
+        }
+        let reachable: Vec<bool> = color.iter().map(|&c| c != 0).collect();
+
+        // Longest-path layering: Kahn topological order over the kept
+        // edges, relaxing layer[v] to layer[u] + 1.
+        let mut indegree = vec![0usize; node_count];
+        let mut kept: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); node_count];
+        for u in 0..node_count {
+            if !reachable[u] {
+                continue;
+            }
+            for &v in &neighbors[u] {
+                if reachable[v] && !back_edge[u].contains(&v) {
+                    kept[u].insert(v);
+                    indegree[v] += 1;
+                }
+            }
+        }
+        let mut layer = vec![0usize; node_count];
+        {
+            let mut queue: std::collections::VecDeque<usize> = (0..node_count)
+                .filter(|&u| reachable[u] && indegree[u] == 0)
+                .collect();
+            while let Some(u) = queue.pop_front() {
+                for &v in &kept[u] {
+                    layer[v] = layer[v].max(layer[u] + 1);
+                    indegree[v] -= 1;
+                    if indegree[v] == 0 {
+                        queue.push_back(v);
+                    }
+                }
+            }
+        }
+
+        let max_layer = reachable
+            .iter()
+            .enumerate()
+            .filter(|&(_, &r)| r)
+            .map(|(u, _)| layer[u])
+            .max()
+            .unwrap_or(0);
+        let mut layers: Vec<Vec<usize>> = vec![Vec::new(); max_layer + 1];
+        for &u in &preorder {
+            layers[layer[u]].push(u);
+        }
+
+        // Barycenter sweeps: repeatedly reorder each layer by the mean
+        // position of its (undirected) neighbors in the neighboring
+        // layers; stable sort keeps ties deterministic.
+        let mut undirected: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); node_count];
+        for u in 0..node_count {
+            if !reachable[u] {
+                continue;
+            }
+            for &v in &neighbors[u] {
+                if reachable[v] && u != v {
+                    undirected[u].insert(v);
+                    undirected[v].insert(u);
+                }
+            }
+        }
+        let mut pos = vec![0usize; node_count];
+        let sync_positions = |layers: &[Vec<usize>], pos: &mut [usize]| {
+            for layer_nodes in layers {
+                for (index, &u) in layer_nodes.iter().enumerate() {
+                    pos[u] = index;
+                }
+            }
+        };
+        sync_positions(&layers, &mut pos);
+        for sweep in 0..4 {
+            let order: Vec<usize> = if sweep % 2 == 0 {
+                (1..=max_layer).collect()
             } else {
-                x = *x_counter;
-                *x_counter += x_spacing;
-            }
-            if let Some(state) = state_map.get_mut(&node_id) {
-                state.position = iced::Point::new(start_x + x, start_y + (depth as f32) * y_spacing);
-            }
-            x
-        }
-
-        let mut state_map: HashMap<usize, &mut state_machine::StateNode> =
-            active_tab.states.iter_mut().map(|s| (s.id, s)).collect();
-        assign_positions(
-            root_id,
-            0,
-            &children_map,
-            &mut state_map,
-            &mut x_counter,
-            x_spacing,
-            y_spacing,
-            start_x,
-            start_y,
-        );
-
-        let placed: HashSet<usize> = state_map.keys().copied().collect();
-        let unreachable: Vec<usize> = all_ids.difference(&placed).copied().collect();
-        let unreachable_y = start_y + 4.0 * y_spacing;
-        for (i, id) in unreachable.iter().enumerate() {
-            if let Some(state) = state_map.get_mut(id) {
-                state.position = iced::Point::new(start_x + (i as f32) * x_spacing, unreachable_y);
+                (0..max_layer).rev().collect()
+            };
+            for l in order {
+                // Precompute barycenter keys up front so the position
+                // table is not borrowed while the layer is reordered.
+                let mut keys: Vec<(usize, f32)> = layers[l]
+                    .iter()
+                    .map(|&u| {
+                        let neighbor_set = &undirected[u];
+                        let key = if neighbor_set.is_empty() {
+                            pos[u] as f32
+                        } else {
+                            let total: f32 = neighbor_set.iter().map(|&v| pos[v] as f32).sum();
+                            total / neighbor_set.len() as f32
+                        };
+                        (u, key)
+                    })
+                    .collect();
+                keys.sort_by(|a, b| {
+                    a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal)
+                });
+                layers[l] = keys.into_iter().map(|(u, _)| u).collect();
+                for (index, &u) in layers[l].iter().enumerate() {
+                    pos[u] = index;
+                }
             }
         }
 
-        // No-op: no from_point/to_point to update
+        // Coordinates: horizontal spacing adapts to the widest layer so
+        // the drawing comfortably uses the canvas width.
+        const START_X: f32 = 150.0;
+        const START_Y: f32 = 150.0;
+        const Y_SPACING: f32 = 150.0;
+        const TARGET_WIDTH: f32 = 1500.0;
+        let widest = layers
+            .iter()
+            .map(|layer_nodes| layer_nodes.len())
+            .max()
+            .unwrap_or(1)
+            .max(1) as f32;
+        let x_spacing = (TARGET_WIDTH / widest).clamp(120.0, 260.0);
+        for (layer_index, layer_nodes) in layers.iter().enumerate() {
+            let count = layer_nodes.len() as f32;
+            for (i, &u) in layer_nodes.iter().enumerate() {
+                let x = START_X + (i as f32 - (count - 1.0) / 2.0) * x_spacing;
+                let y = START_Y + layer_index as f32 * Y_SPACING;
+                active_tab.states[u].position = iced::Point::new(x, y);
+            }
+        }
+
+        // States not reachable from the initial state go to their own
+        // wrapped rows below the layered region.
+        let unreachable: Vec<usize> = (0..node_count).filter(|&u| !reachable[u]).collect();
+        if !unreachable.is_empty() {
+            let per_row = ((TARGET_WIDTH / x_spacing).floor() as usize).max(1);
+            for (row, chunk) in unreachable.chunks(per_row).enumerate() {
+                let count = chunk.len() as f32;
+                for (i, &u) in chunk.iter().enumerate() {
+                    let x = START_X + (i as f32 - (count - 1.0) / 2.0) * x_spacing;
+                    let y = START_Y + (max_layer + 1 + row) as f32 * Y_SPACING;
+                    active_tab.states[u].position = iced::Point::new(x, y);
+                }
+            }
+        }
     }
 
     fn apply_grid_layout_to_tab(active_tab: &mut Tab) {

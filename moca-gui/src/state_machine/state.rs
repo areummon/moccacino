@@ -1,17 +1,26 @@
 use iced::widget::canvas::{self, Canvas};
-use iced::{Element, Fill};
+use iced::{Element, Fill, Vector};
 use std::collections::HashSet;
 
 use super::message::CanvasMessage;
 use super::node::StateNode;
 use super::program::StateMachine;
+use super::tool::EditorTool;
 
 pub struct State {
     pub(crate) cache: canvas::Cache,
     ctrl_pressed: bool,
     shift_pressed: bool,
     alt_pressed: bool,
-    deletion_mode: bool,
+    /* The active editing tool (JFLAP-style); Delete doubles as the old
+     * deletion mode. */
+    tool: EditorTool,
+    /* Tool to restore when a temporary Delete engagement ends (the Delete
+     * key press stashes the current tool, its release restores it). */
+    tool_before_temp_delete: EditorTool,
+    /* World position of the viewport's top-left corner; the wheel pans
+     * this offset so drawings outside the visible area stay reachable. */
+    scroll: Vector,
     pub next_id: usize,
 }
 
@@ -22,7 +31,9 @@ impl Default for State {
             ctrl_pressed: false,
             shift_pressed: false,
             alt_pressed: false,
-            deletion_mode: false,
+            tool: EditorTool::default(),
+            tool_before_temp_delete: EditorTool::default(),
+            scroll: Vector::new(0.0, 0.0),
             next_id: 0,
         }
     }
@@ -46,6 +57,14 @@ impl State {
         .width(Fill)
         .height(Fill)
         .into()
+    }
+
+    pub fn scroll(&self) -> Vector {
+        self.scroll
+    }
+
+    pub fn set_scroll(&mut self, scroll: Vector) {
+        self.scroll = scroll;
     }
 
     pub fn request_redraw(&mut self) {
@@ -76,13 +95,36 @@ impl State {
         self.alt_pressed
     }
 
-    pub fn set_deletion_mode(&mut self, enabled: bool) {
-        self.deletion_mode = enabled;
+    /* The active tool; Delete doubles as deletion mode, which is why the
+     * old flag accessor derives from it. */
+    pub fn active_tool(&self) -> EditorTool {
+        self.tool
+    }
+
+    pub fn set_tool(&mut self, tool: EditorTool) {
+        self.tool = tool;
+        self.cache.clear();
+    }
+
+    /* Remembers the current tool before a temporary Delete engagement. */
+    pub fn stash_tool(&mut self) {
+        if self.tool != EditorTool::Delete {
+            self.tool_before_temp_delete = self.tool;
+        }
+    }
+
+    /* Restores the stashed tool, falling back to Arrow when Delete itself
+     * was stashed (never re-engage Delete from a release). */
+    pub fn restore_tool(&mut self) {
+        self.tool = match self.tool_before_temp_delete {
+            EditorTool::Delete => EditorTool::Arrow,
+            tool => tool,
+        };
         self.cache.clear();
     }
 
     pub fn is_deletion_mode(&self) -> bool {
-        self.deletion_mode
+        self.tool == EditorTool::Delete
     }
 
     pub fn get_current_next_id(&self) -> usize {

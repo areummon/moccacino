@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use iced::{Point, Vector};
 
 use super::node::StateNode;
@@ -6,10 +8,14 @@ use super::util::VectorExt;
 
 impl StateMachine<'_> {
     pub(crate) fn find_transition_at_point(&self, point: Point) -> Option<usize> {
+        // Per-transition state lookups come from this map instead of an
+        // O(states) search per transition.
+        let node_by_id: HashMap<usize, &StateNode> =
+            self.states.iter().map(|node| (node.id, node)).collect();
         for (index, (key, labels)) in self.transitions.iter().enumerate() {
             if let (Some(from_state), Some(to_state)) = (
-                self.states.iter().find(|s| s.id == key.0),
-                self.states.iter().find(|s| s.id == key.1)
+                node_by_id.get(&key.0).copied(),
+                node_by_id.get(&key.1).copied(),
             ) {
                 if key.0 == key.1 {
                     let center = from_state.position;

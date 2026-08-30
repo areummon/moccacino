@@ -14,10 +14,11 @@ description = "Software program to experiment with concepts in automata theory a
 license = "MIT"
 
 [dependencies]
-iced = { version = "0.13.1", features = ["canvas"] }
+iced = { version = "0.13.1", features = ["canvas", "smol"] }
 indexmap = "2.10.0"
 moca-data = { path = "./moca-data" }
 moca-gui = { path = "./moca-gui" }
+rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "async-std"] }
 
 [[bin]]
 name = "moccacino"

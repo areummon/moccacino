@@ -2,6 +2,36 @@ use std::collections::{HashMap, HashSet};
 use std::collections::hash_map::Iter;
 use crate::state::{StateID, Input, State};
 
+/* Family of formal machines modeled by the library. */
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MachineKind {
+    Finite,
+    Pushdown,
+    Turing,
+}
+
+/* Behavioral interface shared by every machine of the library, independent of
+ * the structural StateMachine trait. New machine types (e.g. Turing machines)
+ * implement this to expose a uniform acceptance and validation API.
+ *
+ * Transition label conventions per family:
+ * - Finite: plain symbol strings; both "" and "ε" mean the empty transition.
+ * - Pushdown: "input;pop/push" ("ε" as pop or push means no operation).
+ * - Turing (planned): "read;write/dir" with dir in {L, R, S}; multitape
+ *   transitions will join per-tape operations with commas.
+ */
+pub trait Machine {
+    /* Family of this machine. */
+    fn kind(&self) -> MachineKind;
+
+    /* Check if the machine accepts the input string. */
+    fn accepts(&self, input: &str) -> bool;
+
+    /* Check semantic validity: an initial state exists and every transition
+     * references states that exist. */
+    fn validate(&self) -> Result<(), String>;
+}
+
 pub trait StateMachine {
 
     /* Getter of a mutable reference of the hashmap to define the 
@@ -65,6 +95,11 @@ pub trait StateMachine {
         }
     }
 
+    /* Hook that lets each machine clean its own bookkeeping (final state
+     * registries, initial state id, transition tables) when a state is
+     * deleted, so no dangling references to removed states are left behind. */
+    fn forget_state(&mut self, _state_id: StateID) {}
+
     /* Function to delete a state, this implies that it's id will be removed
      * from all the transitions with another state. */
     fn remove_state(&mut self, state_id: StateID) {
@@ -74,6 +109,7 @@ pub trait StateMachine {
             for (_, states) in states_by_id.iter_mut() {
                 states.remove_state(state_id);
             }
+            self.forget_state(state_id);
         }
     }
 

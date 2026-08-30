@@ -1,35 +1,36 @@
 use iced::widget::canvas::{self, Frame, Path, Stroke, Text};
 use iced::{alignment, Point, Theme};
+use crate::gui::theme;
 use std::collections::HashSet;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct StateNode {
     pub id: usize,
     pub position: Point,
     pub radius: f32,
-    pub label: &'static str,
+    pub label: String,
 }
 
 impl StateNode {
-    pub fn new(id: usize, position: Point, radius: f32, label: &'static str) -> Self {
+    pub fn new(id: usize, position: Point, radius: f32, label: String) -> Self {
         StateNode { id, position, radius, label }
     }
 
-    pub fn new_with_temp_id(position: Point, radius: f32, label: &'static str) -> Self {
+    pub fn new_with_temp_id(position: Point, radius: f32, label: String) -> Self {
         StateNode { id: 0, position, radius, label }
     }
 
     fn draw(&self, frame: &mut Frame, _theme: &Theme, is_initial: bool, is_final: bool) {
         frame.fill(
             &Path::circle(self.position, self.radius),
-            iced::Color::from_rgb(0.2, 0.7, 0.4),
+            theme::NODE_FILL,
         );
 
         frame.stroke(
             &Path::circle(self.position, self.radius),
             Stroke::default()
                 .with_width(2.0)
-                .with_color(iced::Color::WHITE),
+                .with_color(theme::CREAM),
         );
 
         if is_final {
@@ -38,7 +39,7 @@ impl StateNode {
                 &Path::circle(self.position, inner_radius),
                 Stroke::default()
                     .with_width(1.5)
-                    .with_color(iced::Color::WHITE),
+                    .with_color(theme::CREAM),
             );
         }
 
@@ -64,14 +65,14 @@ impl StateNode {
                 &triangle_path,
                 Stroke::default()
                     .with_width(2.0)
-                    .with_color(iced::Color::WHITE),
+                    .with_color(theme::CREAM),
             );
         }
 
         frame.fill_text(Text {
             content: self.label.to_string(),
             position: self.position,
-            color: iced::Color::WHITE,
+            color: theme::CREAM,
             size: 14.0.into(),
             horizontal_alignment: alignment::Horizontal::Center,
             vertical_alignment: alignment::Vertical::Center,

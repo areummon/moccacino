@@ -1,4 +1,4 @@
-use iced::Point;
+use iced::{Point, Vector};
 
 use super::node::StateNode;
 use super::transition::Transition;
@@ -12,6 +12,9 @@ pub enum CanvasMessage {
     StateDoubleClicked(usize),
     TransitionDoubleClicked(usize),
     TransitionClicked(usize),
+    /* New viewport scroll offset (world position of the canvas top-left),
+     * already clamped by the canvas program. */
+    Scrolled(Vector),
     RequestTransitionLabel {
         from_state_id: usize,
         to_state_id: usize,

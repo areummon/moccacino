@@ -1,7 +1,9 @@
-// This module generates TikZ code for automata diagrams.
-// The generated code uses only the tikzpicture environment and automata library styles.
+// This module generates LaTeX export code: TikZ drawings for automata
+// diagrams and an align* listing for grammars.
+// The generated TikZ code uses only the tikzpicture environment and automata library styles.
 
 use crate::state_machine::{StateNode, Transition};
+use moca_data::grammar::Grammar;
 use std::collections::HashSet;
 
 /// Exports the automaton to TikZ/PGF code using tikzpicture and automata styles.
@@ -150,4 +152,83 @@ pub fn export_to_tikz(
     tikz.push_str("\\end{tikzpicture}\n");
     tikz.push_str("\\end{center}\n");
     tikz
+}
+
+/* Escapes characters with special meaning in LaTeX so arbitrary grammar
+ * symbols survive rendering. */
+fn escape_latex(symbol: &str) -> String {
+    let mut escaped = String::with_capacity(symbol.len());
+    for c in symbol.chars() {
+        match c {
+            '&' | '%' | '$' | '#' | '_' | '{' | '}' => {
+                escaped.push('\\');
+                escaped.push(c);
+            }
+            '~' => escaped.push_str("\\sim "),
+            '^' => escaped.push_str("\\wedge "),
+            '\\' => escaped.push_str("\\backslash "),
+            _ => escaped.push(c),
+        }
+    }
+    escaped
+}
+
+/* One math-mode symbol: multi-character terminals are wrapped in \text
+ * so their token boundary stays visible (a S b vs. \text{if}). */
+fn latex_symbol(symbol: &str) -> String {
+    if symbol.chars().count() > 1 {
+        format!("\\text{{{}}}", escape_latex(symbol))
+    } else {
+        escape_latex(symbol)
+    }
+}
+
+/// Exports the grammar to LaTeX: a comment header carrying the tuple
+/// G = (V, Σ, P, S) and one align* line per variable listing its
+/// alternatives joined by \mid (empty bodies render as \varepsilon).
+pub fn export_grammar_to_latex(grammar: &Grammar) -> String {
+    let variables: Vec<String> = grammar.nonterminals().iter().cloned().collect();
+    let terminals: Vec<String> = grammar.terminals().into_iter().collect();
+
+    let mut latex = String::new();
+    latex.push_str("% Grammar in tuple form\n");
+    latex.push_str("% Requires: \\usepackage{amsmath}\n");
+    latex.push_str(&format!(
+        "% G = ({{{}}}, {{{}}}, P, {})\n",
+        variables.join(", "),
+        terminals.join(", "),
+        escape_latex(grammar.start_symbol()),
+    ));
+    latex.push_str("\\begin{center}\n");
+    latex.push_str("\\begin{align*}\n");
+
+    let mut lines = Vec::new();
+    for variable in &variables {
+        let bodies = grammar
+            .productions_of(variable)
+            .map(|bodies| bodies.as_slice())
+            .unwrap_or(&[]);
+        let alternatives: Vec<String> = bodies
+            .iter()
+            .map(|body| {
+                if body.is_empty() {
+                    String::from("\\varepsilon")
+                } else {
+                    body.iter()
+                        .map(|symbol| latex_symbol(symbol))
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                }
+            })
+            .collect();
+        lines.push(format!(
+            "{} &\\rightarrow {}",
+            latex_symbol(variable),
+            alternatives.join(" \\mid "),
+        ));
+    }
+    latex.push_str(&lines.join(" \\\\\n"));
+    latex.push_str("\n\\end{align*}\n");
+    latex.push_str("\\end{center}\n");
+    latex
 } 

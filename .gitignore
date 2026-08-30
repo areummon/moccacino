@@ -9,6 +9,8 @@
 /.direnv/
 
 # Editor and OS files
+.opencode/
+AGENTS.md
 *.swp
 *.swo
 .DS_Store

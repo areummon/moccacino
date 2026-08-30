@@ -1,0 +1,37 @@
+entity: dfa
+name: even-number-of-as
+states: s0, s1
+transitions: (s0, a) -> s1, (s0, b) -> s0, (s1, a) -> s0, (s1, b) -> s1
+initial: s0
+final: s0
+
+entity: nfa
+name: ends-with-b
+states: q0, q1
+transitions: (q0, a) -> q0, (q0, b) -> q0, (q0, b) -> q1, (q1, a) -> q1, (q1, b) -> q1
+initial: q0
+final: q1
+
+entity: pda
+name: anbn
+states: p0, p1, p2
+transitions: (p0, a, Z, A, Z) -> p0, (p0, a, A, A, A) -> p0
+transitions: (p0, ε, A, A) -> p1, (p0, ε, Z, Z) -> p1
+transitions: (p1, b, A, ε) -> p1, (p1, ε, Z, Z) -> p2
+initial: p0
+final: p2
+
+entity: tm
+name: contains-a-zero
+states: scan, found
+transitions: (scan, 1, 1, R) -> scan, (scan, 0, 1, S) -> found
+initial: scan
+final: found
+
+entity: regex
+name: abb
+regex: (a|b)*abb
+
+entity: grammar
+name: anbn
+productions: S -> a S b | ε

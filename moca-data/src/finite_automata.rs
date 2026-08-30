@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet, BTreeSet};
 use crate::state::{StateID, Input, State};
-use crate::state_machine::StateMachine;
+use crate::state_machine::{Machine, MachineKind, StateMachine};
+use crate::regex::ast::RegexAst;
 
 /* Structure that represent a finite automaton.
  * The initial_state_id represents the initial state
@@ -15,6 +16,24 @@ pub struct FiniteAutomata {
     initial_state_id: Option<StateID>,
     final_states: HashSet<StateID>,
     deterministic: bool,
+}
+
+/* A snapshot of the automaton mid-run: the current state and the input not
+ * yet consumed. */
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct FiniteConfiguration {
+    state_id: StateID,
+    remaining_input: Input,
+}
+
+impl FiniteConfiguration {
+    pub fn state_id(&self) -> StateID {
+        self.state_id
+    }
+
+    pub fn remaining_input(&self) -> &Input {
+        &self.remaining_input
+    }
 }
 
 impl FiniteAutomata {
@@ -51,6 +70,58 @@ impl FiniteAutomata {
             // Without an initial state no input can be accepted.
             None => false,
         }
+    }
+
+    /* Configuration with the input waiting to be read, or None when the
+     * automaton has no initial state. */
+    pub fn initial_configuration(&self, input: &str) -> Option<FiniteConfiguration> {
+        let initial_id = self.initial_state_id?;
+        Some(FiniteConfiguration {
+            state_id: initial_id,
+            remaining_input: input.to_string(),
+        })
+    }
+
+    /* Acceptance works by accepting states: the current state is final and
+     * the input has been fully consumed, exactly like the arrival check in
+     * `recursive_traversing_aux`. */
+    pub fn is_accepting(&self, config: &FiniteConfiguration) -> bool {
+        self.final_states.contains(&config.state_id) && config.remaining_input.is_empty()
+    }
+
+    /* Every configuration reachable in one transition. ε/"" labels keep the
+     * input, and every label that prefixes the remaining input is explored
+     * (consuming its own prefix), mirroring `recursive_traversing_aux`.
+     * The caller drives exploration across `step_all` calls and must dedup
+     * (state, remaining input) pairs — `check_input`'s visited set — so
+     * ε-cycles cannot loop forever. Successors are sorted so displays are
+     * stable despite HashMap iteration order. */
+    pub fn step_all(&self, config: &FiniteConfiguration) -> Vec<FiniteConfiguration> {
+        let mut successors: Vec<FiniteConfiguration> = Vec::new();
+        if let Some(state) = self.states_by_id.get(&config.state_id) {
+            for (next_id, transitions) in state.iter_by_transition() {
+                for label in transitions.iter() {
+                    if label.is_empty() || label == "ε" {
+                        successors.push(FiniteConfiguration {
+                            state_id: *next_id,
+                            remaining_input: config.remaining_input.clone(),
+                        });
+                    } else if config.remaining_input.starts_with(label.as_str()) {
+                        let mut rest = config.remaining_input.clone();
+                        rest.replace_range(0..label.len(), "");
+                        successors.push(FiniteConfiguration {
+                            state_id: *next_id,
+                            remaining_input: rest,
+                        });
+                    }
+                }
+            }
+        }
+        successors.sort_by(|a, b| {
+            (a.state_id, a.remaining_input.as_str())
+                .cmp(&(b.state_id, b.remaining_input.as_str()))
+        });
+        successors
     }
 
     // Function to add a label to a state given by it's id.
@@ -170,14 +241,20 @@ impl FiniteAutomata {
             let mut new_initial_id = 0;
             let mut final_states: HashSet<StateID> = HashSet::new();
             let mut id = 0;
+            // The initial state's closure is the same for every subset; it
+            // is computed once instead of per subset.
+            let initial_closure: Option<BTreeSet<StateID>> =
+                self.initial_state_id.map(|initial_id| {
+                    let mut closure = self.lambda_closure(initial_id, "");
+                    closure.insert(initial_id);
+                    closure
+                });
             // It needs to be iterated two times because in the first iteration it might not know
             // what is the id of a subset in a transition.
             for (subset, _) in subsets_and_transitions.iter() {
                 let mut state = State::new(format!("q{}", id));
-                if let Some(initial_id) = self.initial_state_id {
-                    let mut initial_subset = self.lambda_closure(initial_id,"");
-                    initial_subset.insert(initial_id);
-                    if initial_subset == *subset {
+                if let Some(initial_subset) = &initial_closure {
+                    if initial_subset == subset {
                         new_initial_id = id;
                         state.initial_flag = true;
                     }
@@ -239,6 +316,124 @@ impl FiniteAutomata {
     // The transition function of the automata.
     // Maps a state id and a string transition to a state that can be None if there is no
     // transition defined for that string.
+    /* Equivalent regular expression via state elimination. A fresh start
+     * and a fresh final state are wired in with ε so multiple finals and
+     * back-edges into the start are handled uniformly, then every reachable
+     * original state is ripped: its contribution R_pr · R_rr* · R_rq is
+     * merged (union) into the direct edge R_pq. The empty language yields
+     * RegexAst::Empty. */
+    pub fn to_regex(&self) -> RegexAst {
+        use RegexAst::*;
+
+        /* Accumulates the union of labels sitting on one state pair. */
+        let mut edges: HashMap<(StateID, StateID), RegexAst> = HashMap::new();
+        let mut union_edge = |from: StateID, to: StateID, label: &str| {
+            // A label may be multi-character: it reads as the concatenation
+            // of its characters; "" and "ε" are the empty word.
+            let piece: RegexAst = if label == "ε" || label.is_empty() {
+                Epsilon
+            } else {
+                let mut ast: Option<RegexAst> = None;
+                for c in label.chars() {
+                    let node = Char(c);
+                    ast = Some(match ast {
+                        Some(existing) => Concat(Box::new(existing), Box::new(node)),
+                        None => node,
+                    });
+                }
+                ast.expect("non-empty label")
+            };
+            match edges.get_mut(&(from, to)) {
+                Some(existing) => {
+                    *existing = Union(Box::new(std::mem::replace(existing, Epsilon)), Box::new(piece));
+                },
+                None => {
+                    edges.insert((from, to), piece);
+                },
+            }
+        };
+
+        let initial_id = match self.initial_state_id {
+            Some(id) => id,
+            None => return Empty,
+        };
+
+        // Reachable subgraph only; unreachable states cannot contribute.
+        let reachable = {
+            let mut visited: HashSet<StateID> = HashSet::from([initial_id]);
+            let mut stack = vec![initial_id];
+            while let Some(id) = stack.pop() {
+                if let Some(state) = self.states_by_id.get(&id) {
+                    for (target, _) in state.iter_by_transition() {
+                        if visited.insert(*target) {
+                            stack.push(*target);
+                        }
+                    }
+                }
+            }
+            visited
+        };
+
+        // Fresh sentinel ids beyond every existing one.
+        let next_id = self.states_by_id.keys().copied().max().map_or(0, |max| max + 1);
+        let new_start = next_id;
+        let new_final = next_id + 1;
+
+        union_edge(new_start, initial_id, "ε");
+        for id in &reachable {
+            if self.final_states.contains(id) {
+                union_edge(*id, new_final, "ε");
+            }
+        }
+        for id in &reachable {
+            if let Some(state) = self.states_by_id.get(id) {
+                for (target, labels) in state.iter_by_transition() {
+                    if reachable.contains(target) {
+                        for label in labels {
+                            union_edge(*id, *target, label);
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut remaining: Vec<StateID> = reachable.iter().copied().collect();
+        remaining.sort();
+        for r in remaining {
+            let loop_ast = edges.get(&(r, r)).cloned();
+            let loop_star = loop_ast.map(|ast| Star(Box::new(ast)));
+            // Every pair (p, q) through r: p, q != r.
+            let into: Vec<StateID> = edges.keys().filter(|(_, to)| *to == r).map(|(from, _)| *from).collect();
+            let out_of: Vec<StateID> = edges.keys().filter(|(from, _)| *from == r).map(|(_, to)| *to).collect();
+            let mut into = into;
+            let mut out_of = out_of;
+            into.sort();
+            out_of.sort();
+            for p in &into {
+                for q in &out_of {
+                    let head = edges.get(&(*p, r)).cloned().expect("p->r exists");
+                    let tail = edges.get(&(r, *q)).cloned().expect("r->q exists");
+                    let through = match &loop_star {
+                        Some(star) => Concat(
+                            Box::new(head),
+                            Box::new(Concat(Box::new(star.clone()), Box::new(tail))),
+                        ),
+                        None => Concat(Box::new(head), Box::new(tail)),
+                    };
+                    let merged = match edges.get(&(*p, *q)) {
+                        Some(direct) => Union(Box::new(direct.clone()), Box::new(through)),
+                        None => through,
+                    };
+                    edges.insert((*p, *q), merged);
+                }
+            }
+            // Remove every edge touching r.
+            edges.retain(|(from, to), _| from != &r && to != &r);
+        }
+
+        edges.get(&(new_start, new_final)).cloned().unwrap_or(Empty)
+    }
+
     pub fn transition_function(&self, state_id: StateID, string: &str) -> Option<StateID> {
         if let Some(state) = self.states_by_id.get(&state_id) {
             for (id, transitions) in state.iter_by_transition() {
@@ -272,6 +467,15 @@ impl StateMachine for FiniteAutomata {
     
     fn get_initial_state_id(&self) -> &Option<StateID> {
         &self.initial_state_id
+    }
+
+    /* Cleans the bookkeeping of the automaton when a state is deleted, so no
+     * final state or initial state id referencing a removed state is left. */
+    fn forget_state(&mut self, state_id: StateID) {
+        self.final_states.remove(&state_id);
+        if self.initial_state_id == Some(state_id) {
+            self.initial_state_id = None;
+        }
     }
     
     /* The implementation for finite automata checks if the automaton
@@ -327,6 +531,34 @@ impl StateMachine for FiniteAutomata {
     }
 }
 
+impl Machine for FiniteAutomata {
+    fn kind(&self) -> MachineKind {
+        MachineKind::Finite
+    }
+
+    fn accepts(&self, input: &str) -> bool {
+        self.check_input(&mut input.to_string())
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        if self.initial_state_id.is_none() {
+            return Err("The automaton has no initial state.".to_string());
+        }
+        let states = self.get_states_by_id_ref();
+        for (id, state) in states {
+            for (target, _) in state.iter_by_transition() {
+                if !states.contains_key(target) {
+                    return Err(format!(
+                        "State {} has a transition to nonexistent state {}.",
+                        id, target
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 // Function that returns the unreacheable states of an automata as ids in a vector.
 // The complexity is O(n+m) where n is the number of states and m is the number of transitions
 // of the automaton.
@@ -364,66 +596,78 @@ pub fn get_unreachable_states(automata: &FiniteAutomata, initial_id: StateID) ->
 // partitions that are indistinguishable (for all input strings, δ(q,w) in any
 // q in a subset lead to an acception/rejection state). The first partitions are in rejecting
 // states and non-rejections states, and the algorithm finish when all subsets are equivalent (δ(q,w))
-// in any q in a set leads to an accepting or rejection state). The implementation 
+// in any q in a set leads to an accepting or rejection state).
 // This algorithm have O(ns log n) complexity time where n is the number of states and s the size of the alphabet.
 // The function returns an equivalent (using the earlier definition) partition of state ids.
 // This algorithm is adapted from https://en.wikipedia.org/wiki/DFA_minimization.
 pub fn hopcroft_algorithm(automata: &FiniteAutomata) -> HashSet<BTreeSet<StateID>> {
-    // Initial partition: split states into accepting and non-accepting
-    let non_rejecting_states = hashmap_set_difference(automata.get_states_by_id_ref(),
+    /* Sentinel that represents the implicit target shared by every undefined
+     * transition. It belongs to the non-accepting side of the initial
+     * partition, so partial DFAs (missing transitions) are handled correctly:
+     * two states can only be merged if their missing/defined transitions
+     * behave the same way. */
+    const SINK: StateID = u64::MAX;
+
+    // Initial partition: accepting states vs non-accepting states (+ implicit sink).
+    let rejecting_states: BTreeSet<StateID> = automata.get_final_states().iter().cloned().collect();
+    let mut non_rejecting_states = hashmap_set_difference(automata.get_states_by_id_ref(),
                                                     automata.get_final_states());
     let mut partition_p: HashSet<BTreeSet<StateID>> = HashSet::new();
-    let rejecting_states: BTreeSet<StateID> = automata.get_final_states().iter().cloned().collect();
-    
     if !rejecting_states.is_empty() {
         partition_p.insert(rejecting_states);
     }
-    if !non_rejecting_states.is_empty() {
-        partition_p.insert(non_rejecting_states);
-    }
+    non_rejecting_states.insert(SINK);
+    partition_p.insert(non_rejecting_states);
 
+    // Worklist of candidate splitters. Whenever a block of the partition gets
+    // split, it is replaced in the worklist by its smaller half.
     let mut partition_w: Vec<BTreeSet<StateID>> = partition_p.iter().cloned().collect();
-    let mut visited_subsets: HashSet<BTreeSet<StateID>> = HashSet::new();
 
     while let Some(set_a) = partition_w.pop() {
-        if visited_subsets.contains(&set_a) {
-            continue;
-        }
-        visited_subsets.insert(set_a.clone());
-
         for string in automata.get_string_transitions() {
             let set_x = transition_function_set(automata, &set_a, string);
             if set_x.is_empty() {
                 continue;
             }
 
-            let mut new_partitions = Vec::new();
-            let mut partitions_to_remove = Vec::new();
-
+            // Collect every block that straddles the preimage of set_a...
+            let mut splits: Vec<(BTreeSet<StateID>, BTreeSet<StateID>, BTreeSet<StateID>)> = Vec::new();
             for set_y in &partition_p {
                 let x_y_intersection: BTreeSet<StateID> = set_y.intersection(&set_x).cloned().collect();
                 let y_minus_x: BTreeSet<StateID> = set_y.difference(&set_x).cloned().collect();
 
                 if !x_y_intersection.is_empty() && !y_minus_x.is_empty() {
-                    partitions_to_remove.push(set_y.clone());
-                    new_partitions.push(x_y_intersection);
-                    new_partitions.push(y_minus_x);
+                    splits.push((set_y.clone(), x_y_intersection, y_minus_x));
                 }
             }
 
-            for partition in partitions_to_remove {
-                partition_p.remove(&partition);
-            }
-            for partition in new_partitions {
-                partition_p.insert(partition.clone());
-                if !visited_subsets.contains(&partition) {
-                    partition_w.push(partition);
-                }
+            // ...and split them all. The split block is replaced in the
+            // worklist by its smaller half (the other half can only produce
+            // splitters that the small one already produces).
+            for (set_y, x_y_intersection, y_minus_x) in splits {
+                partition_p.remove(&set_y);
+                partition_p.insert(x_y_intersection.clone());
+                partition_p.insert(y_minus_x.clone());
+                partition_w.retain(|set| *set != set_y);
+                let smaller_half = if x_y_intersection.len() <= y_minus_x.len() {
+                    x_y_intersection
+                } else {
+                    y_minus_x
+                };
+                partition_w.push(smaller_half);
             }
         }
     }
 
-    partition_p
+    // Remove the implicit sink from every block, dropping the blocks left empty.
+    let mut result_partition: HashSet<BTreeSet<StateID>> = HashSet::new();
+    for set in partition_p {
+        let real_states: BTreeSet<StateID> = set.into_iter().filter(|&id| id != SINK).collect();
+        if !real_states.is_empty() {
+            result_partition.insert(real_states);
+        }
+    }
+    result_partition
 }
 
 
@@ -442,15 +686,23 @@ fn hashmap_set_difference(map: &HashMap<StateID, State>, set: &HashSet<StateID>)
 // Auxiliar function for the hopcroft algorithm, that takes an automata and a subset of that
 // automata as parameters, and returns state ids gotten by the transition function on the condition
 // that the state id returned by the transition funciton have to be in the set given by the
-// function.
+// function. Transitions left undefined are treated as pointing to an implicit sink, so partial
+// DFAs are handled consistently.
 fn transition_function_set(automata: &FiniteAutomata, set: &BTreeSet<StateID>, string: &str) -> BTreeSet<StateID> {
+    const SINK: StateID = u64::MAX;
     let mut new_set = BTreeSet::new();
     for (id,_) in automata.get_states_by_id_ref() {
-        if let Some(new_id) = automata.transition_function(*id, string) {
-            if set.contains(&new_id) {
-                new_set.insert(*id);
-            }
+        let target = match automata.transition_function(*id, string) {
+            Some(target) => target,
+            None => SINK,
+        };
+        if set.contains(&target) {
+            new_set.insert(*id);
         }
+    }
+    // The implicit sink loops to itself on every symbol.
+    if set.contains(&SINK) {
+        new_set.insert(SINK);
     }
     new_set
 }

@@ -3,14 +3,15 @@ use iced::{alignment, Point, Theme, Vector};
 
 use super::node::StateNode;
 use super::util::VectorExt;
+use crate::gui::theme;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct Transition {
     pub from_state_id: usize,
     pub to_state_id: usize,
     pub from_point: Point,
     pub to_point: Point,
-    pub label: &'static str,
+    pub label: String,
 }
 
 #[allow(dead_code)]
@@ -53,7 +54,7 @@ impl Transition {
                     &curve_path,
                     Stroke::default()
                         .with_width(2.0)
-                        .with_color(iced::Color::WHITE),
+                        .with_color(theme::CREAM),
                 );
 
                 let t = 0.05;
@@ -89,14 +90,14 @@ impl Transition {
                     &arrow_path,
                     Stroke::default()
                         .with_width(2.0)
-                        .with_color(iced::Color::WHITE),
+                        .with_color(theme::CREAM),
                 );
 
                 let label_pos = iced::Point::new(control.x, control.y + 30.0);
                 frame.fill_text(Text {
                     content: self.label.to_string(),
                     position: label_pos,
-                    color: iced::Color::WHITE,
+                    color: theme::CREAM,
                     size: 14.0.into(),
                     horizontal_alignment: alignment::Horizontal::Center,
                     vertical_alignment: alignment::Vertical::Center,
@@ -121,7 +122,7 @@ impl Transition {
             &Path::line(start_point, end_point),
             Stroke::default()
                 .with_width(1.5)
-                .with_color(iced::Color::WHITE),
+                .with_color(theme::CREAM),
         );
 
         self.draw_arrowhead(frame, _theme, end_point, direction_unit);
@@ -136,7 +137,7 @@ impl Transition {
         frame.fill_text(Text {
             content: self.label.to_string(),
             position: midpoint + perpendicular_vec,
-            color: iced::Color::WHITE,
+            color: theme::CREAM,
             size: 14.0.into(),
             horizontal_alignment: alignment::Horizontal::Center,
             vertical_alignment: alignment::Vertical::Center,
@@ -181,7 +182,7 @@ impl Transition {
             &curve_path,
             Stroke::default()
                 .with_width(1.5)
-                .with_color(iced::Color::WHITE),
+                .with_color(theme::CREAM),
         );
 
         self.draw_arrowhead(frame, _theme, end_point, end_direction);
@@ -192,7 +193,7 @@ impl Transition {
         frame.fill_text(Text {
             content: self.label.to_string(),
             position: label_position + label_offset,
-            color: iced::Color::WHITE,
+            color: theme::CREAM,
             size: 14.0.into(),
             horizontal_alignment: alignment::Horizontal::Center,
             vertical_alignment: alignment::Vertical::Center,
@@ -241,7 +242,7 @@ impl Transition {
             &arrow_path,
             Stroke::default()
                 .with_width(2.0)
-                .with_color(iced::Color::WHITE),
+                .with_color(theme::CREAM),
         );
     }
 }

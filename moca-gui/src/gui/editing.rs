@@ -2,26 +2,36 @@ use iced::Task;
 
 use crate::state_machine;
 
-use moca_data::finite_automata::FiniteAutomata;
-
 use super::message::Message;
 
 impl super::app::App {
     pub(crate) fn clear_active_tab(&mut self) -> Task<Message> {
         self.get_active_tab_mut().state_machine.reset_id_counter();
+        self.get_active_tab_mut().state_machine.set_scroll(iced::Vector::new(0.0, 0.0));
         self.get_active_tab_mut().state_machine.request_redraw();
         self.get_active_tab_mut().transitions.clear();
         self.get_active_tab_mut().states.clear();
         self.get_active_tab_mut().state_id_to_index.clear();
         self.get_active_tab_mut().initial_state = None;
         self.get_active_tab_mut().final_states.clear();
-        self.get_active_tab_mut().machine = FiniteAutomata::default();
+        // Clear the machine in place so the tab keeps its family: swapping in
+        // a default Finite machine made Turing/pushdown run panels vanish.
+        self.get_active_tab_mut().machine.clear();
         self.get_active_tab_mut().check_input_dialog_open = false;
         self.get_active_tab_mut().check_input_text.clear();
         self.get_active_tab_mut().check_result_popup_open = false;
         self.get_active_tab_mut().check_input_result = None;
-        self.get_active_tab_mut().deletion_mode = false;
-        self.get_active_tab_mut().state_machine.set_deletion_mode(false);
+        self.get_active_tab_mut().regex_dialog_open = false;
+        self.get_active_tab_mut().tm_run = None;
+        self.get_active_tab_mut().tm_frontier = None;
+        self.get_active_tab_mut().tm_playing = false;
+        self.get_active_tab_mut().pda_run = None;
+        self.get_active_tab_mut().pda_frontier = None;
+        self.get_active_tab_mut().pda_playing = false;
+        self.get_active_tab_mut().finite_run = None;
+        self.get_active_tab_mut().finite_frontier = None;
+        self.get_active_tab_mut().finite_playing = false;
+        self.get_active_tab_mut().set_active_tool(crate::state_machine::EditorTool::Arrow);
         Task::none()
     }
 
@@ -38,9 +48,9 @@ impl super::app::App {
         if active_tab.pending_transition_dialog_open {
             if let Some((from_state_id, to_state_id, from_point, to_point)) = active_tab.pending_transition.take() {
                 let label = if active_tab.pending_transition_label.trim().is_empty() {
-                    Box::leak("ε".to_string().into_boxed_str())
+                    "ε".to_string()
                 } else {
-                    Box::leak(active_tab.pending_transition_label.clone().into_boxed_str())
+                    active_tab.pending_transition_label.clone()
                 };
                 let transition = state_machine::Transition {
                     from_state_id,
@@ -64,7 +74,7 @@ impl super::app::App {
             if let Some(index) = active_tab.state_id_to_index.get(&state_id) {
                 if let Some(state) = active_tab.states.get_mut(*index) {
                     let edit_text = active_tab.edit_text.clone();
-                    state.label = Box::leak(edit_text.into_boxed_str());
+                    state.label = edit_text;
                 }
             }
         }

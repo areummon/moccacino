@@ -4,7 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-iced = { version = "0.13.1", features = ["canvas"] }
+iced = { version = "0.13.1", features = ["canvas", "smol"] }
 indexmap = "2.10.0"
+rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "async-std"] }
 
 moca-data = { path = "../moca-data" }
