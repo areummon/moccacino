@@ -47,8 +47,7 @@ nix develop        # reproducible dev shell (use direnv for it to be automatic)
 
 > [!WARNING]
 >
-> Some edge cases may not be caught or are simply not implemented.
-> Additionally, the project's structure is not well modularized or organized.
+> There may be some bugs I do not currently know about.
 
 ## Usage
 
@@ -127,12 +126,6 @@ cargo test -p moca-data --bin moca-data
 ```
 
 The project uses [Nix flakes](https://nixos.wiki/wiki/Flakes) to provide a reproducible development environment and build process, leveraging [Crane](https://github.com/ipetkov/crane) for Rust builds. Enter the dev shell with [direnv](https://direnv.net/) (the committed `.envrc` handles it) or plain `nix develop`.
-
-> [!NOTE]
->
-> This is a project I created and worked on a long ago. 
-> I don't feel like developing it further right now, so 
-> I'll leave it as is. I might update it in the future.
 
 ## License
 
