@@ -1,94 +1,125 @@
 # moccacino
 
-moccacino is a desktop workbench for experimenting with concepts in automata theory and formal languages. Draw machines on a canvas, run them step by step, and apply the classic conversions — built with Rust and the [Iced](https://github.com/iced-rs/iced) GUI library.
+moccacino is a desktop workbench for automata theory and formal languages. Draw machines on a canvas, run them step by step, and apply the classic conversions, all in one interface with light and dark themes. It is written in Rust with the [Iced](https://github.com/iced-rs/iced) GUI library.
+
+<p align="center">
+  <img src="docs/media/draw.gif" width="800" alt="Drawing a finite automaton: adding states, linking them with transitions and typing their labels">
+</p>
 
 ## Features
 
-- **Finite automata (DFA/NFA)** — canvas editing with ε-transitions, deterministic and nondeterministic execution, NFA→DFA (subset construction), and Hopcroft minimization.
-- **Pushdown automata** — transitions of the form `input;pop/push`, a run panel with a live stack lane, deterministic and nondeterministic execution.
-- **Turing machines** — multi-tape support over a shared blank symbol, arrival-based acceptance, run panel with tape strips, breadth-first nondeterministic exploration.
-- **Context-free grammars** — text format (`S -> a S b | ε`), CYK membership, leftmost/rightmost derivations, conversion to Chomsky Normal Form, right-linear grammar ↔ automaton conversion, and a CFG→PDA recognizer.
-- **Regular expressions** — parser supporting `|`, juxtaposition, `*`, `+`, `?`, grouping, escapes, and literal `ε`; compiles straight into an automaton (Thompson construction).
-- **`.ce` files** — plain-text documents that hold any mix of the above in one place; load them and every entity opens as its own tab (see [`docs/ce-format.md`](docs/ce-format.md)).
-- **TikZ export** — generates LaTeX code for the automaton or grammar you drew.
+| Family | What you can do |
+|---|---|
+| **Finite automata** (DFA / NFA) | ε-transitions, step-by-step runs (nondeterministic branches shown as lanes), NFA → DFA (subset construction), Hopcroft minimization, export to a regular expression |
+| **Pushdown automata** | `input;pop/push` transitions, run panel with a live stack and input ribbon, deterministic or nondeterministic execution |
+| **Turing machines** | single or multi-tape, run panel with tape strips, breadth-first nondeterministic exploration |
+| **Context-free grammars** | text editor (`S -> a S b \| ε`), CYK membership, leftmost derivations, Chomsky Normal Form, right-linear grammar ↔ automaton, CFG → PDA |
+| **Regular expressions** | `\|`, concatenation, `*`, `+`, `?`, grouping, `\` escapes and `ε`, compiled into an automaton (Thompson construction) |
+
+Across every family:
+
+- **Tabs**: each tab holds one machine or grammar. Tabs with unsaved changes show a small dot, and closing a tab or the app with unsaved work asks you first.
+- **`.ce` files**: plain-text files that can hold any mix of machines and grammars. When you load one, every entity opens in its own tab (see [`docs/ce-format.md`](docs/ce-format.md)).
+- **Exports**:
+  - LaTeX/TikZ code for the machine you drew.
+  - A regular expression for finite automata.
+  - An LLM prompt that turns a photo of a diagram into a `.ce` file (see [`docs/vision-llm-prompt.md`](docs/vision-llm-prompt.md)).
 
 ## Installation
 
-### Prerequisites
+### With Nix (recommended)
 
-- Rust and Cargo (the [Nix flake](https://nixos.wiki/wiki/Flakes) pins nightly; stable should also build the workspace)
-- On Linux, the usual windowing/graphics development libraries (X11, Wayland, Vulkan) — the flake provides all of them
+The flake provides the toolchain and every graphics library (X11, Wayland, Vulkan, Mesa):
 
-### Building from Source
-
-1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/moccacino.git
+nix run github:areummon/moccacino    # run without cloning
+
+git clone https://github.com/areummon/moccacino.git
 cd moccacino
+nix run .        # build and run
+nix build        # produces ./result/bin/moccacino
+nix develop      # dev shell (or let direnv load it through the committed .envrc)
 ```
 
-2. Build the project:
-```bash
-cargo build --release
-```
+### With Cargo
 
-3. Run the application:
+You need Rust and Cargo. The flake pins nightly, but stable should also work. On Linux you also need the usual X11/Wayland/Vulkan development libraries.
+
 ```bash
+git clone https://github.com/areummon/moccacino.git
+cd moccacino
 cargo run --release
 ```
 
-Or, with Nix installed:
+A plain `cargo run` works too. The dev profile optimizes dependencies, so the debug build stays smooth.
 
-```bash
-nix run .          # build and run (binary is wrapped with the right GL/Vulkan env)
-nix build          # produce ./result/bin/moccacino
-nix develop        # reproducible dev shell (use direnv for it to be automatic)
-```
+> [!NOTE]
+> Rendering needs a working Vulkan or EGL driver. If the app panics while creating the graphics instance, it is a driver/environment problem. Try running it from the Nix dev shell.
 
-> [!WARNING]
->
-> There may be some bugs I do not currently know about.
+## Getting started
 
-## Usage
+On launch, choose a module (Finite, Pushdown, Turing or Grammar) from the startup picker. More tabs of any kind can be opened later from **New** or with `Ctrl+T`.
 
-### Canvas editing
+The header holds the **New**, **Operations**, **File** and **Export** menus, the tabs, and the theme toggle. The canvas has a floating tool palette. When a machine has a run panel, it docks below the canvas. The status bar shows whether the machine is deterministic and whether it is ready to run.
 
-Editing is tool-based (JFLAP style). Pick a tool from the toolbar or with the keyboard — `1`–`4` select tools, `Tab` toggles between Select and Delete, holding `Delete` temporarily engages Delete, and `Esc` returns to Select.
+### Drawing machines
 
-- **Select** (`1`) — drag states to move them, drag empty space to pan, double-click a state to rename it, `Shift`+click toggles final, `Alt`+click toggles initial, and clicking a transition opens its label editor.
-- **State** (`2`) — click empty canvas to create a state.
-- **Transition** (`3`) — click the source state, then the target state, to add a transition.
-- **Delete** (`4`) — click a state or a transition to remove it.
+Editing is tool-based, in the style of JFLAP:
 
-Transition labels mean different things per machine family:
+| Tool | Key | What it does |
+|---|---|---|
+| **Select** | `1` | Drag a state to move it, or drag empty space to pan. Double-click a state to rename it; click a transition to edit its label. `Shift`+click toggles accepting, `Alt`+click toggles initial. |
+| **State** | `2` | Click empty space to add a state. |
+| **Transition** | `3` | Click the source state, then the target state. |
+| **Delete** | `4` | Click a state or transition to remove it. |
 
-| Family | Label format |
-|---|---|
-| Finite | one symbol per label; `ε` (or empty) is an ε-transition |
-| Pushdown | `input;pop/push` — `ε` as input consumes nothing, as pop/push it's a no-op |
-| Turing | `read;write/dir` per tape with dir ∈ {`L`, `R`, `S`}; multitape labels join one segment per tape, e.g. `a;X/R,_;*/L` |
+`Tab` switches between Select and Delete. Holding `Delete` gives you the Delete tool while the key is held, and `Esc` returns to Select.
 
-### Run panels
+To move around the canvas, zoom with `Ctrl`+wheel or `Ctrl` `+`/`−`. `Ctrl+0` resets the zoom and `F` fits the machine to the view.
 
-Every machine tab has a run panel: type an input, press **Load**, then **Step** or **Play** to watch the execution — a tape strip for Turing machines, a stack lane plus input ribbon for pushdown, an input ribbon for finite automata. Nondeterministic machines display their branching frontier as lanes you can step level by level.
+### Transition labels
+
+| Family | Format | Example |
+|---|---|---|
+| Finite | one symbol; `ε` (or blank) is an ε-move | `a` |
+| Pushdown | `input;pop/push`: `ε` as input reads nothing, and as pop or push it does nothing | `a;Z/AZ` |
+| Turing | `read;write/dir` with dir ∈ {`L`, `R`, `S`}; multi-tape labels join one segment per tape with commas | `a;X/R,_;*/L` |
+
+For pushdown pushes, `AZ` pushes `Z` and then `A`, so `A` ends up on top. Use commas for multi-character stack symbols: `a,S,b` leaves `a` on top.
+
+A malformed label does not crash anything. The status bar points it out, and runs skip it.
+
+### Running machines
+
+Every machine tab has a run panel:
+
+1. Type an input and press **Load**.
+2. Press **Step** (`→`) or **Play** (`Space`).
+
+Finite automata show an input ribbon, pushdown automata show a stack lane plus the ribbon, and Turing machines show tape strips. Nondeterministic machines show their branches as parallel lanes that advance level by level.
+
+To just get a yes/no answer, use **Operations → Check input…**. It works for every family; grammar tabs answer with CYK.
 
 ### Operations
 
-From the **Operations** menu:
-
-- **Check Input** — test whether a string is accepted (works for every family; grammars answer via CYK)
-- **DFA to NFA** — convert a deterministic finite automaton to a non-deterministic one
-- **Minimize** — minimize a deterministic finite automaton
-- **Build from Regex** — compile a regular expression into an automaton and open it as a new tab
-- **To Regex** — inspect the expression behind a regex-built tab
+- **NFA → DFA**: subset construction; the result opens in a new tab.
+- **Minimize DFA**: Hopcroft's algorithm; the result opens in a new tab.
+- **Build from regex…**: compiles a regular expression into an automaton in a new tab.
+- **Check input…**: answers accept or reject for a single word.
 
 ### Grammars
 
-Grammar tabs are text-driven: write one production group per line (`S -> a S b | ε`) in the panel, check words via CYK, view leftmost derivations, or convert the grammar to Chomsky Normal Form (opened as a new tab).
+Grammar tabs are text-based. Write one production group per line. The first left-hand side is the start symbol, `|` separates alternatives, and `ε` (or an empty alternative) is the empty word:
+
+```text
+S -> a S b | ε
+```
+
+From there you can check words, view a leftmost derivation, or convert the grammar to Chomsky Normal Form in a new tab.
 
 ### Files
 
-Use **File ▾ → Load .ce…** to open a `.ce` (or `.cm`) file — each entity in it becomes its own tab — and **Save .ce…** to write the active tab back out. Ready-made demos live in [`examples/`](examples/), and the full syntax is documented in [`docs/ce-format.md`](docs/ce-format.md):
+**File → Open .ce file…** (`Ctrl+O`) loads a file with every entity in its own tab. **Save tab as .ce…** (`Ctrl+S`) writes the active tab. Ready-made demos live in [`examples/`](examples/):
 
 ```text
 entity: pda
@@ -101,37 +132,52 @@ initial: p0
 final: p2
 ```
 
-### LaTeX
+### LaTeX export
 
-You can get the LaTeX code for the automaton or grammar you have drawn — just click the button and you will get the code. It uses the tikz package and the automata, arrows.meta, and positioning libraries from TikZ.
-
-You can also change the settings by modifying the `moca-gui/tikz_export.rs` file with your desired preferences.
+**Export → LaTeX / TikZ…** generates code that uses the `tikz` package with the `automata`, `arrows.meta` and `positioning` libraries. To change the output style, edit `moca-gui/src/tikz_export.rs`.
 
 > [!NOTE]
->
-> Currently, you cannot change the position of loops in the GUI. If you want to change the position 
-> of a loop in the resulting TikZ code, simply change `edge[loop above]` to `edge[loop below]`.
+> Self-loops are always exported as `loop above`. To move one, change `edge[loop above]` to `below`, `left` or `right` in the generated code.
+
+### Keyboard shortcuts
+
+Press `F1` (or `?`) in the app for the full cheat sheet. The main shortcuts are:
+
+| Shortcut | Action |
+|---|---|
+| `Ctrl+T` / `Ctrl+W` | New tab / close tab |
+| `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous tab |
+| `Ctrl+O` / `Ctrl+S` | Open / save a `.ce` file |
+| `Ctrl+Shift+L` | Switch between the light and dark themes |
+| `1`–`4`, `Tab`, `Esc` | Editing tools |
+| `Space` / `→` | Play or pause / step the run |
+| `F`, `Ctrl+0` | Fit to view, reset zoom |
 
 ## Development
 
-This project uses a [rust workspace](https://doc.rust-lang.org/book/ch14-03-cargo-workspaces.html) structure with two main crates:
+The repository is a [Cargo workspace](https://doc.rust-lang.org/book/ch14-03-cargo-workspaces.html) with two crates:
 
-- `moca-data`: dependency-free automata library — the engines for every family (stepping, validation, conversions), grammars, and the regex compiler.
-- `moca-gui`: the GUI implementation using the [Iced](https://github.com/iced-rs/iced) library (the packaged binary is built from its sources).
+- **`moca-data`**: a dependency-free library containing all the theory. It holds the engines for every machine family (stepping, validation, determinism), the conversions and minimization, the grammar tools, the regex compiler, and the `.ce` reader and writer.
+- **`moca-gui`**: the Iced front end. It covers the canvas editor, tabs, run panels, dialogs, the theme, and the bundled fonts (Nunito, JetBrains Mono and DejaVu Sans, with their licenses in `moca-gui/assets/fonts`). The root package's `moccacino` binary is built from `moca-gui/src/main.rs`.
 
-Tests live in `moca-data` and run with:
+Tests live in `moca-data` and run with this exact command:
 
 ```bash
 cargo test -p moca-data --bin moca-data
 ```
 
-The project uses [Nix flakes](https://nixos.wiki/wiki/Flakes) to provide a reproducible development environment and build process, leveraging [Crane](https://github.com/ipetkov/crane) for Rust builds. Enter the dev shell with [direnv](https://direnv.net/) (the committed `.envrc` handles it) or plain `nix develop`.
+Besides unit tests for each family, the suite cross-checks the engines against each other and against reference algorithms. For example, it compares Hopcroft's algorithm with table-filling minimization on random DFAs.
+
+The Nix flake builds with [Crane](https://github.com/ipetkov/crane) and pins the toolchain and graphics drivers.
+
+> [!WARNING]
+> This is a personal project, so there may still be bugs I don't know about. Issues are welcome.
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+MIT; see [LICENSE](LICENSE). The bundled fonts keep their own licenses (SIL OFL for Nunito and JetBrains Mono, the Bitstream Vera license for DejaVu Sans).
 
 ## Acknowledgments
 
-- Built with [Iced](https://github.com/iced-rs/iced) GUI framework
-- Inspired by various finite automata visualization tools like [JFLAP](https://www.jflap.org/) and [automatarium](https://github.com/automatarium/automatarium).
+- Built with [Iced](https://github.com/iced-rs/iced).
+- Inspired by [JFLAP](https://www.jflap.org/) and [automatarium](https://github.com/automatarium/automatarium).

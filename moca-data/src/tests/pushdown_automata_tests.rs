@@ -313,3 +313,56 @@ fn pushdown_remove_state_cache_test() {
     pda.add_transition(0, 2, "b;Z/ε".to_string());
     assert!(Machine::accepts(&pda, "b"));
 }
+
+/* A transition that pops nothing ("ε" pop) must fire whatever the stack
+ * holds, not only on an empty stack. */
+#[test]
+fn pda_epsilon_pop_fires_on_nonempty_stack_test() {
+    // Reads each 'a' pushing an A without popping: accepts a+ (stack Z A...).
+    let mut pda = PushdownAutomata::new("Z".to_string());
+    pda.add_n_states(2);
+    pda.make_initial(0);
+    pda.make_final(1);
+    pda.add_transition(0, 1, "a;ε/A".to_string());
+    pda.add_transition(1, 1, "a;ε/A".to_string());
+    assert!(pda.check_input(&mut "a".to_string()));
+    assert!(pda.check_input(&mut "aaa".to_string()));
+    assert!(!pda.check_input(&mut "".to_string()));
+}
+
+/* A label without ';' is malformed: storing it must not panic, the engine
+ * must ignore it and validate must report it. */
+#[test]
+fn pda_malformed_label_does_not_panic_test() {
+    use crate::state_machine::Machine;
+    let mut pda = PushdownAutomata::new("Z".to_string());
+    pda.add_n_states(2);
+    pda.make_initial(0);
+    pda.make_final(1);
+    pda.add_transition(0, 1, "a".to_string());
+    assert!(!pda.check_input(&mut "a".to_string()));
+    assert!(pda.validate().is_err());
+}
+
+/* Determinism follows the DPDA condition over every pair of transitions,
+ * whatever the insertion order, and recovers after a removal. */
+#[test]
+fn pda_determinism_tracks_every_pair_test() {
+    let mut pda = PushdownAutomata::new("Z".to_string());
+    pda.add_n_states(3);
+    pda.make_initial(0);
+    // Same read, different pops: no conflict.
+    pda.add_transition(0, 1, "a;A/ε".to_string());
+    pda.add_transition(0, 1, "a;B/ε".to_string());
+    assert!(pda.is_deterministic());
+    // Conflicts with the first transition, not with the last one added.
+    pda.add_transition(0, 2, "a;A/ε".to_string());
+    assert!(!pda.is_deterministic());
+    pda.remove_transition(0, 2, "a;A/ε");
+    assert!(pda.is_deterministic());
+    // ε-input only conflicts where the pops overlap.
+    pda.add_transition(0, 2, "ε;C/ε".to_string());
+    assert!(pda.is_deterministic());
+    pda.add_transition(0, 2, "ε;A/ε".to_string());
+    assert!(!pda.is_deterministic());
+}

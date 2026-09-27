@@ -124,6 +124,33 @@ impl FiniteAutomata {
         successors
     }
 
+    /* Recomputes the determinism flag and the alphabet from the live labels:
+     * nondeterministic when an ε/"" label exists or a state sends one label
+     * to two different targets. */
+    fn refresh_determinism(&mut self) {
+        let mut deterministic = true;
+        let mut alphabet: HashSet<String> = HashSet::new();
+        for state in self.states_by_id.values() {
+            let mut target_of: HashMap<&str, StateID> = HashMap::new();
+            for (target, labels) in state.iter_by_transition() {
+                for label in labels {
+                    if is_epsilon_label(label) {
+                        deterministic = false;
+                        continue;
+                    }
+                    alphabet.insert(label.clone());
+                    if let Some(previous) = target_of.insert(label.as_str(), *target) {
+                        if previous != *target {
+                            deterministic = false;
+                        }
+                    }
+                }
+            }
+        }
+        self.deterministic = deterministic;
+        self.string_transitions = alphabet;
+    }
+
     // Function to add a label to a state given by it's id.
     pub fn add_label(&mut self, state_id: StateID, label: BTreeSet<StateID>) {
         if let Some(state) = self.states_by_id.get_mut(&state_id) {
@@ -273,16 +300,17 @@ impl FiniteAutomata {
                 states_by_id.insert(id, state);
                 id += 1;
             }
-            id = 0;
-            for (_, transitions) in subsets_and_transitions {
-                if let Some(state) = states_by_id.get_mut(&id) {
-                    for (set, string) in transitions {
-                        if let Some(id) = id_by_subsets.get(&set) {
-                            state.add_transition(*id, string.to_string());
+            // Wire the transitions by looking every subset up, instead of
+            // relying on two walks of the map yielding the same order.
+            for (subset, transitions) in subsets_and_transitions {
+                let Some(&from) = id_by_subsets.get(&subset) else { continue };
+                for (set, string) in transitions {
+                    if let Some(&to) = id_by_subsets.get(&set) {
+                        if let Some(state) = states_by_id.get_mut(&from) {
+                            state.add_transition(to, string.to_string());
                         }
                     }
                 }
-                id += 1;
             }
             FiniteAutomata {
                 states_by_id,
@@ -409,8 +437,10 @@ impl FiniteAutomata {
             let mut out_of = out_of;
             into.sort();
             out_of.sort();
-            for p in &into {
-                for q in &out_of {
+            // Pairs through r itself are skipped: the loop is already folded
+            // in as R_rr*, and every edge touching r is dropped right after.
+            for p in into.iter().filter(|p| **p != r) {
+                for q in out_of.iter().filter(|q| **q != r) {
                     let head = edges.get(&(*p, r)).cloned().expect("p->r exists");
                     let tail = edges.get(&(r, *q)).cloned().expect("r->q exists");
                     let through = match &loop_star {
@@ -476,25 +506,44 @@ impl StateMachine for FiniteAutomata {
         if self.initial_state_id == Some(state_id) {
             self.initial_state_id = None;
         }
+        self.refresh_determinism();
     }
     
-    /* The implementation for finite automata checks if the automaton
-     * is deterministic or not. */
+    /* The implementation for finite automata keeps the determinism flag and
+     * the alphabet up to date incrementally: an ε/"" label, or a label that
+     * already leads elsewhere from the same state, makes it nondeterministic.
+     * Nothing changes when either endpoint is missing. */
     fn add_transition(&mut self, state_id1: StateID, state_id2: StateID, input: Input) {
-        if input == "ε" {
+        if !self.states_by_id.contains_key(&state_id2) {
+            return;
+        }
+        let Some(state) = self.states_by_id.get_mut(&state_id1) else {
+            return;
+        };
+        if is_epsilon_label(&input) {
+            state.add_transition(state_id2, input);
             self.deterministic = false;
+        } else {
+            self.string_transitions.replace(input.clone());
+            self.deterministic = state.add_transition(state_id2, input) && self.deterministic;
         }
-        match self.states_by_id.get_mut(&state_id2) {
-            Some(_) => {
-                if let Some(state) = self.states_by_id.get_mut(&state_id1) {
-                    if input != "ε" {
-                        self.string_transitions.replace(input.clone());
-                    }
-                    self.deterministic = state.add_transition(state_id2, input) && self.deterministic;
-                }
-            },
-            None => (),
+    }
+
+    /* Edits and removals can only be judged against the whole machine, so
+     * both recompute the flag and the alphabet (mirroring the parsed-cache
+     * refresh of the pushdown and Turing machines). */
+    fn modify_input(&mut self, state_id: StateID, state_transition_id: StateID, old_input: &str, new_input: Input) {
+        if let Some(state) = self.states_by_id.get_mut(&state_id) {
+            state.modify_input(state_transition_id, old_input, new_input);
         }
+        self.refresh_determinism();
+    }
+
+    fn remove_transition(&mut self, state_id: StateID, state_transition_id: StateID, input: &str) {
+        if let Some(state) = self.states_by_id.get_mut(&state_id) {
+            state.remove_transition(state_transition_id, input);
+        }
+        self.refresh_determinism();
     }
     
     fn make_initial(&mut self, state_id: StateID) {
@@ -518,15 +567,12 @@ impl StateMachine for FiniteAutomata {
         }
     }
 
-    /* Function to make a state final. */
-    // It has to do it in the particular module because of the mutability of the structure fields.
+    /* Function to make a state final; unknown ids are ignored, like in
+     * make_initial. */
     fn make_final(&mut self, state_id: StateID) {
-        match self.states_by_id.get_mut(&state_id) {
-            Some(state) => {
-                state.final_flag = true;
-                self.final_states.insert(state_id);
-            }
-            None => panic!("The states does not exist."),
+        if let Some(state) = self.states_by_id.get_mut(&state_id) {
+            state.final_flag = true;
+            self.final_states.insert(state_id);
         }
     }
 }
@@ -641,20 +687,24 @@ pub fn hopcroft_algorithm(automata: &FiniteAutomata) -> HashSet<BTreeSet<StateID
                 }
             }
 
-            // ...and split them all. The split block is replaced in the
-            // worklist by its smaller half (the other half can only produce
-            // splitters that the small one already produces).
+            // ...and split them all. A block still waiting in the worklist is
+            // replaced there by both halves (it has not acted as a splitter
+            // yet, so neither half is implied); a block already processed only
+            // needs its smaller half (the other half's splits follow from the
+            // block and the small half together).
             for (set_y, x_y_intersection, y_minus_x) in splits {
                 partition_p.remove(&set_y);
                 partition_p.insert(x_y_intersection.clone());
                 partition_p.insert(y_minus_x.clone());
-                partition_w.retain(|set| *set != set_y);
-                let smaller_half = if x_y_intersection.len() <= y_minus_x.len() {
-                    x_y_intersection
+                if let Some(position) = partition_w.iter().position(|set| *set == set_y) {
+                    partition_w.swap_remove(position);
+                    partition_w.push(x_y_intersection);
+                    partition_w.push(y_minus_x);
+                } else if x_y_intersection.len() <= y_minus_x.len() {
+                    partition_w.push(x_y_intersection);
                 } else {
-                    y_minus_x
-                };
-                partition_w.push(smaller_half);
+                    partition_w.push(y_minus_x);
+                }
             }
         }
     }
@@ -811,4 +861,9 @@ fn lambda_closure_subset(automata: &FiniteAutomata, subset: &BTreeSet<StateID>, 
         subset_result = subset_result.union(&automata.lambda_closure(*id, input_string)).cloned().collect();
     }
     subset_result
+}
+
+/* Both "" and "ε" label the empty move. */
+fn is_epsilon_label(label: &str) -> bool {
+    label.is_empty() || label == "ε"
 }

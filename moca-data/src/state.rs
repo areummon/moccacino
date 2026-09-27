@@ -41,10 +41,13 @@ impl State {
      * with the same input then the function returns true, and false 
      * otherwise. It checks in O(1) if a transition already exists. */
     pub fn add_transition(&mut self, state_id: StateID, input: Input) -> bool {
-        let mut deterministic_flag = true;
-        if self.input_transitions.contains(&input) {
-            deterministic_flag = false;
-        }
+        // Re-adding a label to the same target is a duplicate, not a second
+        // choice; only the same label towards another target is ambiguous.
+        let already_to_target = self
+            .transitions_by_id
+            .get(&state_id)
+            .is_some_and(|labels| labels.contains(&input));
+        let deterministic_flag = already_to_target || !self.input_transitions.contains(&input);
         self.input_transitions.replace(input.clone());
         self.transitions_by_id.entry(state_id).or_insert(HashSet::new()).replace(input);
         deterministic_flag
@@ -55,6 +58,7 @@ impl State {
         if let Some(transitions) = self.transitions_by_id.get_mut(&state_id) {
             transitions.remove(input);
         }
+        self.rebuild_input_transitions();
     }
 
     /* Function to modify an input transition, in the current implementation
@@ -66,12 +70,24 @@ impl State {
             transitions.remove(old_input);
             transitions.replace(new_input);
         }
+        self.rebuild_input_transitions();
     }
 
     /* Function to remove an entry in the transitions HashMap in case
      * a state was removed. */
     pub fn remove_state(&mut self, state_id: StateID) {
         self.transitions_by_id.remove(&state_id);
+        self.rebuild_input_transitions();
+    }
+
+    /* Keeps the set of labels in use in step with the transitions after a
+     * removal or an edit, so later ambiguity checks never see ghost labels. */
+    fn rebuild_input_transitions(&mut self) {
+        self.input_transitions = self
+            .transitions_by_id
+            .values()
+            .flat_map(|labels| labels.iter().cloned())
+            .collect();
     }
 
     /* Iterator for transitions_by_id hashmap. */

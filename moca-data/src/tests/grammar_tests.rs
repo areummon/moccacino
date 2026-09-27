@@ -775,3 +775,63 @@ fn grammar_display_reparses_equivalently_test() {
             .unwrap_or_else(|e| panic!("CNF rendering failed to parse: {} for\n{}", e, rendered));
     }
 }
+
+/* Non-generating variables must take the bodies that mention them down
+ * with them, instead of lingering there as if they were terminals. */
+#[test]
+fn grammar_non_generating_variable_is_not_a_terminal_test() {
+    let grammar = grammar::parse_grammar("S -> a B | a\nB -> b B").expect("valid grammar");
+    assert!(grammar.generate("a"));
+    assert!(!grammar.generate("aB"));
+    assert!(!grammar.generate("ab"));
+}
+
+/* A declared variable without any production derives nothing; CNF/CYK must
+ * not read it as a terminal. */
+#[test]
+fn grammar_bodiless_variable_is_not_a_terminal_test() {
+    let mut grammar = Grammar::new("S");
+    grammar.add_variable("B");
+    grammar.add_production("S", &["a", "B"]);
+    grammar.add_production("S", &["a"]);
+    assert!(grammar.generate("a"));
+    assert!(!grammar.generate("aB"));
+}
+
+/* "ε" tokens inside longer bodies are the empty word, not a terminal. */
+#[test]
+fn grammar_epsilon_token_inside_body_test() {
+    let grammar = grammar::parse_grammar("S -> a ε b").expect("valid grammar");
+    assert_eq!(grammar.productions(), vec![("S".to_string(), vec!["a".to_string(), "b".to_string()])]);
+    assert!(grammar.generate("ab"));
+}
+
+/* ε-transitions become unit/empty productions, never an "ε" terminal, and
+ * the grammar survives a text round-trip with the same language. */
+#[test]
+fn grammar_from_finite_automata_epsilon_test() {
+    let mut automata = crate::finite_automata::FiniteAutomata::new();
+    automata.add_n_states(3);
+    automata.make_initial(0);
+    automata.make_final(2);
+    automata.add_transition(0, 1, "a".to_string());
+    automata.add_transition(1, 2, "ε".to_string());
+    automata.add_transition(2, 2, "b".to_string());
+    let grammar = Grammar::from_finite_automata(&automata).expect("has an initial state");
+    assert!(!grammar.terminals().contains("ε"));
+    let reparsed = grammar::parse_grammar(&grammar.to_string()).expect("round-trips");
+    for word in ["", "a", "ab", "abb", "b", "ba", "aa"] {
+        let expected = automata.check_input(&mut word.to_string());
+        assert_eq!(grammar.generate(word), expected, "grammar on {:?}", word);
+        assert_eq!(reparsed.generate(word), expected, "reparsed grammar on {:?}", word);
+    }
+}
+
+/* A derivation whose form can only grow past the input length is pruned,
+ * so the answer comes well within a small step budget. */
+#[test]
+fn grammar_derivation_length_pruning_test() {
+    let grammar = grammar::parse_grammar("S -> S S | a").expect("valid grammar");
+    assert!(grammar.derive_leftmost("aaaa", 2_000).is_some());
+    assert!(grammar.derive_leftmost("aaab", 2_000).is_none());
+}

@@ -2,15 +2,16 @@
 use std::collections::HashSet;
 
 use iced::Task;
-use iced::widget::{button, column, container, row, text, text_input};
-use iced::{Element, Length};
+use iced::widget::{column, row};
+use iced::{Alignment, Element};
 
 use moca_data::state_machine::StateMachine;
 use moca_data::turing_machine::{Configuration, RunOutcome};
 
 use super::message::Message;
 use super::tab::{NdFrontier, TabMachine, TmRun};
-use crate::gui::theme;
+use super::widgets::{self, CellSize, Outcome};
+use crate::gui::theme::Family;
 
 const TAPE_CONTEXT: i64 = 12;
 /* Lane window rendered per branch in the nondeterministic view. */
@@ -201,190 +202,94 @@ impl super::app::App {
 
     pub(crate) fn create_tm_panel(&self) -> Element<'_, Message> {
         let tab = self.get_active_tab();
-
-        let mut panel = column![
-            text("Turing machine")
-                .size(14)
-                .color(theme::TEXT_DIM),
-            row![
-                text_input("Input word...", &tab.tm_input_text)
-                    .on_input(Message::TmInputChanged)
-                    .on_submit(Message::TmLoadInput)
-                    .width(220)
-                    .style(|_theme: &iced::Theme, status| theme::input(status)),
-                button(text("Load").size(14).color(theme::CREAM))
-                    .on_press(Message::TmLoadInput)
-                    .style(|_theme: &iced::Theme, status| theme::secondary_button(status))
-                    .padding([4, 10]),
-                button(text(if tab.tm_playing { "Pause" } else { "Play" }).size(14).color(if tab.tm_playing { theme::BG } else { theme::CREAM }))
-                    .on_press(Message::TmTogglePlay)
-                    .style(move |_theme: &iced::Theme, status| {
-                        if tab.tm_playing { theme::primary_button(status) } else { theme::secondary_button(status) }
-                    })
-                    .padding([4, 10]),
-                button(text("Step").size(14).color(theme::CREAM))
-                    .on_press(Message::TmStep)
-                    .style(|_theme: &iced::Theme, status| theme::secondary_button(status))
-                    .padding([4, 10]),
-                button(text("Reset").size(14).color(theme::CREAM))
-                    .on_press(Message::TmReset)
-                    .style(|_theme: &iced::Theme, status| theme::secondary_button(status))
-                    .padding([4, 10]),
-            ]
-            .spacing(6),
+        let (loaded, finished, playing) = tab.run_state();
+        let controls = row![
+            widgets::run_input(&tab.tm_input_text, Message::TmInputChanged, Message::TmLoadInput, loaded),
+            widgets::run_controls(
+                playing,
+                loaded,
+                finished,
+                widgets::RunMessages {
+                    play: Message::TmTogglePlay,
+                    step: Message::TmStep,
+                    reset: Message::TmReset,
+                },
+            ),
         ]
-        .spacing(8);
+        .spacing(10)
+        .align_y(Alignment::Center);
 
-        if !tab.machine.is_deterministic() {
+        let (status, body): (Element<'_, Message>, Element<'_, Message>) =
             if let Some(frontier) = &tab.tm_frontier {
-                panel = panel.push(self.create_nd_lane_view(frontier));
+                (
+                    row![
+                        widgets::outcome_chip(outcome(frontier.finished)),
+                        widgets::stat("level", frontier.level.to_string()),
+                        widgets::stat("branches", frontier.alive.len().to_string()),
+                    ]
+                    .spacing(12)
+                    .align_y(Alignment::Center)
+                    .into(),
+                    self.create_nd_lane_view(frontier),
+                )
+            } else if let Some(run) = &tab.tm_run {
+                // Tape strip with the head highlighted.
+                let (window, head_offset) = run.config.tape().snapshot(TAPE_CONTEXT);
+                (
+                    row![
+                        widgets::outcome_chip(outcome(run.finished)),
+                        widgets::stat("state", self.state_label(run.config.state_id())),
+                        widgets::stat("steps", run.steps.to_string()),
+                    ]
+                    .spacing(12)
+                    .align_y(Alignment::Center)
+                    .into(),
+                    column![
+                        widgets::caption("TAPE"),
+                        widgets::strip(widgets::tape(&window, head_offset, CellSize::Regular)),
+                    ]
+                    .spacing(6)
+                    .into(),
+                )
             } else {
-                panel = panel.push(
-                    text("Nondeterministic machine: type an input and press Load to explore the branching computation level by level.")
-                        .size(13)
-                        .color(theme::TEXT_DIM),
-                );
-            }
-        } else if let Some(run) = &tab.tm_run {
-            // Tape strip with the head highlighted.
-            let (window, head_offset) = run.config.tape().snapshot(TAPE_CONTEXT);
-            panel = panel.push(Self::tape_cells(&window, head_offset, 20.0, 16.0));
-
-            // Status line: current state (by label when available), steps and outcome.
-            let state_id = run.config.state_id() as usize;
-            let state_label = tab.states.iter()
-                .find(|node| node.id == state_id)
-                .map(|node| node.label.to_string())
-                .unwrap_or_else(|| format!("q{}", state_id));
-            let status_color = match run.finished {
-                Some(RunOutcome::Accepted) => theme::ACCEPT,
-                Some(RunOutcome::Rejected) => theme::REJECT,
-                _ => theme::TEXT_DIM,
+                (
+                    widgets::outcome_chip(Outcome::Idle),
+                    widgets::hint(if tab.insight.deterministic {
+                        "Type a word and press Load to watch the head move along the tape."
+                    } else {
+                        "Nondeterministic: Load a word to explore every branch, one level at a time."
+                    }),
+                )
             };
-            panel = panel.push(
-                row![
-                    text(format!("State: {}", state_label)).size(14).color(status_color),
-                    text(format!("Steps: {}", run.steps)).size(14).color(theme::TEXT_DIM),
-                    text(match run.finished {
-                        Some(RunOutcome::Accepted) => "Accepted".to_string(),
-                        Some(RunOutcome::Rejected) => "Rejected".to_string(),
-                        _ => "Running...".to_string(),
-                    }).size(14).color(status_color),
-                ]
-                .spacing(18)
-            );
-        } else {
-            panel = panel.push(
-                text("Type an input and press Load to start stepping through the computation.")
-                    .size(13)
-                    .color(theme::TEXT_FAINT),
-            );
-        }
 
-        container(panel)
-            .style(|_theme: &iced::Theme| theme::panel_box())
-            .padding([8, 12])
-            .into()
-    }
-
-    /* One tape window as a row of fixed-width monospace cells. Shared by the
-     * deterministic tape strip and the nondeterministic lane view. */
-    fn tape_cells(window: &str, head_offset: usize, cell_width: f32, font_size: f32) -> iced::widget::Row<'static, Message> {
-        let chars: Vec<(usize, char)> = window.chars().enumerate().collect();
-        let cells = chars.into_iter().map(|(index, c)| {
-            let is_head = index == head_offset;
-            container(
-                text(c.to_string())
-                    .font(iced::Font::MONOSPACE)
-                    .size(font_size)
-                    .color(if is_head { theme::CREAM } else { theme::TEXT_DIM })
-            )
-            .width(Length::Fixed(cell_width))
-            .center_x(Length::Fixed(cell_width))
-            .style(move |_theme: &iced::Theme| {
-                container::Style {
-                    background: Some(
-                        if is_head { theme::TEAL } else { theme::RAISED }.into()
-                    ),
-                    border: iced::Border {
-                        color: theme::BORDER,
-                        width: 1.0,
-                        radius: 2.0.into(),
-                    },
-                    ..Default::default()
-                }
-            })
-            .into()
-        });
-        row(cells).spacing(1)
+        widgets::run_dock(Family::Turing, Family::Turing.title(), tab.dock_collapsed, self.dock_is_compact(), controls.into(), status, body)
     }
 
     /* Level-by-level lane view for nondeterministic machines. */
     fn create_nd_lane_view(&self, frontier: &NdFrontier) -> Element<'_, Message> {
-        let tab = self.get_active_tab();
-        let mut view = column![
-            text(format!(
-                "Level {} · {} branches alive",
-                frontier.level,
-                frontier.alive.len()
-            ))
-            .size(14)
-            .color(theme::CREAM),
-        ]
-        .spacing(6);
-
-        let state_label_of = |state_id: u64| -> String {
-            tab.states
-                .iter()
-                .find(|node| node.id == state_id as usize)
-                .map(|node| node.label.to_string())
-                .unwrap_or_else(|| format!("q{}", state_id))
-        };
-
-        for (index, config) in frontier.alive.iter().take(ND_LANES_VISIBLE).enumerate() {
-            let (window, head_offset) = config.tape().snapshot(TAPE_CONTEXT);
-            view = view.push(
-                row![
-                    text(format!("─ {:>2}", index + 1))
-                        .font(iced::Font::MONOSPACE)
-                        .size(12)
-                        .color(theme::TEXT_FAINT),
-                    text(state_label_of(config.state_id()))
-                        .font(iced::Font::MONOSPACE)
-                        .size(12)
-                        .color(theme::GREEN),
-                    Self::tape_cells(&window, head_offset, 14.0, 12.0),
-                ]
-                .spacing(8)
-                .align_y(iced::Alignment::Center),
-            );
-        }
-        if frontier.alive.len() > ND_LANES_VISIBLE {
-            view = view.push(
-                text(format!("… {} more branches", frontier.alive.len() - ND_LANES_VISIBLE))
-                    .size(12)
-                    .color(theme::TEXT_FAINT),
-            );
-        }
-
-        let status_color = match frontier.finished {
-            Some(RunOutcome::Accepted) => theme::ACCEPT,
-            Some(RunOutcome::Rejected) | Some(RunOutcome::MaxStepsExceeded) => theme::REJECT,
-            None => theme::TEXT_DIM,
-        };
-        view = view.push(
-            text(match frontier.finished {
-                Some(RunOutcome::Accepted) => "Accepted".to_string(),
-                Some(RunOutcome::Rejected) | Some(RunOutcome::MaxStepsExceeded) => "Rejected".to_string(),
-                None => "Running...".to_string(),
+        let rows = frontier
+            .alive
+            .iter()
+            .take(ND_LANES_VISIBLE)
+            .enumerate()
+            .map(|(index, config)| {
+                let (window, head_offset) = config.tape().snapshot(TAPE_CONTEXT);
+                widgets::lane(
+                    index,
+                    self.state_label(config.state_id()),
+                    widgets::tape(&window, head_offset, CellSize::Compact),
+                )
             })
-            .size(14)
-            .color(status_color),
-        );
+            .collect();
+        widgets::lanes(rows, frontier.alive.len().saturating_sub(ND_LANES_VISIBLE))
+    }
+}
 
-        container(view)
-            .padding([6, 10])
-            .style(|_theme: &iced::Theme| theme::inset_box())
-            .into()
+/* Turing outcomes collapse to the dock's accepted/rejected/running view. */
+fn outcome(finished: Option<RunOutcome>) -> Outcome {
+    match finished {
+        Some(RunOutcome::Accepted) => Outcome::Accepted,
+        Some(RunOutcome::Rejected) | Some(RunOutcome::MaxStepsExceeded) => Outcome::Rejected,
+        None => Outcome::Running,
     }
 }

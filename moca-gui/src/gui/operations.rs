@@ -5,27 +5,21 @@ use crate::tikz_export;
 
 use moca_data::state_machine::MachineKind;
 
+use super::dialogs::{CHECK_INPUT, REGEX_INPUT};
 use super::message::Message;
 use super::tab::TabMachine;
+use crate::gui::theme::Tone;
 
 impl super::app::App {
-    pub(crate) fn toggle_operations_menu(&mut self) -> Task<Message> {
-        let open = self.get_active_tab().operations_menu_open;
-        self.machine_menu_open = false;
-        self.file_menu_open = false;
-        self.get_active_tab_mut().operations_menu_open = !open;
-        Task::none()
-    }
-
     pub(crate) fn open_check_input(&mut self) -> Task<Message> {
-        self.get_active_tab_mut().operations_menu_open = false;
+        self.open_menu = None;
         self.get_active_tab_mut().check_input_dialog_open = true;
         self.get_active_tab_mut().check_input_text = String::new();
-        Task::none()
+        iced::widget::text_input::focus(CHECK_INPUT)
     }
 
     pub(crate) fn dfa_to_nfa(&mut self) -> Task<Message> {
-        self.get_active_tab_mut().operations_menu_open = false;
+        self.open_menu = None;
 
         if self.get_active_tab().machine.is_grammar() {
             return self.reject_operation_for_grammar("convert");
@@ -53,7 +47,7 @@ impl super::app::App {
     }
 
     pub(crate) fn minimize(&mut self) -> Task<Message> {
-        self.get_active_tab_mut().operations_menu_open = false;
+        self.open_menu = None;
 
         if self.get_active_tab().machine.is_grammar() {
             return self.reject_operation_for_grammar("minimize");
@@ -97,9 +91,13 @@ impl super::app::App {
         // Works for every machine family (Turing machines use their default
         // step budget and dispatch on the determinism flag).
         let result = self.get_active_tab().machine.accepts(&input);
-        self.get_active_tab_mut().check_input_result = Some(result);
-        self.get_active_tab_mut().check_result_popup_open = true;
         self.get_active_tab_mut().check_input_dialog_open = false;
+        let shown = if input.is_empty() { "ε (empty word)".to_string() } else { format!("'{}'", input) };
+        if result {
+            self.toast(Tone::Success, format!("{} is accepted", shown), None);
+        } else {
+            self.toast(Tone::Danger, format!("{} is rejected", shown), None);
+        }
         Task::none()
     }
 
@@ -109,10 +107,10 @@ impl super::app::App {
     }
 
     pub(crate) fn open_regex_dialog(&mut self) -> Task<Message> {
-        self.get_active_tab_mut().operations_menu_open = false;
+        self.open_menu = None;
         self.get_active_tab_mut().regex_dialog_open = true;
         self.get_active_tab_mut().regex_text.clear();
-        Task::none()
+        iced::widget::text_input::focus(REGEX_INPUT)
     }
 
     pub(crate) fn regex_text_changed(&mut self, text: String) -> Task<Message> {
@@ -150,12 +148,8 @@ impl super::app::App {
         self.open_machine_in_new_tab(tab_name, TabMachine::Finite(machine))
     }
 
-    pub(crate) fn close_check_result_popup(&mut self) -> Task<Message> {
-        self.get_active_tab_mut().check_result_popup_open = false;
-        Task::none()
-    }
-
     pub(crate) fn open_latex_export(&mut self) -> Task<Message> {
+        self.open_menu = None;
         // Grammar tabs export their productions as a LaTeX listing
         // instead of a TikZ drawing; the editor text is parsed fresh so
         // unsaved edits are reflected, mirroring the other grammar ops.
@@ -217,7 +211,7 @@ impl super::app::App {
     /* Converts the tab's finite automaton into an equivalent regular
      * expression (state elimination) and shows it in an export dialog. */
     pub(crate) fn open_regex_export(&mut self) -> Task<Message> {
-        self.get_active_tab_mut().operations_menu_open = false;
+        self.open_menu = None;
 
         if !matches!(
             self.get_active_tab().machine,
@@ -247,15 +241,17 @@ impl super::app::App {
     }
 
     pub(crate) fn copy_regex_export(&mut self) -> Task<Message> {
-        if let Some(code) = &self.regex_export_code {
-            return iced::clipboard::write(code.clone()).map(|_msg: ()| Message::CopyRegexExport);
+        if let Some(code) = self.regex_export_code.clone() {
+            self.toast(Tone::Success, "Regular expression copied", None);
+            return iced::clipboard::write(code);
         }
         Task::none()
     }
 
     pub(crate) fn copy_latex_export(&mut self) -> Task<Message> {
-        if let Some(code) = &self.latex_export_code {
-            return iced::clipboard::write(code.clone()).map(|_msg: ()| Message::CopyLatexExport);
+        if let Some(code) = self.latex_export_code.clone() {
+            self.toast(Tone::Success, "LaTeX copied to the clipboard", None);
+            return iced::clipboard::write(code);
         }
         Task::none()
     }

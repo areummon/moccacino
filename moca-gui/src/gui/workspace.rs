@@ -1,12 +1,20 @@
+use std::time::{Duration, Instant};
+
 use iced::Task;
 
-use super::message::Message;
+use super::app::CloseRequest;
+use super::message::{Menu, Message};
 use super::tab::{Tab, TabMachine};
+use crate::gui::theme::Family;
+
+/* Two clicks on the same tab within this window start a rename. */
+const TAB_DOUBLE_CLICK: Duration = Duration::from_millis(350);
+pub(crate) const TAB_RENAME_INPUT: &str = "tab-rename";
 
 impl super::app::App {
     /* Opens a generated machine in a fresh named tab. Every transformation
      * that produces a new machine funnels through here, so the layered
-     * layout and scroll reset are applied structurally. */
+     * layout and the fit-to-view are applied structurally. */
     pub(crate) fn open_machine_in_new_tab(
         &mut self,
         name: String,
@@ -17,103 +25,181 @@ impl super::app::App {
         self.tabs.push(Box::new(new_tab));
         self.active_tab = self.tabs.len() - 1;
         self.get_active_tab_mut().load_machine_to_gui();
-        Task::none()
+        self.fit_view()
     }
 
     /* Startup picker choice: swap the placeholder tab for the chosen
      * family and unlock the main GUI. */
     pub(crate) fn choose_startup_module(&mut self, index: usize) -> Task<Message> {
-        self.tabs[0] = match index {
-            1 => Box::new(Tab::new_turing()),
-            2 => Box::new(Tab::new_pda()),
-            3 => Box::new(Tab::new_grammar()),
-            _ => Box::new(Tab::new()),
-        };
+        let family = Family::ALL.get(index).copied().unwrap_or(Family::Finite);
+        self.tabs[0] = Box::new(Tab::new_of(family));
         self.active_tab = 0;
         self.startup_picker_open = false;
         Task::none()
     }
 
-    /* Arrow-key navigation of the startup picker, wrapping at both ends. */
+    /* Arrow-key navigation of the 2×2 startup grid, wrapping around. */
     pub(crate) fn move_startup_selection(&mut self, delta: i32) -> Task<Message> {
-        const OPTION_COUNT: i32 = 4;
-        let next = (self.startup_selected as i32 + delta).rem_euclid(OPTION_COUNT);
+        let count = Family::ALL.len() as i32;
+        let next = (self.startup_selected as i32 + delta).rem_euclid(count);
         self.startup_selected = next as usize;
         Task::none()
     }
 
-    pub(crate) fn add_tab(&mut self) -> Task<Message> {
-        self.tabs.push(Box::new(Tab::new()));
+    pub(crate) fn new_tab(&mut self, family: Family) -> Task<Message> {
+        self.open_menu = None;
+        self.commit_pending_rename();
+        self.tabs.push(Box::new(Tab::new_of(family)));
         self.active_tab = self.tabs.len() - 1;
         Task::none()
     }
 
-    pub(crate) fn add_turing_tab(&mut self) -> Task<Message> {
-        self.tabs.push(Box::new(Tab::new_turing()));
-        self.active_tab = self.tabs.len() - 1;
-        Task::none()
+    /* Window close button or Quit: asks first when any tab holds unsaved
+     * work, exits right away otherwise. */
+    pub(crate) fn request_app_close(&mut self) -> Task<Message> {
+        self.open_menu = None;
+        if self.tabs.iter().any(|tab| tab.insight.unsaved) {
+            self.pending_close = Some(CloseRequest::App);
+            Task::none()
+        } else {
+            iced::exit()
+        }
     }
 
-    pub(crate) fn add_pda_tab(&mut self) -> Task<Message> {
-        self.tabs.push(Box::new(Tab::new_pda()));
-        self.active_tab = self.tabs.len() - 1;
-        Task::none()
+    /* Tab close button or Ctrl+W: asks first when the tab has unsaved work
+     * (the last remaining tab is never closed, so it never asks). */
+    pub(crate) fn request_tab_close(&mut self, index: usize) -> Task<Message> {
+        let unsaved = self.tabs.get(index).is_some_and(|tab| tab.insight.unsaved);
+        if unsaved && self.tabs.len() > 1 {
+            self.pending_close = Some(CloseRequest::Tab(index));
+            Task::none()
+        } else {
+            self.remove_tab(index)
+        }
+    }
+
+    /* "Close without saving": carry out the pending close. */
+    pub(crate) fn confirm_close_discard(&mut self) -> Task<Message> {
+        match self.pending_close.take() {
+            Some(CloseRequest::App) => iced::exit(),
+            Some(CloseRequest::Tab(index)) => self.remove_tab(index),
+            None => Task::none(),
+        }
+    }
+
+    /* "Save…": cancel the close and open the save dialog for the tab in
+     * question (the first unsaved one when closing the app). */
+    pub(crate) fn confirm_close_save(&mut self) -> Task<Message> {
+        let target = match self.pending_close.take() {
+            Some(CloseRequest::Tab(index)) => Some(index),
+            Some(CloseRequest::App) => self.tabs.iter().position(|tab| tab.insight.unsaved),
+            None => None,
+        };
+        match target {
+            Some(index) if index < self.tabs.len() => {
+                self.active_tab = index;
+                self.open_save_dialog()
+            }
+            _ => Task::none(),
+        }
     }
 
     pub(crate) fn remove_tab(&mut self, index: usize) -> Task<Message> {
-        if self.tabs.len() > 1 {
+        if self.tabs.len() > 1 && index < self.tabs.len() {
+            self.renaming_tab = None;
             self.tabs.remove(index);
-            if self.active_tab >= self.tabs.len() {
-                self.active_tab = self.tabs.len() - 1;
+            if self.active_tab > index || self.active_tab >= self.tabs.len() {
+                self.active_tab = self.active_tab.saturating_sub(1).min(self.tabs.len() - 1);
             }
         }
         Task::none()
     }
 
+    /* Clicking a tab activates it; clicking the active tab again quickly
+     * starts an inline rename. */
     pub(crate) fn switch_tab(&mut self, index: usize) -> Task<Message> {
-        if index < self.tabs.len() {
-            self.active_tab = index;
+        if index >= self.tabs.len() {
+            return Task::none();
         }
+        self.open_menu = None;
+        if self.renaming_tab == Some(index) {
+            return Task::none();
+        }
+        self.commit_pending_rename();
+        let now = Instant::now();
+        let double = matches!(
+            self.last_tab_click,
+            Some((last, at)) if last == index && now.duration_since(at) < TAB_DOUBLE_CLICK
+        );
+        self.active_tab = index;
+        if double {
+            self.last_tab_click = None;
+            self.renaming_tab = Some(index);
+            self.tab_rename_text = self.tabs[index].name.clone();
+            return iced::widget::text_input::focus(TAB_RENAME_INPUT);
+        }
+        self.last_tab_click = Some((index, now));
         Task::none()
     }
 
-    pub(crate) fn toggle_machine_menu(&mut self) -> Task<Message> {
-        self.machine_menu_open = !self.machine_menu_open;
-        if self.machine_menu_open {
-            self.get_active_tab_mut().operations_menu_open = false;
-            self.file_menu_open = false;
-        }
+    /* Cycles the active tab by `delta`, wrapping around. */
+    pub(crate) fn cycle_tab(&mut self, delta: i32) -> Task<Message> {
+        self.commit_pending_rename();
+        let count = self.tabs.len() as i32;
+        self.active_tab = (self.active_tab as i32 + delta).rem_euclid(count) as usize;
         Task::none()
     }
 
-    pub(crate) fn toggle_file_menu(&mut self) -> Task<Message> {
-        self.file_menu_open = !self.file_menu_open;
-        if self.file_menu_open {
-            self.machine_menu_open = false;
-            self.get_active_tab_mut().operations_menu_open = false;
+    pub(crate) fn commit_tab_rename(&mut self) -> Task<Message> {
+        self.commit_pending_rename();
+        Task::none()
+    }
+
+    fn commit_pending_rename(&mut self) {
+        if let Some(index) = self.renaming_tab.take() {
+            let name = self.tab_rename_text.trim();
+            if !name.is_empty() {
+                if let Some(tab) = self.tabs.get_mut(index) {
+                    tab.name = name.to_string();
+                }
+            }
         }
+    }
+
+    pub(crate) fn cancel_tab_rename(&mut self) {
+        self.renaming_tab = None;
+    }
+
+    pub(crate) fn toggle_menu(&mut self, menu: Menu) -> Task<Message> {
+        self.open_menu = if self.open_menu == Some(menu) { None } else { Some(menu) };
         Task::none()
     }
 
     /* Click-away closes whichever dropdown is open. */
     pub(crate) fn close_menus(&mut self) -> Task<Message> {
-        self.machine_menu_open = false;
-        self.file_menu_open = false;
-        self.get_active_tab_mut().operations_menu_open = false;
+        self.open_menu = None;
         Task::none()
     }
 
-    /* Backdrop click on a modal dialog: dismiss the topmost open popup
-     * with its own cancel/close semantics. The order mirrors the stack
-     * layering in `view` (later layers sit on top). */
+    /* Backdrop click or Esc on a modal: dismiss the topmost open popup with
+     * its own cancel/close semantics. The order mirrors the layering in
+     * `App::overlays` (later layers sit on top, so they go first here). */
     pub(crate) fn dismiss_modal(&mut self) -> Task<Message> {
+        if self.error_message.is_some() {
+            return self.close_error();
+        }
+        if self.pending_close.is_some() {
+            self.pending_close = None;
+            return Task::none();
+        }
+        if self.shortcuts_open {
+            self.shortcuts_open = false;
+            return Task::none();
+        }
         if self.get_active_tab().editing_transition_dialog_open {
             return self.cancel_edit_transition_labels();
         }
-        if self.get_active_tab().pending_transition_dialog_open
-            || self.get_active_tab().editing_state.is_some()
-            || self.get_active_tab().editing_transition.is_some()
-        {
+        if self.get_active_tab().pending_transition_dialog_open {
             return self.cancel_editing();
         }
         if self.regex_export_dialog_open {
@@ -122,23 +208,20 @@ impl super::app::App {
         if self.latex_export_dialog_open {
             return self.close_latex_export();
         }
-        if self.error_message.is_some() {
-            return self.close_error();
-        }
         if self.save_dialog_open {
             return self.cancel_save_dialog();
         }
         if self.load_dialog_open {
             return self.cancel_load_dialog();
         }
-        if self.get_active_tab().check_result_popup_open {
-            return self.close_check_result_popup();
-        }
         if self.get_active_tab().regex_dialog_open {
             return self.cancel_regex();
         }
         if self.get_active_tab().check_input_dialog_open {
             return self.cancel_check_input();
+        }
+        if self.get_active_tab().editing_state.is_some() || self.get_active_tab().editing_transition.is_some() {
+            return self.cancel_editing();
         }
         Task::none()
     }

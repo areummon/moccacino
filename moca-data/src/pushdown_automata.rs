@@ -1,4 +1,3 @@
-use core::panic;
 use std::collections::{HashMap, HashSet, BTreeSet};
 use crate::state::{Input, State, StateID};
 use crate::state_machine::{Machine, MachineKind, StateMachine};
@@ -30,7 +29,7 @@ pub struct PushdownAutomata {
 /* One well-formed transition, decomposed once. The step-time checks that
  * depend on the configuration (stack-top match, input prefix, stack-depth
  * bound) stay in `successors`. */
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 struct PdaParsedOp {
     /* The label was exactly "ε": fires on every configuration, leaves the
      * input and stack untouched, and is exempt from the depth bound. */
@@ -88,12 +87,27 @@ impl PushdownAutomata {
 
     /* Recomputes the parsed table entry of one source state from its live
      * labels; the single funnel through which every transition mutation
-     * refreshes the cache. */
+     * refreshes the cache. It also refreshes the state's rows of the
+     * string-transitions table and the determinism flag, so all three stay
+     * consistent after additions, edits and removals alike. */
     fn rebuild_parsed_state(&mut self, state_id: StateID) {
+        self.string_transitions.retain(|(from, _), _| *from != state_id);
         let Some(state) = self.states_by_id.get(&state_id) else {
             self.parsed.remove(&state_id);
+            self.refresh_determinism();
             return;
         };
+        for (target, labels) in state.iter_by_transition() {
+            for label in labels {
+                let spelled = if label == "ε" { "ε;ε/ε" } else { label.as_str() };
+                if let Some((read, rest)) = spelled.split_once(';') {
+                    if !rest.contains(';') {
+                        self.string_transitions
+                            .insert((state_id, read.to_string()), (*target, rest.to_string()));
+                    }
+                }
+            }
+        }
         let mut list: Vec<(StateID, PdaParsedOp)> = Vec::new();
         for (target, labels) in state.iter_by_transition() {
             for string in labels {
@@ -148,7 +162,7 @@ impl PushdownAutomata {
                     PdaParsedOp {
                         is_bare_epsilon: false,
                         read: string_transitions[0].to_string(),
-                        pops: stack_transition[0] != "ε",
+                        pops: !is_epsilon(stack_transition[0]),
                         pop: stack_transition[0].to_string(),
                         push_entries,
                     },
@@ -156,6 +170,19 @@ impl PushdownAutomata {
             }
         }
         self.parsed.insert(state_id, list);
+        self.refresh_determinism();
+    }
+
+    /* Deterministic when no state has two distinct transitions that could
+     * fire on the same configuration: reads overlap (equal, or either reads
+     * nothing) and pops overlap (equal, or either pops nothing). A bare "ε"
+     * transition overlaps everything. This is the standard DPDA condition. */
+    fn refresh_determinism(&mut self) {
+        self.deterministic = self.parsed.values().all(|ops| {
+            ops.iter().enumerate().all(|(index, first)| {
+                ops[index + 1..].iter().all(|second| !ops_conflict(first, second))
+            })
+        });
     }
 
     // Getter for the string transitions of the automata,
@@ -323,12 +350,10 @@ impl PushdownAutomata {
                 });
                 continue;
             }
-            // The transition is only valid if the symbol to pop is
-            // at the top of the stack ("ε" acts as a wildcard).
-            match current_stack.last() {
-                Some(top) if *top == op.pop => (),
-                None if op.pop == "ε" => (),
-                _ => continue,
+            // A popping transition needs its symbol on top of the stack; a
+            // non-popping one ("ε" pop) fires whatever the stack holds.
+            if op.pops && current_stack.last() != Some(&op.pop) {
+                continue;
             }
             let mut next_stack_len = current_stack.len();
             if op.pops {
@@ -340,7 +365,7 @@ impl PushdownAutomata {
             }
             // Applies the pop and the precomputed push sequence, exactly
             // what `stack_transition` performs for this label.
-            let mut apply_stack = |stack: &mut Vec<String>| {
+            let apply_stack = |stack: &mut Vec<String>| {
                 if op.pops {
                     stack.pop();
                 }
@@ -348,7 +373,7 @@ impl PushdownAutomata {
                     stack.push(entry.clone());
                 }
             };
-            if op.read == "ε" || op.read.is_empty() {
+            if is_epsilon(&op.read) {
                 let mut branch_stack = current_stack.clone();
                 apply_stack(&mut branch_stack);
                 successors.push(PdaConfiguration {
@@ -374,32 +399,6 @@ impl PushdownAutomata {
         successors
     }
 
-    /* Auxiliar function to modify the stack given a stack transition:
-     * it pops the symbol at the top of the stack and pushes the new symbols,
-     * one by one in reverse order, so that the leftmost symbol ends on top.
-     * Popping or pushing "ε" means doing nothing.
-     * A push side containing commas segments into atomic stack entries
-     * (e.g. "a,S,b" pushes the single entries b, S, a so that a ends on
-     * top); comma-less pushes keep the legacy per-character decomposition
-     * (e.g. "AZ" pushes Z then A). */
-    fn stack_transition(&self, pop_symbol: String, push_symbols: String, stack: &mut Vec<String>) {
-        if pop_symbol != "ε" {
-            stack.pop();
-        }
-        if push_symbols != "ε" && !push_symbols.is_empty() {
-            if push_symbols.contains(',') {
-                for part in push_symbols.split(',').rev() {
-                    if !part.is_empty() && part != "ε" {
-                        stack.push(part.to_string());
-                    }
-                }
-            } else {
-                for symbol in push_symbols.chars().rev() {
-                    stack.push(symbol.to_string());
-                }
-            }
-        }
-    }
 }
 
 impl StateMachine for PushdownAutomata {
@@ -423,57 +422,19 @@ impl StateMachine for PushdownAutomata {
         &self.initial_state_id
     }
 
-    /* The implementation for finite automaton checks if the automaton
-     * is deterministic or not. Two transitions of a state conflict when
-     * they could both fire on the same configuration: identical input reads
-     * with overlapping pop requirements (equal pops, or either being the
-     * "ε" wildcard) but different targets or pushes, or an ε-input
-     * transition coexisting with any other transition of the state.
-     * Identical duplicates do not flip the flag. */
+    /* Stores the label and refreshes the parsed table, the string-transitions
+     * rows and the determinism flag through `rebuild_parsed_state`. Malformed
+     * labels (e.g. no ';') are kept on the state so `validate` can report
+     * them, but never reach the engine. Nothing changes when either endpoint
+     * is missing. */
     fn add_transition(&mut self, state_id1: StateID, state_id2: StateID, input: Input) {
-        let mut input_clone = input.clone();
-        if input == "ε" {
-            // This is for ease to use
-            input_clone = "ε;ε".to_string();
+        if !self.states_by_id.contains_key(&state_id2) {
+            return;
         }
-        let transition: Vec<_> = input_clone.split(';').collect();
-        if transition.len() == 2 {
-            let read = transition[0];
-            // ε-input transitions can fire alongside every other transition
-            // of the state, in both addition orders.
-            if read == "ε" {
-                if self.string_transitions.keys().any(|(from, _)| *from == state_id1) {
-                    self.deterministic = false;
-                }
-            } else if self.string_transitions.contains_key(&(state_id1, "ε".to_string())) {
-                self.deterministic = false;
-            }
-            if let Some((stored_target, stored_half)) =
-                self.string_transitions.get(&(state_id1, read.to_string()))
-            {
-                let new_halves: Vec<&str> = transition[1].split('/').collect();
-                let stored_halves: Vec<&str> = stored_half.split('/').collect();
-                let conflicting = if new_halves.len() == 2 && stored_halves.len() == 2 {
-                    let pops_overlap = stored_halves[0] == new_halves[0]
-                        || stored_halves[0] == "ε"
-                        || new_halves[0] == "ε";
-                    pops_overlap
-                        && (stored_target != &state_id2 || stored_halves[1] != new_halves[1])
-                } else {
-                    stored_half == transition[1] && stored_target != &state_id2
-                };
-                if conflicting {
-                    self.deterministic = false;
-                }
-            }
-        }
-        match self.states_by_id.get_mut(&state_id1) {
-            Some(state) => {
-                    state.add_transition(state_id2, input);
-                    self.string_transitions.insert((state_id1, transition[0].to_string()), (state_id2, transition[1].to_string()));
-            },
-            None => (),
-        }
+        let Some(state) = self.states_by_id.get_mut(&state_id1) else {
+            return;
+        };
+        state.add_transition(state_id2, input);
         self.rebuild_parsed_state(state_id1);
     }
 
@@ -527,15 +488,12 @@ impl StateMachine for PushdownAutomata {
         }
     }
 
-    /* Function to make a state final. */
-    // It has to do it in the particular module because of the mutability of the structure fields.
+    /* Function to make a state final; unknown ids are ignored, like in
+     * make_initial. */
     fn make_final(&mut self, state_id: StateID) {
-        match self.states_by_id.get_mut(&state_id) {
-            Some(state) => {
-                state.final_flag = true;
-                self.final_states.insert(state_id);
-            }
-            None => panic!("The states does not exist."),
+        if let Some(state) = self.states_by_id.get_mut(&state_id) {
+            state.final_flag = true;
+            self.final_states.insert(state_id);
         }
     }
 
@@ -556,6 +514,7 @@ impl StateMachine for PushdownAutomata {
         for list in self.parsed.values_mut() {
             list.retain(|(target, _)| *target != state_id);
         }
+        self.refresh_determinism();
     }
 }
 
@@ -620,4 +579,25 @@ impl Machine for PushdownAutomata {
         }
         Ok(())
     }
+}
+
+/* "" and "ε" both mean "nothing" for the input read and the pop. */
+fn is_epsilon(symbol: &str) -> bool {
+    symbol.is_empty() || symbol == "ε"
+}
+
+/* Whether two transitions of one state could both fire on some
+ * configuration (identical transitions never conflict). */
+fn ops_conflict(first: &(StateID, PdaParsedOp), second: &(StateID, PdaParsedOp)) -> bool {
+    if first == second {
+        return false;
+    }
+    let (_, a) = first;
+    let (_, b) = second;
+    if a.is_bare_epsilon || b.is_bare_epsilon {
+        return true;
+    }
+    let reads_overlap = a.read == b.read || is_epsilon(&a.read) || is_epsilon(&b.read);
+    let pops_overlap = !a.pops || !b.pops || a.pop == b.pop;
+    reads_overlap && pops_overlap
 }

@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use indexmap::IndexSet;
 
+use crate::gui::theme::Family;
 use crate::state_machine;
 
 use moca_data::finite_automata::{FiniteAutomata, FiniteConfiguration};
@@ -128,6 +129,15 @@ impl TabMachine {
 
     pub(crate) fn is_grammar(&self) -> bool {
         matches!(self, TabMachine::Grammar(_))
+    }
+
+    pub(crate) fn family(&self) -> Family {
+        match self {
+            TabMachine::Finite(_) => Family::Finite,
+            TabMachine::Pushdown(_) => Family::Pushdown,
+            TabMachine::Turing(_) => Family::Turing,
+            TabMachine::Grammar(_) => Family::Grammar,
+        }
     }
 
     // ---- Structural API (StateMachine trait; grammar variant ignores it) ----
@@ -271,6 +281,19 @@ impl TabMachine {
     }
 }
 
+/* Facts the status bar shows about a tab, recomputed after edits that can
+ * change the machine (never per frame, never on plain drags or scrolls). */
+#[derive(Debug, Clone, Default)]
+pub(crate) struct TabInsight {
+    pub(crate) deterministic: bool,
+    /* Why the machine cannot run yet, if anything. */
+    pub(crate) problem: Option<String>,
+    pub(crate) production_count: usize,
+    /* The content differs from what was last saved or loaded (or, for a
+     * tab that was never saved, it is not empty). */
+    pub(crate) unsaved: bool,
+}
+
 #[derive(Default)]
 pub(crate) struct Tab {
     pub(crate) state_machine: state_machine::State,
@@ -283,11 +306,19 @@ pub(crate) struct Tab {
     pub(crate) editing_state: Option<usize>,
     pub(crate) editing_transition: Option<usize>,
     pub(crate) edit_text: String,
-    pub(crate) operations_menu_open: bool,
     pub(crate) check_input_dialog_open: bool,
     pub(crate) check_input_text: String,
-    pub(crate) check_result_popup_open: bool,
-    pub(crate) check_input_result: Option<bool>,
+    // Run dock collapsed to its header row.
+    pub(crate) dock_collapsed: bool,
+    // Cached status-bar facts, refreshed after structural edits.
+    pub(crate) insight: TabInsight,
+    // States the loaded run occupies, mirrored after every update so the
+    // canvas can glow them (and redraw only when they change).
+    pub(crate) run_highlight: HashSet<usize>,
+    // Fingerprint of the content as last saved or loaded; None for tabs
+    // that never touched a file (generated results), which count as
+    // unsaved as soon as they hold anything.
+    pub(crate) saved_fingerprint: Option<u64>,
     pub(crate) regex_dialog_open: bool,
     pub(crate) regex_text: String,
     // Turing run panel state.
@@ -326,7 +357,7 @@ impl Tab {
     pub(crate) fn new() -> Self {
         let mut tab = Self::default();
         tab.state_machine.reset_id_counter();
-        tab.name = "Machine".to_string();
+        tab.name = "Automaton".to_string();
         tab.transitions = HashMap::new();
         tab
     }
@@ -361,6 +392,170 @@ impl Tab {
         tab.name = name;
         tab.transitions = HashMap::new();
         tab
+    }
+
+    /* A fresh, empty tab of the given family. It starts clean (the default
+     * grammar template included), so closing it right away never asks. */
+    pub(crate) fn new_of(family: Family) -> Self {
+        let mut tab = match family {
+            Family::Finite => Self::new(),
+            Family::Pushdown => Self::new_pda(),
+            Family::Turing => Self::new_turing(),
+            Family::Grammar => Self::new_grammar(),
+        };
+        tab.mark_saved();
+        tab
+    }
+
+    /* States the loaded run currently occupies (every live branch for
+     * nondeterministic frontiers); highlighted on the canvas. */
+    pub(crate) fn active_run_states(&self) -> HashSet<usize> {
+        let mut active = HashSet::new();
+        match &self.machine {
+            TabMachine::Finite(_) => {
+                if let Some(run) = &self.finite_run {
+                    active.insert(run.config.state_id() as usize);
+                }
+                if let Some(frontier) = &self.finite_frontier {
+                    active.extend(frontier.alive.iter().map(|config| config.state_id() as usize));
+                }
+            }
+            TabMachine::Pushdown(_) => {
+                if let Some(run) = &self.pda_run {
+                    active.insert(run.config.state_id() as usize);
+                }
+                if let Some(frontier) = &self.pda_frontier {
+                    active.extend(frontier.alive.iter().map(|config| config.state_id() as usize));
+                }
+            }
+            TabMachine::Turing(_) => {
+                if let Some(run) = &self.tm_run {
+                    active.insert(run.config.state_id() as usize);
+                }
+                if let Some(frontier) = &self.tm_frontier {
+                    active.extend(frontier.alive.iter().map(|config| config.state_id() as usize));
+                }
+            }
+            TabMachine::Grammar(_) => {}
+        }
+        active
+    }
+
+    /* Whether a run is loaded, is still going, and should auto-play. */
+    pub(crate) fn run_state(&self) -> (bool, bool, bool) {
+        match &self.machine {
+            TabMachine::Turing(_) => (
+                self.tm_run.is_some() || self.tm_frontier.is_some(),
+                self.tm_run.as_ref().is_some_and(|run| run.finished.is_some())
+                    || self.tm_frontier.as_ref().is_some_and(|frontier| frontier.finished.is_some()),
+                self.tm_playing,
+            ),
+            TabMachine::Pushdown(_) => (
+                self.pda_run.is_some() || self.pda_frontier.is_some(),
+                self.pda_run.as_ref().is_some_and(|run| run.finished.is_some())
+                    || self.pda_frontier.as_ref().is_some_and(|frontier| frontier.finished.is_some()),
+                self.pda_playing,
+            ),
+            TabMachine::Finite(_) => (
+                self.finite_run.is_some() || self.finite_frontier.is_some(),
+                self.finite_run.as_ref().is_some_and(|run| run.finished.is_some())
+                    || self.finite_frontier.as_ref().is_some_and(|frontier| frontier.finished.is_some()),
+                self.finite_playing,
+            ),
+            TabMachine::Grammar(_) => (false, false, false),
+        }
+    }
+
+    /* Syncs the drawing into the machine and caches what the status bar
+     * shows. Grammar tabs parse their editor text instead. */
+    pub(crate) fn refresh_insight(&mut self) {
+        if self.machine.is_grammar() {
+            let parsed = moca_data::grammar::parse_grammar(self.grammar_text.trim());
+            self.insight = match parsed {
+                Ok(grammar) => TabInsight {
+                    deterministic: false,
+                    problem: grammar.productions().is_empty().then(|| "No productions yet".to_string()),
+                    production_count: grammar.productions().len(),
+                    unsaved: false,
+                },
+                Err(error) if self.grammar_text.trim().is_empty() => TabInsight {
+                    problem: Some(format!("Empty grammar ({})", error)),
+                    ..TabInsight::default()
+                },
+                Err(error) => TabInsight {
+                    problem: Some(error.to_string()),
+                    ..TabInsight::default()
+                },
+            };
+            self.insight.unsaved = self.has_unsaved_changes();
+            return;
+        }
+        self.sync_gui_to_machine();
+        self.insight = TabInsight {
+            deterministic: self.machine.is_deterministic(),
+            problem: if self.states.is_empty() {
+                None
+            } else {
+                self.machine.validate().err()
+            },
+            production_count: 0,
+            unsaved: self.has_unsaved_changes(),
+        };
+    }
+
+    /* Hash of everything a .ce save persists: names, transitions (labels as
+     * a set), initial and accepting states, or the grammar text. Layout,
+     * zoom and runs are not part of the file, so they never count as
+     * changes. */
+    pub(crate) fn content_fingerprint(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.machine.family().title().hash(&mut hasher);
+        if self.machine.is_grammar() {
+            self.grammar_text.trim().hash(&mut hasher);
+            return hasher.finish();
+        }
+        let mut states: Vec<(usize, &str)> =
+            self.states.iter().map(|node| (node.id, node.label.as_str())).collect();
+        states.sort_unstable();
+        states.hash(&mut hasher);
+        let mut transitions: Vec<((usize, usize), Vec<&str>)> = self
+            .transitions
+            .iter()
+            .map(|(pair, labels)| {
+                let mut labels: Vec<&str> = labels.iter().map(String::as_str).collect();
+                labels.sort_unstable();
+                (*pair, labels)
+            })
+            .collect();
+        transitions.sort_unstable();
+        transitions.hash(&mut hasher);
+        self.initial_state.hash(&mut hasher);
+        let mut finals: Vec<usize> = self.final_states.iter().copied().collect();
+        finals.sort_unstable();
+        finals.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    fn is_empty_content(&self) -> bool {
+        if self.machine.is_grammar() {
+            self.grammar_text.trim().is_empty()
+        } else {
+            self.states.is_empty() && self.transitions.is_empty()
+        }
+    }
+
+    pub(crate) fn has_unsaved_changes(&self) -> bool {
+        match self.saved_fingerprint {
+            Some(saved) => saved != self.content_fingerprint(),
+            None => !self.is_empty_content(),
+        }
+    }
+
+    /* Records the current content as saved (after a save or a load). */
+    pub(crate) fn mark_saved(&mut self) {
+        self.saved_fingerprint = Some(self.content_fingerprint());
+        self.insight.unsaved = false;
     }
 
     pub(crate) fn set_initial_state(&mut self, state_id: usize) {

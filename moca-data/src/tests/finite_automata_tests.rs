@@ -642,6 +642,46 @@ fn minimize_matches_reference_test() {
     }
 }
 
+/* Random complete and partial DFAs over {a, b}: Hopcroft must match the
+ * table-filling reference on every one. Splitting a block that is still
+ * waiting in the worklist must enqueue both halves; enqueuing only the
+ * smaller one under-splits on some of these machines. */
+#[test]
+fn minimize_random_dfas_match_reference_test() {
+    let mut rng = XorShift(0x9E3779B97F4A7C15);
+    for _ in 0..400 {
+        let n = 2 + (rng.next() % 7);
+        let mut automata = FiniteAutomata::new();
+        automata.add_n_states(n);
+        automata.make_initial(0);
+        for id in 0..n {
+            if rng.next() % 3 == 0 {
+                automata.make_final(id);
+            }
+            for symbol in ["a", "b"] {
+                // Roughly one transition in eight is left undefined.
+                if rng.next() % 8 != 0 {
+                    automata.add_transition(id, rng.next() % n, symbol.to_string());
+                }
+            }
+        }
+        let minimized = automata.minimize();
+        assert_eq!(
+            minimized.get_states_by_id_ref().len(),
+            reference_class_count(&automata),
+            "Hopcroft disagrees with the table-filling reference"
+        );
+        for input in short_ab_inputs() {
+            assert_eq!(
+                automata.check_input(&mut input.clone()),
+                minimized.check_input(&mut input.clone()),
+                "minimization changed the language on input {:?}",
+                input
+            );
+        }
+    }
+}
+
 #[test]
 fn minimize_language_equivalence_test() {    let fixtures = [
         build_mod3_redundant_dfa(),
@@ -1047,4 +1087,41 @@ fn step_all_epsilon_and_prefixes_test() {
         .collect();
     assert_eq!(described, vec![(2, "")]);
     assert!(automata.is_accepting(&successors[0]));
+}
+
+/* Re-adding the same labelled edge is a duplicate, not nondeterminism, and
+ * removing a conflicting edge restores determinism (and the alphabet). */
+#[test]
+fn determinism_duplicates_and_removal_test() {
+    let mut automata = FiniteAutomata::new();
+    automata.add_n_states(3);
+    automata.make_initial(0);
+    automata.add_transition(0, 1, "a".to_string());
+    automata.add_transition(0, 1, "a".to_string());
+    assert!(automata.is_deterministic());
+    automata.add_transition(0, 2, "a".to_string());
+    assert!(!automata.is_deterministic());
+    automata.remove_transition(0, 2, "a");
+    assert!(automata.is_deterministic());
+    automata.add_transition(1, 2, "".to_string());
+    assert!(!automata.is_deterministic(), "a blank label is an ε move");
+    assert!(!automata.get_string_transitions().contains(""));
+    automata.remove_transition(1, 2, "");
+    assert!(automata.is_deterministic());
+    automata.add_transition(1, 2, "b".to_string());
+    automata.remove_state(2);
+    assert!(!automata.get_string_transitions().contains("b"));
+}
+
+/* add_state after a deletion must not overwrite an existing state. */
+#[test]
+fn add_state_after_deletion_keeps_existing_states_test() {
+    let mut automata = FiniteAutomata::new();
+    automata.add_n_states(3);
+    automata.modify_name(2, "kept".to_string());
+    automata.remove_state(1);
+    let id = automata.add_state();
+    assert_ne!(id, 2);
+    assert_eq!(automata.get_states_by_id_ref().len(), 3);
+    assert_eq!(automata.get_states_by_id_ref()[&2].name, "kept");
 }

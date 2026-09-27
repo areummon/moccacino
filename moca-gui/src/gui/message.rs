@@ -1,24 +1,60 @@
 use iced::keyboard;
 
+use crate::gui::theme::Family;
 use crate::state_machine::{self, EditorTool};
+
+/* Header dropdown menus; at most one is open at a time. */
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Menu {
+    /* New-entity menu, anchored under its header trigger. */
+    New,
+    /* The same entity list, anchored at the tab bar's "+" button. */
+    NewFromTabs,
+    Operations,
+    File,
+    Export,
+}
 
 #[derive(Debug, Clone)]
 pub enum Message {
     Canvas(state_machine::CanvasMessage),
     SelectTool(EditorTool),
-    KeyPressed(keyboard::Key),
+    /* `captured` is true when a focused widget (text input) already
+     * consumed the key, so single-key shortcuts must stay inert. */
+    KeyPressed {
+        key: keyboard::Key,
+        modifiers: keyboard::Modifiers,
+        captured: bool,
+    },
     KeyReleased(keyboard::Key),
     Clear,
     EditTextChanged(String),
     FinishEditing,
     CancelEditing,
-    ToggleOperationsMenu,
-    ToggleMachineMenu,
+    ToggleMenu(Menu),
     CloseMenus,
     DismissModal,
     Noop,
     ChooseStartupModule(usize),
+    StartupOpenFile,
     ExitApp,
+    /* The window's close button (the app intercepts it to protect unsaved
+     * work). */
+    WindowCloseRequested,
+    // Unsaved-changes confirmation.
+    ConfirmCloseDiscard,
+    ConfirmCloseSave,
+    CancelClose,
+    ToggleTheme,
+    WindowResized(iced::Size),
+    ToggleDock,
+    ToggleShortcuts,
+    ToastTick,
+    DismissToast(u64),
+    ZoomIn,
+    ZoomOut,
+    ZoomReset,
+    FitView,
     OpenLoadDialog,
     LoadPathChanged(String),
     LoadBrowseClicked,
@@ -27,11 +63,10 @@ pub enum Message {
     },
     LoadPathSubmitted,
     CancelLoadDialog,
-    ToggleFileMenu,
     OpenSaveDialog,
     SavePathChanged(String),
     SaveBrowseClicked,
-    SaveBrowseResult { result: Result<(), String> },
+    SaveBrowseResult { result: Result<String, String> },
     SavePathSubmitted,
     CancelSaveDialog,
     CopyLlmPrompt,
@@ -41,21 +76,20 @@ pub enum Message {
     CheckInputTextChanged(String),
     SubmitCheckInput,
     CancelCheckInput,
-    CloseCheckResultPopup,
     OpenRegexDialog,
     RegexTextChanged(String),
     SubmitRegex,
     CancelRegex,
-    AddTab,
+    NewTab(Family),
     RemoveTab(usize),
     SwitchTab(usize),
-    AddTuringTab,
+    TabRenameChanged(String),
+    TabRenameSubmit,
     TmInputChanged(String),
     TmLoadInput,
     TmStep,
     TmReset,
     TmTogglePlay,
-    AddPushdownTab,
     PdaInputChanged(String),
     PdaLoadInput,
     PdaStep,
@@ -67,7 +101,6 @@ pub enum Message {
     FiniteReset,
     FiniteTogglePlay,
     RunTick,
-    AddGrammarTab,
     GrammarEditorAction(iced::widget::text_editor::Action),
     GrammarWordChanged(String),
     GrammarParse,

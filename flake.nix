@@ -55,7 +55,13 @@
         '';
 
         moccacino = craneLib.buildPackage {
-          src = craneLib.cleanCargoSource ./.;
+          # Cargo sources plus the fonts main.rs embeds with include_bytes!.
+          src = pkgs.lib.cleanSourceWith {
+            src = ./.;
+            filter = path: type:
+              (craneLib.filterCargoSources path type)
+              || (builtins.match ".*/assets/fonts(/.*)?" path != null);
+          };
           inherit buildInputs;
           nativeBuildInputs = with pkgs; [
             rust-bin.nightly.latest.default

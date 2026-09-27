@@ -51,12 +51,18 @@ pub trait StateMachine {
     /* Getter of the initial state id. */
     fn get_initial_state_id(&self) -> &Option<StateID>;
 
-    /* The name is assigned automatically as well as the id. */
-    fn add_state(&mut self) {
+    /* The name is assigned automatically as well as the id: the first free
+     * id from the current state count upwards (the count itself while ids
+     * are dense), so a state is never overwritten after deletions. Returns
+     * the assigned id. */
+    fn add_state(&mut self) -> StateID {
         let states_by_id = self.get_states_by_id_mut_ref();
-        let states_by_id_len = states_by_id.len();
-        let state_name = format!("q{}", states_by_id.len());
-        states_by_id.insert(states_by_id_len as u64, State::new(state_name));
+        let mut id = states_by_id.len() as StateID;
+        while states_by_id.contains_key(&id) {
+            id += 1;
+        }
+        states_by_id.insert(id, State::new(format!("q{}", id)));
+        id
     }
 
     /* Another adding method that asigns a state given a label. */

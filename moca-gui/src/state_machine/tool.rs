@@ -2,7 +2,9 @@
  * mouse press on the canvas means — select/move, create states, connect
  * states, or delete — instead of one overloaded click model guarded by
  * modifier keys. The active tool lives on the canvas `State` and is
- * switched from the tool bar (below the menu bar) or the keyboard. */
+ * switched from the floating tool palette or the keyboard. */
+
+use crate::gui::icons::Icon;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum EditorTool {
@@ -21,18 +23,39 @@ pub(crate) enum EditorTool {
 }
 
 impl EditorTool {
-    /* Toolbar caption including the number-key shortcut. */
-    pub(crate) fn label(self) -> &'static str {
+    pub(crate) const ALL: [EditorTool; 4] =
+        [EditorTool::Arrow, EditorTool::State, EditorTool::Transition, EditorTool::Delete];
+
+    pub(crate) fn name(self) -> &'static str {
         match self {
-            EditorTool::Arrow => "↖ Select  1",
-            EditorTool::State => "◯ State  2",
-            EditorTool::Transition => "→ Transition  3",
-            EditorTool::Delete => "× Delete  4",
+            EditorTool::Arrow => "Select",
+            EditorTool::State => "State",
+            EditorTool::Transition => "Transition",
+            EditorTool::Delete => "Delete",
         }
     }
 
-    /* One-line description of the tool's interactions, shown as the
-     * toolbar button's tooltip. */
+    pub(crate) fn icon(self) -> Icon {
+        match self {
+            EditorTool::Arrow => Icon::Select,
+            EditorTool::State => Icon::State,
+            EditorTool::Transition => Icon::Transition,
+            EditorTool::Delete => Icon::Delete,
+        }
+    }
+
+    /* Number-key shortcut. */
+    pub(crate) fn shortcut(self) -> &'static str {
+        match self {
+            EditorTool::Arrow => "1",
+            EditorTool::State => "2",
+            EditorTool::Transition => "3",
+            EditorTool::Delete => "4",
+        }
+    }
+
+    /* Description of the tool's interactions, shown as the palette
+     * button's tooltip. */
     pub(crate) fn tooltip(self) -> &'static str {
         match self {
             EditorTool::Arrow => {
@@ -40,12 +63,22 @@ impl EditorTool {
                  rename · Shift+click: final · Alt+click: initial · click a transition to \
                  edit its labels"
             }
-            EditorTool::State => "Click empty canvas to create a state here",
+            EditorTool::State => "Click empty canvas to create a state there",
             EditorTool::Transition => {
                 "Click the source state, then the target state, to add a transition \
                  (click empty space to cancel)"
             }
-            EditorTool::Delete => "Click a state or a transition to remove it",
+            EditorTool::Delete => "Click a state or a transition to remove it (hold Del for a quick delete)",
+        }
+    }
+
+    /* One-line hint for the status bar. */
+    pub(crate) fn hint(self) -> &'static str {
+        match self {
+            EditorTool::Arrow => "Drag states · drag space to pan · double-click to rename",
+            EditorTool::State => "Click anywhere to place a state",
+            EditorTool::Transition => "Click a source state, then its target",
+            EditorTool::Delete => "Click a state or transition to remove it",
         }
     }
 }

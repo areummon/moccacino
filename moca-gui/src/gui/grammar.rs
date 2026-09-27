@@ -1,28 +1,20 @@
 /* Grammar editing panel: parse, membership check, leftmost derivation and
  * CNF conversion over the grammar held by a tab. */
 use iced::Task;
-use iced::widget::{button, column, container, row, text, text_input};
-use iced::{Element, Length};
+use iced::widget::{column, container, horizontal_space, row, scrollable, text_input, tooltip};
+use iced::{Alignment, Element, Length};
 
 use moca_data::grammar::Grammar;
 
 use super::message::Message;
+use super::widgets::text;
 use super::tab::TabMachine;
-use crate::gui::theme;
+use super::widgets;
+use crate::gui::theme::{self, Family};
 
 const GRAMMAR_PLACEHOLDER: &str = "S -> a S b | ε";
 
 impl super::app::App {
-    pub(crate) fn active_tab_is_grammar(&self) -> bool {
-        self.get_active_tab().machine.is_grammar()
-    }
-
-    pub(crate) fn add_grammar_tab(&mut self) -> Task<Message> {
-        self.tabs.push(Box::new(super::tab::Tab::new_grammar()));
-        self.active_tab = self.tabs.len() - 1;
-        Task::none()
-    }
-
     /* Multi-line editor actions: perform the edit and mirror the content
      * into the plain string the parser consumes. Ctrl+Enter parses instead
      * of inserting a newline. */
@@ -141,6 +133,7 @@ impl super::app::App {
         let mut new_tab = super::tab::Tab::new_with_name("CNF".to_string());
         new_tab.machine = TabMachine::Grammar(cnf.clone());
         new_tab.grammar_text = format!("{}", cnf);
+        new_tab.grammar_content = iced::widget::text_editor::Content::with_text(&new_tab.grammar_text);
         new_tab.grammar_output = Some(format!(
             "Chomsky normal form ready. Start symbol: {}.",
             cnf.start_symbol()
@@ -181,81 +174,98 @@ impl super::app::App {
 /* -------- panel view builder -------- */
 
 impl super::app::App {
+    /* Grammar tabs have no canvas: the workspace becomes two cards, the
+     * productions editor on the left and word testing on the right. */
     pub(crate) fn create_grammar_panel(&self) -> Element<'_, Message> {
         let tab = self.get_active_tab();
 
-        let mut column_root = column![
-            text("Context-free grammar")
-                .size(14)
-                .color(theme::TEXT_DIM),
-            row![
-                button(text("Parse").size(14).color(theme::CREAM))
-                    .on_press(Message::GrammarParse)
-                    .style(|_theme: &iced::Theme, status| theme::secondary_button(status))
-                    .padding([4, 10]),
-                button(text("To CNF").size(14).color(theme::CREAM))
-                    .on_press(Message::GrammarToCnf)
-                    .style(|_theme: &iced::Theme, status| theme::secondary_button(status))
-                    .padding([4, 10]),
-                text("(one rule per line, alternatives after '|', \u{3b5} = empty body, Ctrl+Enter parses)")
-                    .size(12)
-                    .color(theme::TEXT_FAINT),
+        let editor_card = container(
+            column![
+                row![
+                    widgets::family_dot(Family::Grammar, 9.0),
+                    text("Productions").size(15).font(theme::BOLD),
+                    horizontal_space(),
+                    widgets::caption("one rule per line · | between alternatives · ε for empty"),
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
+                iced::widget::text_editor(&tab.grammar_content)
+                    .height(Length::Fill)
+                    .padding(12)
+                    .font(theme::MONO)
+                    .size(14)
+                    .placeholder(GRAMMAR_PLACEHOLDER)
+                    .on_action(Message::GrammarEditorAction)
+                    .style(theme::editor),
+                row![
+                    widgets::tip(
+                        widgets::primary("Parse", Some(Message::GrammarParse)),
+                        "Check the rules  (Ctrl+Enter)",
+                        tooltip::Position::Top,
+                    ),
+                    widgets::tip(
+                        widgets::secondary("To CNF", Some(Message::GrammarToCnf)),
+                        "Open the Chomsky normal form in a new tab",
+                        tooltip::Position::Top,
+                    ),
+                ]
+                .spacing(8),
             ]
-            .spacing(6),
-        ]
-        .spacing(8);
+            .spacing(12),
+        )
+        .padding(18)
+        .width(Length::FillPortion(3))
+        .height(Length::Fill)
+        .style(theme::card);
 
-        column_root = column_root.push(
-            iced::widget::text_editor(&tab.grammar_content)
-                .height(Length::Fixed(110.0))
-                .placeholder(GRAMMAR_PLACEHOLDER)
-                .on_action(Message::GrammarEditorAction)
-                .style(|_theme: &iced::Theme, status| theme::editor(status)),
-        );
+        let output: Element<'_, Message> = match &tab.grammar_output {
+            Some(output) => scrollable(
+                container(text(output.as_str()).font(theme::MONO).size(13))
+                    .padding([10, 12])
+                    .width(Length::Fill),
+            )
+            .height(Length::Fill)
+            .style(theme::scroll)
+            .into(),
+            None => container(widgets::hint(
+                "Parse the grammar, then check words (CYK) or show their leftmost derivations.",
+            ))
+            .padding([10, 12])
+            .into(),
+        };
 
-        column_root = column_root.push(
-            row![
-                text("Word:").size(14).color(theme::TEXT_DIM),
-                text_input("e.g. abab", &tab.grammar_word)
+        let test_card = container(
+            column![
+                text("Test a word").size(15).font(theme::BOLD),
+                text_input("e.g. aabb", &tab.grammar_word)
                     .on_input(Message::GrammarWordChanged)
                     .on_submit(Message::GrammarCheckWord)
-                    .width(160)
-                    .style(|_theme: &iced::Theme, status| theme::input(status)),
-                button(text("Check").size(14).color(theme::CREAM))
-                    .on_press(Message::GrammarCheckWord)
-                    .style(|_theme: &iced::Theme, status| theme::secondary_button(status))
-                    .padding([4, 10]),
-                button(text("Derive").size(14).color(theme::CREAM))
-                    .on_press(Message::GrammarDerive)
-                    .style(|_theme: &iced::Theme, status| theme::secondary_button(status))
-                    .padding([4, 10]),
+                    .padding([8, 12])
+                    .font(theme::MONO)
+                    .style(theme::input),
+                row![
+                    widgets::primary("Check", Some(Message::GrammarCheckWord)),
+                    widgets::secondary("Derive", Some(Message::GrammarDerive)),
+                ]
+                .spacing(8),
+                widgets::caption("Result"),
+                container(output)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .style(theme::sunken),
             ]
-            .spacing(6),
-        );
+            .spacing(12),
+        )
+        .padding(18)
+        .width(Length::FillPortion(2))
+        .height(Length::Fill)
+        .style(theme::card);
 
-        if let Some(output) = &tab.grammar_output {
-            column_root = column_root.push(
-                container(
-                    text(output.as_str())
-                        .font(iced::Font::MONOSPACE)
-                        .size(13)
-                        .color(theme::CREAM),
-                )
-                .max_width(1100)
-                .padding([6, 10])
-                .style(|_theme: &iced::Theme| theme::inset_box()),
-            );
-        } else {
-            column_root = column_root.push(
-                text("Parse the grammar, then check words or show their leftmost derivations.")
-                    .size(13)
-                    .color(theme::TEXT_FAINT),
-            );
-        }
-
-        container(column_root)
-            .style(|_theme: &iced::Theme| theme::panel_box())
-            .padding([8, 12])
-            .into()
+        container(container(row![editor_card, test_card].spacing(16)).max_width(1280))
+        .padding(20)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .center_x(Length::Fill)
+        .into()
     }
 }

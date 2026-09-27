@@ -23,3 +23,12 @@ rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "a
 [[bin]]
 name = "moccacino"
 path = "moca-gui/src/main.rs"
+
+# `cargo run` must feel interactive: our own code gets light optimization
+# (quick to rebuild), every dependency (iced, wgpu, lyon, cosmic-text) is
+# fully optimized once and then cached.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3

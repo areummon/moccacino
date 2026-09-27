@@ -10,8 +10,10 @@ use moca_data::entity_file::{
 };
 use moca_data::grammar::Grammar;
 
+use super::dialogs::{LOAD_INPUT, SAVE_INPUT};
 use super::message::Message;
 use super::tab::{Tab, TabMachine};
+use crate::gui::theme::Tone;
 
 /* Paste-ready prompt for vision-capable LLMs: attach a state-diagram
  * image and the model answers with a loadable `.ce` file. Mirrors
@@ -75,7 +77,7 @@ impl super::app::App {
         self.load_dialog_open = true;
         self.load_path_text.clear();
         self.load_dialog_error = None;
-        Task::none()
+        iced::widget::text_input::focus(LOAD_INPUT)
     }
 
     pub(crate) fn load_path_changed(&mut self, text: String) -> Task<Message> {
@@ -173,7 +175,7 @@ impl super::app::App {
      * into the machine first (it is the source of truth); grammar tabs
      * parse straight from the editor text. */
     pub(crate) fn open_save_dialog(&mut self) -> Task<Message> {
-        self.file_menu_open = false;
+        self.open_menu = None;
 
         if self.get_active_tab().machine.is_grammar() {
             if self.get_active_tab().grammar_text.trim().is_empty() {
@@ -227,6 +229,9 @@ impl super::app::App {
                 Err(message) => self.error_message = Some(message),
             }
         }
+        if self.save_dialog_open {
+            return iced::widget::text_input::focus(SAVE_INPUT);
+        }
         Task::none()
     }
 
@@ -234,6 +239,8 @@ impl super::app::App {
      * the tab name as file name. */
     fn stash_pending_save(&mut self, contents: String) {
         self.pending_save = Some(contents);
+        let fingerprint = self.get_active_tab().content_fingerprint();
+        self.pending_save_fingerprint = Some((self.active_tab, fingerprint));
         self.save_dialog_error = None;
         self.save_path_text = format!("{}.ce", sanitize_file_name(&self.get_active_tab().name));
         self.save_dialog_open = true;
@@ -264,7 +271,7 @@ impl super::app::App {
         Task::future(async move {
             match dialog.await {
                 Some(handle) => match handle.write(contents.as_bytes()).await {
-                    Ok(()) => Message::SaveBrowseResult { result: Ok(()) },
+                    Ok(()) => Message::SaveBrowseResult { result: Ok(handle.file_name()) },
                     Err(error) => Message::SaveBrowseResult {
                         result: Err(format!("Cannot write {}: {}", handle.file_name(), error)),
                     },
@@ -280,10 +287,12 @@ impl super::app::App {
         })
     }
 
-    pub(crate) fn save_browse_result(&mut self, result: Result<(), String>) -> Task<Message> {
+    pub(crate) fn save_browse_result(&mut self, result: Result<String, String>) -> Task<Message> {
         match result {
-            Ok(()) => {
+            Ok(file_name) => {
+                self.mark_pending_save_done();
                 self.close_save_dialog();
+                self.toast(Tone::Success, format!("Saved {}", file_name), None);
                 Task::none()
             }
             Err(message) => {
@@ -311,7 +320,9 @@ impl super::app::App {
         }
         match std::fs::write(&path, contents) {
             Ok(()) => {
+                self.mark_pending_save_done();
                 self.close_save_dialog();
+                self.toast(Tone::Success, format!("Saved {}", path), None);
                 Task::none()
             }
             Err(error) => {
@@ -330,6 +341,17 @@ impl super::app::App {
         self.save_dialog_open = false;
         self.save_dialog_error = None;
         self.pending_save = None;
+        self.pending_save_fingerprint = None;
+    }
+
+    /* The file now holds what the tab contained when the dialog opened. */
+    fn mark_pending_save_done(&mut self) {
+        if let Some((index, fingerprint)) = self.pending_save_fingerprint {
+            if let Some(tab) = self.tabs.get_mut(index) {
+                tab.saved_fingerprint = Some(fingerprint);
+                tab.insight.unsaved = tab.has_unsaved_changes();
+            }
+        }
     }
 
     /* Parses the loaded file and opens one tab per healthy entity; the
@@ -373,28 +395,32 @@ impl super::app::App {
             match named.entity {
                 Entity::Finite(finite) => {
                     tasks.push(self.open_machine_in_new_tab(tab_name, TabMachine::Finite(finite)));
+                    self.get_active_tab_mut().mark_saved();
                 }
                 Entity::Pushdown(pda) => {
                     tasks.push(self.open_machine_in_new_tab(tab_name, TabMachine::Pushdown(pda)));
+                    self.get_active_tab_mut().mark_saved();
                 }
                 Entity::Turing(turing) => {
                     tasks.push(self.open_machine_in_new_tab(tab_name, TabMachine::Turing(turing)));
+                    self.get_active_tab_mut().mark_saved();
                 }
                 Entity::Grammar(grammar) => {
                     self.open_grammar_in_new_tab(tab_name, grammar);
+                    self.get_active_tab_mut().mark_saved();
                 }
             }
         }
 
-        if !errors.is_empty() {
-            self.error_message = Some(format!(
-                "Loaded {} entit{} from {} but skipped {}:{}",
-                entity_count,
-                if entity_count == 1 { "y" } else { "ies" },
-                file_name,
-                errors.len(),
-                summarize_errors(&errors)
-            ));
+        let plural = if entity_count == 1 { "y" } else { "ies" };
+        if errors.is_empty() {
+            self.toast(Tone::Success, format!("Loaded {} entit{} from {}", entity_count, plural, file_name), None);
+        } else {
+            self.toast(
+                Tone::Warning,
+                format!("Loaded {} entit{} from {}, skipped {}", entity_count, plural, file_name, errors.len()),
+                Some(summarize_errors(&errors).trim_start().to_string()),
+            );
         }
         Task::batch(tasks)
     }
@@ -417,6 +443,12 @@ impl super::app::App {
 
     /* Puts the vision-LLM prompt on the clipboard. */
     pub(crate) fn copy_llm_prompt(&mut self) -> Task<Message> {
+        self.open_menu = None;
+        self.toast(
+            Tone::Success,
+            "LLM prompt copied",
+            Some("Paste it into a vision-capable model together with a picture of a state diagram.".to_string()),
+        );
         iced::clipboard::write(LLM_PROMPT.to_string())
     }
 }

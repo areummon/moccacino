@@ -113,6 +113,18 @@ impl Grammar {
             .push(body);
     }
 
+    /* The production table with an (empty) entry for every declared
+     * variable. The transformation helpers tell variables from terminals by
+     * table membership, so a variable without productions must still appear
+     * (as non-generating) instead of passing for a terminal. */
+    fn production_table(&self) -> ProductionTable {
+        let mut table = self.productions.clone();
+        for variable in &self.nonterminals {
+            table.entry(variable.clone()).or_default();
+        }
+        table
+    }
+
     /* True when the start symbol derives the empty word. */
     pub fn contains_epsilon(&self) -> bool {
         nullable_from_table(&self.productions).contains(&self.start_symbol)
@@ -163,6 +175,24 @@ impl Grammar {
         // Min-heap over (variable count, discovery index).
         let mut heap: std::collections::BinaryHeap<Reverse<(usize, usize)>> =
             std::collections::BinaryHeap::from([Reverse((1, 0))]);
+        // Every terminal spells its characters and every non-nullable variable
+        // at least one more, so a form already longer than the input can
+        // never shrink back to it.
+        let nullable = nullable_from_table(&self.production_table());
+        let input_length = input.chars().count();
+        let minimum_length = |form: &[String]| -> usize {
+            form.iter()
+                .map(|symbol| {
+                    if !self.nonterminals.contains(symbol) {
+                        symbol.chars().count()
+                    } else if nullable.contains(symbol) {
+                        0
+                    } else {
+                        1
+                    }
+                })
+                .sum()
+        };
         let mut steps_left = max_steps;
 
         while let Some(Reverse((_, index))) = heap.pop() {
@@ -213,7 +243,7 @@ impl Grammar {
                         .unwrap_or(0);
                     input.ends_with(&concatenate(&next[cut..]))
                 };
-                if !terminal_matches_target {
+                if !terminal_matches_target || minimum_length(&next) > input_length {
                     continue;
                 }
                 let key = form_key(&next);
@@ -232,7 +262,7 @@ impl Grammar {
      * terminal, two variables, or ε on the (fresh) start symbol. The output
      * keeps the exact language, ε included, via fresh helper variables. */
     pub fn to_chomsky_normal_form(&self) -> Grammar {
-        let mut productions = self.productions.clone();
+        let mut productions = self.production_table();
         let mut counter = 0usize;
         let mut names_in_use = all_symbol_names(&productions, &self.nonterminals);
 
@@ -347,13 +377,13 @@ pub fn parse_grammar(source: &str) -> Result<Grammar, ParseError> {
             let alternative = alternative.trim();
             // Lenient empty-body spellings: the literal ε or a blank
             // alternative (trailing/leading/doubled "|", empty right-hand
-            // side).
-            if alternative == "ε" || alternative.is_empty() {
-                grammar.add_production(lhs, &[]);
-            } else {
-                let body: Vec<&str> = alternative.split_whitespace().collect();
-                grammar.add_production(lhs, &body);
-            }
+            // side). An ε among other symbols is the empty word too, so it
+            // is dropped rather than kept as a terminal.
+            let body: Vec<&str> = alternative
+                .split_whitespace()
+                .filter(|symbol| *symbol != "ε")
+                .collect();
+            grammar.add_production(lhs, &body);
         }
     }
 
@@ -589,12 +619,15 @@ fn remove_useless_variables(mut productions: ProductionTable, start: &str) -> Pr
             break;
         }
     }
+    // Bodies are judged against the variables as they were before the
+    // pruning: a dropped (non-generating) variable must kill every body that
+    // mentions it, not linger there looking like a terminal.
+    let variables: HashSet<String> = productions.keys().cloned().collect();
     productions.retain(|variable, _| generating.contains(variable));
-    let surviving: HashSet<String> = productions.keys().cloned().collect();
     for bodies in productions.values_mut() {
         bodies.retain(|body| {
             body.iter().all(|symbol| {
-                !surviving.contains(symbol) || generating.contains(symbol)
+                !variables.contains(symbol) || generating.contains(symbol)
             })
         });
     }
@@ -726,7 +759,7 @@ impl Grammar {
      * Construction states: one per variable plus one extra accepting state
      * that collects every terminal-only production. */
     pub fn to_finite_automata(&self) -> Result<FiniteAutomata, String> {
-        let mut productions: ProductionTable = self.productions.clone();
+        let mut productions: ProductionTable = self.production_table();
         // A -> ε stops nullability; strip it after remembering which units it
         // feeds, mirroring the CNF pipeline's ε handling.
         let nullable = nullable_from_table(&productions);
@@ -867,18 +900,57 @@ impl Grammar {
             if let Some(state) = machine.get_states_by_id_ref().get(id) {
                 for (target, labels) in state.iter_by_transition() {
                     for label in labels {
-                        grammar.add_production(
-                            &name_by_id[id],
-                            &[label.as_str(), &name_by_id[target]],
-                        );
+                        // An ε/"" move reads nothing: it becomes the unit
+                        // production A -> B (and A -> ε into a final state),
+                        // never a terminal spelled "ε".
+                        let read: Vec<&str> = if label.is_empty() || label == "ε" {
+                            Vec::new()
+                        } else {
+                            vec![label.as_str()]
+                        };
+                        let mut body = read.clone();
+                        body.push(&name_by_id[target]);
+                        grammar.add_production(&name_by_id[id], &body);
                         if finals.contains(target) {
-                            grammar.add_production(&name_by_id[id], &[label.as_str()]);
+                            grammar.add_production(&name_by_id[id], &read);
                         }
                     }
                 }
             }
         }
+        grammar.drop_bodies_with_dead_variables();
         Ok(grammar)
+    }
+
+    /* Removes, until nothing changes, every body mentioning a declared
+     * variable that has no productions left. Such bodies can never finish a
+     * derivation, so the language is unchanged, and the text form no longer
+     * mentions variables it cannot define (which a reparse would read as
+     * terminals). */
+    fn drop_bodies_with_dead_variables(&mut self) {
+        loop {
+            let dead: HashSet<String> = self
+                .nonterminals
+                .iter()
+                .filter(|variable| {
+                    self.productions.get(*variable).map_or(true, |bodies| bodies.is_empty())
+                })
+                .cloned()
+                .collect();
+            let mut changed = false;
+            for bodies in self.productions.values_mut() {
+                let before = bodies.len();
+                bodies.retain(|body| !body.iter().any(|symbol| dead.contains(symbol)));
+                changed |= bodies.len() != before;
+            }
+            if !changed {
+                break;
+            }
+        }
+        for bodies in self.productions.values_mut() {
+            bodies.sort();
+            bodies.dedup();
+        }
     }
 
     /* Constructs the standard top-down recognizer pushdown automaton for the
@@ -962,10 +1034,13 @@ impl Grammar {
 }
 
 /* Renders the grammar back into the text format accepted by parse_grammar,
- * variables grouped one line each in sorted order. */
+ * variables grouped one line each: the start symbol first (parse_grammar
+ * takes the first line's variable as the start), the rest in sorted order. */
 impl fmt::Display for Grammar {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for variable in &self.nonterminals {
+        let start = self.nonterminals.get(&self.start_symbol);
+        let others = self.nonterminals.iter().filter(|variable| **variable != self.start_symbol);
+        for variable in start.into_iter().chain(others) {
             let bodies = match self.productions_of(variable) {
                 Some(bodies) => bodies,
                 None => continue,

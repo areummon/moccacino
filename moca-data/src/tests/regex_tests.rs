@@ -392,3 +392,13 @@ fn fa_to_regex_empty_machine_test() {
     let machine = FiniteAutomata::new();
     assert!(matches!(machine.to_regex(), RegexAst::Empty));
 }
+
+/* A literal ε (`\ε`) parses, but labels reserve ε for the empty word, so
+ * compiling it is rejected rather than silently turned into an ε move. */
+#[test]
+fn regex_literal_epsilon_is_not_compiled_test() {
+    assert!(regex::parse("a\\ε").is_ok());
+    let error = regex::compile_str("a\\ε").expect_err("literal ε cannot be compiled");
+    assert_eq!(error.position, 1);
+    assert!(regex::compile_str("aε").is_ok());
+}

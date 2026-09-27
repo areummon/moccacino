@@ -5,14 +5,17 @@ mod editing;
 mod entity_loader;
 mod finite;
 mod grammar;
+pub(crate) mod icons;
 mod message;
 mod operations;
 mod pda;
+mod settings;
 mod tab;
 pub(crate) mod theme;
 mod tm;
+mod toast;
 mod toolbars;
+pub(crate) mod widgets;
 mod workspace;
 
 pub use app::App;
-pub use message::Message;

@@ -1,3 +1,4 @@
+mod edge;
 mod hit_testing;
 mod message;
 mod node;
@@ -11,5 +12,6 @@ mod util;
 pub use message::CanvasMessage;
 pub use node::StateNode;
 pub use state::State;
+pub(crate) use state::CanvasContext;
 pub(crate) use tool::EditorTool;
 pub use transition::Transition;

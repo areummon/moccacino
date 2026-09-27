@@ -266,6 +266,27 @@ impl TuringMachine {
                 self.parsed.remove(&state_id);
             },
         }
+        self.refresh_determinism();
+    }
+
+    /* Recomputes the determinism flag from the parsed table: two different
+     * transitions of one state reading the same symbols on every tape make
+     * the machine nondeterministic. A machine left without any well-formed
+     * transition forgets its tape count, so the next one establishes it. */
+    fn refresh_determinism(&mut self) {
+        self.deterministic = self.parsed.values().all(|transitions| {
+            transitions.iter().enumerate().all(|(index, (target, ops))| {
+                transitions[index + 1..].iter().all(|(other_target, other_ops)| {
+                    let same_reads = ops.len() == other_ops.len()
+                        && ops.iter().zip(other_ops.iter()).all(|(a, b)| a.read == b.read);
+                    let identical = target == other_target && ops == other_ops;
+                    !same_reads || identical
+                })
+            })
+        });
+        if self.parsed.values().all(Vec::is_empty) {
+            self.tape_count = None;
+        }
     }
 
     // Getter for the transitions of a state parsed into their per-tape
@@ -350,6 +371,10 @@ impl TuringMachine {
                 None => return Some(RunOutcome::Rejected),
             }
         }
+        // The last step may have just arrived in an accepting state.
+        if self.final_states.contains(&config.state_id) {
+            return Some(RunOutcome::Accepted);
+        }
         Some(RunOutcome::MaxStepsExceeded)
     }
 
@@ -386,6 +411,10 @@ impl TuringMachine {
             }
             frontier = next_frontier;
         }
+        // The last level may have just arrived in an accepting state.
+        if frontier.iter().any(|config| self.final_states.contains(&config.state_id)) {
+            return Some(RunOutcome::Accepted);
+        }
         Some(RunOutcome::MaxStepsExceeded)
     }
 }
@@ -411,50 +440,26 @@ impl StateMachine for TuringMachine {
         &self.initial_state_id
     }
 
-    /* The implementation for Turing machines flags nondeterminism when two
-     * well-formed transitions of a state read the same symbols (one per
-     * tape) but differ in target, written symbols or directions. Identical
-     * duplicates are allowed and do not flip the flag. The first well-formed
-     * transition also establishes the tape count of the machine. */
+    /* The first well-formed transition establishes the tape count of the
+     * machine; the determinism flag (two well-formed transitions of a state
+     * reading the same symbols but differing in target, writes or moves) is
+     * recomputed by `rebuild_parsed_state`, so identical duplicates never
+     * flip it and removals restore it. Nothing changes when either endpoint
+     * is missing. */
     fn add_transition(&mut self, state_id1: StateID, state_id2: StateID, input: Input) {
-        match self.states_by_id.get_mut(&state_id2) {
-            Some(_) => {
-                if let Some(new_ops) = parse_transition(&input) {
-                    if self.tape_count.is_none() {
-                        self.tape_count = Some(new_ops.len());
-                    }
-                    // Reads the pre-insert cache content: existing
-                    // transitions only, like the live parse it replaces.
-                    let mut ambiguous = false;
-                    for (existing_target, existing_ops) in self.transitions_of(&state_id1) {
-                        if existing_ops.len() != new_ops.len() {
-                            continue;
-                        }
-                        let same_reads = existing_ops
-                            .iter()
-                            .zip(new_ops.iter())
-                            .all(|(a, b)| a.read == b.read);
-                        // Identical duplicates do not count as ambiguity.
-                        let identical = *existing_target == state_id2
-                            && existing_ops
-                                .iter()
-                                .zip(new_ops.iter())
-                                .all(|(a, b)| a == b);
-                        if same_reads && !identical {
-                            ambiguous = true;
-                        }
-                    }
-                    if ambiguous {
-                        self.deterministic = false;
-                    }
-                }
-                if let Some(state) = self.states_by_id.get_mut(&state_id1) {
-                    state.add_transition(state_id2, input);
-                }
-                self.rebuild_parsed_state(state_id1);
-            },
-            None => (),
+        if !self.states_by_id.contains_key(&state_id2) {
+            return;
         }
+        let Some(state) = self.states_by_id.get_mut(&state_id1) else {
+            return;
+        };
+        if self.tape_count.is_none() {
+            if let Some(ops) = parse_transition(&input) {
+                self.tape_count = Some(ops.len());
+            }
+        }
+        state.add_transition(state_id2, input);
+        self.rebuild_parsed_state(state_id1);
     }
 
     /* Keeps the parsed table in sync when a transition label is edited in
@@ -507,15 +512,12 @@ impl StateMachine for TuringMachine {
         }
     }
 
-    /* Function to make a state final. */
-    // It has to do it in the particular module because of the mutability of the structure fields.
+    /* Function to make a state final; unknown ids are ignored, like in
+     * make_initial. */
     fn make_final(&mut self, state_id: StateID) {
-        match self.states_by_id.get_mut(&state_id) {
-            Some(state) => {
-                state.final_flag = true;
-                self.final_states.insert(state_id);
-            }
-            None => panic!("The states does not exist."),
+        if let Some(state) = self.states_by_id.get_mut(&state_id) {
+            state.final_flag = true;
+            self.final_states.insert(state_id);
         }
     }
 
@@ -531,6 +533,7 @@ impl StateMachine for TuringMachine {
         for list in self.parsed.values_mut() {
             list.retain(|(target, _)| *target != state_id);
         }
+        self.refresh_determinism();
     }
 }
 

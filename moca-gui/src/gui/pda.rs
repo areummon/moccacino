@@ -4,14 +4,16 @@
 use std::collections::HashSet;
 
 use iced::Task;
-use iced::widget::{button, column, container, row, text, text_input};
-use iced::{Element, Length};
+use iced::widget::{column, row};
+use iced::{Alignment, Element, Length};
 
 use moca_data::pushdown_automata::PdaConfiguration;
 
 use super::message::Message;
+use super::widgets::text;
 use super::tab::{PdaNdFrontier, PdaRun, TabMachine};
-use crate::gui::theme;
+use super::widgets::{self, CellSize, Outcome};
+use crate::gui::theme::{self, Family};
 
 const STACK_VISIBLE_ENTRIES: usize = 14;
 /* Lane window rendered per branch in the nondeterministic view. */
@@ -181,231 +183,108 @@ impl super::app::App {
 
     pub(crate) fn create_pda_panel(&self) -> Element<'_, Message> {
         let tab = self.get_active_tab();
-
-        let mut panel = column![
-            text("Pushdown automaton")
-                .size(14)
-                .color(theme::TEXT_DIM),
-            row![
-                text_input("Input word...", &tab.pda_input_text)
-                    .on_input(Message::PdaInputChanged)
-                    .on_submit(Message::PdaLoadInput)
-                    .width(220)
-                    .style(|_theme: &iced::Theme, status| theme::input(status)),
-                button(text("Load").size(14).color(theme::CREAM))
-                    .on_press(Message::PdaLoadInput)
-                    .style(|_theme: &iced::Theme, status| theme::secondary_button(status))
-                    .padding([4, 10]),
-                button(text(if tab.pda_playing { "Pause" } else { "Play" }).size(14).color(if tab.pda_playing { theme::BG } else { theme::CREAM }))
-                    .on_press(Message::PdaTogglePlay)
-                    .style(move |_theme: &iced::Theme, status| {
-                        if tab.pda_playing { theme::primary_button(status) } else { theme::secondary_button(status) }
-                    })
-                    .padding([4, 10]),
-                button(text("Step").size(14).color(theme::CREAM))
-                    .on_press(Message::PdaStep)
-                    .style(|_theme: &iced::Theme, status| theme::secondary_button(status))
-                    .padding([4, 10]),
-                button(text("Reset").size(14).color(theme::CREAM))
-                    .on_press(Message::PdaReset)
-                    .style(|_theme: &iced::Theme, status| theme::secondary_button(status))
-                    .padding([4, 10]),
-            ]
-            .spacing(6),
+        let (loaded, finished, playing) = tab.run_state();
+        let controls = row![
+            widgets::run_input(&tab.pda_input_text, Message::PdaInputChanged, Message::PdaLoadInput, loaded),
+            widgets::run_controls(
+                playing,
+                loaded,
+                finished,
+                widgets::RunMessages {
+                    play: Message::PdaTogglePlay,
+                    step: Message::PdaStep,
+                    reset: Message::PdaReset,
+                },
+            ),
         ]
-        .spacing(8);
+        .spacing(10)
+        .align_y(Alignment::Center);
 
-        if !tab.machine.is_deterministic() {
+        let (status, body): (Element<'_, Message>, Element<'_, Message>) =
             if let Some(frontier) = &tab.pda_frontier {
-                panel = panel.push(self.create_pda_nd_lane_view(frontier));
-            } else {
-                panel = panel.push(
-                    text("Nondeterministic machine: type an input and press Load to explore the branching computation level by level.")
-                        .size(13)
-                        .color(theme::TEXT_DIM),
-                );
-            }
-        } else if let Some(run) = &tab.pda_run {
-            // Input ribbon: the consumed prefix dimmed, the rest bright, the
-            // next character highlighted.
-            let consumed_chars = run.input.chars().count() - run.config.remaining_input().chars().count();
-            panel = panel.push(Self::input_ribbon(&run.input, consumed_chars, 22.0, 15.0));
-
-            // Content row: the stack lane on the left, status on the right.
-            let stack_entries = run.config.stack();
-            let visible = stack_entries.len().min(STACK_VISIBLE_ENTRIES);
-            let hidden = stack_entries.len() - visible;
-            let mut stack_lane = column![
-                text("stack")
-                    .size(12)
-                    .color(theme::TEXT_FAINT),
-            ]
-            .spacing(2);
-            // Render top first: reverse over the visible window.
-            for (offset, entry) in stack_entries.iter().rev().take(visible).enumerate() {
-                let is_top = offset == 0;
-                stack_lane = stack_lane.push(
-                    container(
-                        text(entry.as_str())
-                            .font(iced::Font::MONOSPACE)
-                            .size(14)
-                            .color(if is_top { theme::CREAM } else { theme::TEXT_DIM }),
-                    )
-                    .width(Length::Fixed(72.0))
-                    .center_x(Length::Fixed(72.0))
-                    .padding([2, 4])
-                    .style(move |_theme: &iced::Theme| {
-                        container::Style {
-                            background: Some(
-                                if is_top { theme::TEAL } else { theme::RAISED }.into()
-                            ),
-                            border: iced::Border {
-                                color: theme::BORDER,
-                                width: 1.0,
-                                radius: 2.0.into(),
-                            },
-                            ..Default::default()
-                        }
-                    }),
-                );
-            }
-            if hidden > 0 {
-                stack_lane = stack_lane.push(
-                    text(format!("… {} more below", hidden))
-                        .size(11)
-                        .color(theme::TEXT_FAINT),
-                );
-            }
-
-            let state_id = run.config.state_id() as usize;
-            let state_label = tab.states.iter()
-                .find(|node| node.id == state_id)
-                .map(|node| node.label.to_string())
-                .unwrap_or_else(|| format!("q{}", state_id));
-            let status_color = match run.finished {
-                Some(true) => theme::ACCEPT,
-                Some(false) => theme::REJECT,
-                None => theme::TEXT_DIM,
-            };
-            let status = row![
-                text(format!("State: {}", state_label)).size(14).color(status_color),
-                text(format!("Steps: {}", run.steps)).size(14).color(theme::TEXT_DIM),
-                text(match run.finished {
-                    Some(true) => "Accepted".to_string(),
-                    Some(false) => "Rejected".to_string(),
-                    None => "Running...".to_string(),
-                }).size(14).color(status_color),
-            ]
-            .spacing(18);
-
-            panel = panel.push(
-                row![
-                    stack_lane,
-                    column![
-                        status,
-                        text(format!("Input left: {}", if run.config.remaining_input().is_empty() { "ε".to_string() } else { run.config.remaining_input().clone() }))
-                            .size(13)
-                            .color(theme::TEXT_DIM),
+                (
+                    row![
+                        widgets::outcome_chip(Outcome::from_finished(frontier.finished)),
+                        widgets::stat("level", frontier.level.to_string()),
+                        widgets::stat("branches", frontier.alive.len().to_string()),
                     ]
-                    .spacing(8),
-                ]
-                .spacing(24),
-            );
-        } else {
-            panel = panel.push(
-                text("Type an input and press Load to step through the computation; the stack grows upward.")
-                    .size(13)
-                    .color(theme::TEXT_FAINT),
-            );
-        }
+                    .spacing(12)
+                    .align_y(Alignment::Center)
+                    .into(),
+                    self.create_pda_nd_lane_view(frontier),
+                )
+            } else if let Some(run) = &tab.pda_run {
+                let consumed = run.input.chars().count() - run.config.remaining_input().chars().count();
+                (
+                    row![
+                        widgets::outcome_chip(Outcome::from_finished(run.finished)),
+                        widgets::stat("state", self.state_label(run.config.state_id())),
+                        widgets::stat("steps", run.steps.to_string()),
+                    ]
+                    .spacing(12)
+                    .align_y(Alignment::Center)
+                    .into(),
+                    // Input on the left, the stack (growing to the right,
+                    // top highlighted) on the right.
+                    row![
+                        column![
+                            widgets::caption("INPUT"),
+                            widgets::strip(widgets::ribbon(&run.input, consumed, CellSize::Regular)),
+                        ]
+                        .spacing(6)
+                        .width(Length::FillPortion(1)),
+                        column![
+                            widgets::caption("STACK  (top →)"),
+                            widgets::strip(widgets::stack_strip(run.config.stack(), STACK_VISIBLE_ENTRIES)),
+                        ]
+                        .spacing(6)
+                        .width(Length::FillPortion(1)),
+                    ]
+                    .spacing(24)
+                    .into(),
+                )
+            } else {
+                (
+                    widgets::outcome_chip(Outcome::Idle),
+                    widgets::hint(if tab.insight.deterministic {
+                        "Type a word and press Load to watch the input and the stack step by step."
+                    } else {
+                        "Nondeterministic: Load a word to explore every branch, one level at a time."
+                    }),
+                )
+            };
 
-        container(panel)
-            .style(|_theme: &iced::Theme| theme::panel_box())
-            .padding([8, 12])
-            .into()
+        widgets::run_dock(Family::Pushdown, Family::Pushdown.title(), tab.dock_collapsed, self.dock_is_compact(), controls.into(), status, body)
     }
 
     /* Level-by-level lane view for nondeterministic machines: one row per
-     * live branch with its state, a compact stack snapshot (bottom first,
-     * top last) and the input still to consume. */
+     * live branch with its state, its stack (top on the right) and the
+     * input still to consume. */
     fn create_pda_nd_lane_view(&self, frontier: &PdaNdFrontier) -> Element<'_, Message> {
-        let tab = self.get_active_tab();
-        let mut view = column![
-            text(format!(
-                "Level {} · {} branches alive",
-                frontier.level,
-                frontier.alive.len()
-            ))
-            .size(14)
-            .color(theme::CREAM),
-        ]
-        .spacing(6);
-
-        let state_label_of = |state_id: u64| -> String {
-            tab.states
-                .iter()
-                .find(|node| node.id == state_id as usize)
-                .map(|node| node.label.to_string())
-                .unwrap_or_else(|| format!("q{}", state_id))
-        };
-
-        for (index, config) in frontier.alive.iter().take(ND_LANES_VISIBLE).enumerate() {
-            let stack_text = if config.stack().is_empty() {
-                "[]".to_string()
-            } else {
-                format!("[{}]", config.stack().join(" "))
-            };
-            view = view.push(
-                row![
-                    text(format!("─ {:>2}", index + 1))
-                        .font(iced::Font::MONOSPACE)
-                        .size(12)
-                        .color(theme::TEXT_FAINT),
-                    text(state_label_of(config.state_id()))
-                        .font(iced::Font::MONOSPACE)
-                        .size(12)
-                        .color(theme::GREEN),
-                    text(stack_text)
-                        .font(iced::Font::MONOSPACE)
-                        .size(12)
-                        .color(theme::CREAM),
-                    if config.remaining_input().is_empty() {
-                        Self::epsilon_lane_label()
-                    } else {
-                        Self::input_ribbon(config.remaining_input(), 0, 16.0, 12.0).into()
-                    },
-                ]
-                .spacing(8)
-                .align_y(iced::Alignment::Center),
-            );
-        }
-        if frontier.alive.len() > ND_LANES_VISIBLE {
-            view = view.push(
-                text(format!("… {} more branches", frontier.alive.len() - ND_LANES_VISIBLE))
-                    .size(12)
-                    .color(theme::TEXT_FAINT),
-            );
-        }
-
-        let status_color = match frontier.finished {
-            Some(true) => theme::ACCEPT,
-            Some(false) => theme::REJECT,
-            None => theme::TEXT_DIM,
-        };
-        view = view.push(
-            text(match frontier.finished {
-                Some(true) => "Accepted".to_string(),
-                Some(false) => "Rejected".to_string(),
-                None => "Running...".to_string(),
+        let rows = frontier
+            .alive
+            .iter()
+            .take(ND_LANES_VISIBLE)
+            .enumerate()
+            .map(|(index, config)| {
+                let stack_text = if config.stack().is_empty() {
+                    "[ ]".to_string()
+                } else {
+                    format!("[{}]", config.stack().join(" "))
+                };
+                widgets::lane(
+                    index,
+                    self.state_label(config.state_id()),
+                    row![
+                        text(stack_text).font(theme::MONO).size(12).style(theme::text_dim),
+                        widgets::ribbon(config.remaining_input(), 0, CellSize::Compact),
+                    ]
+                    .spacing(10)
+                    .align_y(Alignment::Center)
+                    .into(),
+                )
             })
-            .size(14)
-            .color(status_color),
-        );
-
-        container(view)
-            .padding([6, 10])
-            .style(|_theme: &iced::Theme| theme::inset_box())
-            .into()
+            .collect();
+        widgets::lanes(rows, frontier.alive.len().saturating_sub(ND_LANES_VISIBLE))
     }
-
 }

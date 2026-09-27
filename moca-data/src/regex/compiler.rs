@@ -27,17 +27,42 @@ pub fn compile(ast: &RegexAst) -> FiniteAutomata {
     automata
 }
 
-/* Convenience wrapper: parse a pattern and compile it in one step. */
+/* Convenience wrapper: parse a pattern and compile it in one step. A
+ * literal ε symbol (`\ε`) parses, but automaton labels reserve "ε" for the
+ * empty word, so it cannot be compiled faithfully and is rejected here
+ * instead of silently turning into an ε move. */
 pub fn compile_str(pattern: &str) -> Result<FiniteAutomata, super::parser::ParseError> {
     let ast = super::parser::parse(pattern)?;
+    if contains_literal_epsilon(&ast) {
+        let chars: Vec<char> = pattern.chars().collect();
+        let position = chars
+            .windows(2)
+            .position(|pair| pair == ['\\', 'ε'])
+            .unwrap_or(0);
+        return Err(super::parser::ParseError {
+            position,
+            message: "a literal 'ε' symbol cannot be compiled: automaton labels use ε for the empty word".to_string(),
+        });
+    }
     Ok(compile(&ast))
 }
 
-/* Adds a fresh state and returns its id (ids are assigned densely). */
+fn contains_literal_epsilon(node: &RegexAst) -> bool {
+    match node {
+        RegexAst::Char(c) => *c == 'ε',
+        RegexAst::Empty | RegexAst::Epsilon => false,
+        RegexAst::Concat(left, right) | RegexAst::Union(left, right) => {
+            contains_literal_epsilon(left) || contains_literal_epsilon(right)
+        },
+        RegexAst::Star(inner) | RegexAst::Plus(inner) | RegexAst::Quest(inner) => {
+            contains_literal_epsilon(inner)
+        },
+    }
+}
+
+/* Adds a fresh state and returns its id. */
 fn add_state(automata: &mut FiniteAutomata) -> StateID {
-    let id = automata.get_states_by_id_ref().len() as StateID;
-    automata.add_state();
-    id
+    automata.add_state()
 }
 
 fn add_epsilon(automata: &mut FiniteAutomata, from: StateID, to: StateID) {

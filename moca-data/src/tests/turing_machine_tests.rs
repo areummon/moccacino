@@ -605,3 +605,35 @@ fn turing_machine_remove_state_cache_test() {
     tm.add_transition(0, 2, "a;a/S".to_string());
     assert!(tm.accepts("a"));
 }
+
+/* Reaching the accepting state exactly on the last budgeted step accepts. */
+#[test]
+fn tm_accepts_on_last_budgeted_step_test() {
+    let mut tm = TuringMachine::new('_');
+    tm.add_n_states(3);
+    tm.make_initial(0);
+    tm.make_final(2);
+    tm.add_transition(0, 1, "a;a/R".to_string());
+    tm.add_transition(1, 2, "b;b/R".to_string());
+    assert_eq!(tm.run("ab", 2), Some(RunOutcome::Accepted));
+    assert_eq!(tm.run_nondeterministic("ab", 2), Some(RunOutcome::Accepted));
+    assert_eq!(tm.run("ab", 1), Some(RunOutcome::MaxStepsExceeded));
+}
+
+/* Removing the conflicting transition makes the machine deterministic
+ * again, and a machine left without transitions forgets its tape count. */
+#[test]
+fn tm_determinism_recovers_after_removal_test() {
+    let mut tm = TuringMachine::new('_');
+    tm.add_n_states(2);
+    tm.make_initial(0);
+    tm.add_transition(0, 1, "a;a/R,_;_/S".to_string());
+    tm.add_transition(0, 0, "a;b/R,_;_/S".to_string());
+    assert!(!tm.is_deterministic());
+    tm.remove_transition(0, 0, "a;b/R,_;_/S");
+    assert!(tm.is_deterministic());
+    assert_eq!(tm.get_tape_count(), 2);
+    tm.remove_transition(0, 1, "a;a/R,_;_/S");
+    tm.add_transition(0, 1, "a;a/R".to_string());
+    assert_eq!(tm.get_tape_count(), 1);
+}

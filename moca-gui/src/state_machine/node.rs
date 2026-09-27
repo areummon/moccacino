@@ -1,7 +1,7 @@
-use iced::widget::canvas::{self, Frame, Path, Stroke, Text};
-use iced::{alignment, Point, Theme};
-use crate::gui::theme;
-use std::collections::HashSet;
+use iced::widget::canvas::{Frame, Path, Stroke, Text};
+use iced::{alignment, Color, Point, Vector};
+
+use crate::gui::theme::{self, Palette};
 
 #[derive(Debug, Clone)]
 pub struct StateNode {
@@ -9,6 +9,15 @@ pub struct StateNode {
     pub position: Point,
     pub radius: f32,
     pub label: String,
+}
+
+/* How a node is decorated on top of its base look. */
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct NodeLook {
+    pub(crate) initial: bool,
+    pub(crate) accepting: bool,
+    /* The running machine currently sits here. */
+    pub(crate) active: bool,
 }
 
 impl StateNode {
@@ -20,77 +29,70 @@ impl StateNode {
         StateNode { id: 0, position, radius, label }
     }
 
-    fn draw(&self, frame: &mut Frame, _theme: &Theme, is_initial: bool, is_final: bool) {
-        frame.fill(
-            &Path::circle(self.position, self.radius),
-            theme::NODE_FILL,
-        );
+    /* A soft disc with a faint drop shadow; accepting states get the
+     * classic inner ring, the initial state a filled pointer, and active
+     * states a warm glow. `tint` is the tab family's pastel. */
+    pub(crate) fn draw(&self, frame: &mut Frame, p: &Palette, tint: Color, look: NodeLook) {
+        let center = self.position;
+        let r = self.radius;
 
+        if look.active {
+            frame.fill(&Path::circle(center, r + 11.0), theme::alpha(p.accent, 0.14));
+            frame.fill(&Path::circle(center, r + 6.0), theme::alpha(p.accent, 0.26));
+        }
+
+        frame.fill(&Path::circle(center + Vector::new(0.0, 2.5), r + 0.5), p.shadow);
+        let fill = if look.active {
+            theme::mix(p.node_fill, p.accent, 0.35)
+        } else {
+            theme::mix(p.node_fill, tint, 0.28)
+        };
+        frame.fill(&Path::circle(center, r), fill);
         frame.stroke(
-            &Path::circle(self.position, self.radius),
+            &Path::circle(center, r),
             Stroke::default()
-                .with_width(2.0)
-                .with_color(theme::CREAM),
+                .with_width(if look.active { 2.5 } else { 2.0 })
+                .with_color(if look.active { p.accent_strong } else { p.node_stroke }),
         );
 
-        if is_final {
-            let inner_radius = self.radius - 5.0;
+        if look.accepting {
             frame.stroke(
-                &Path::circle(self.position, inner_radius),
+                &Path::circle(center, r - 5.0),
                 Stroke::default()
                     .with_width(1.5)
-                    .with_color(theme::CREAM),
+                    .with_color(if look.active { p.accent_strong } else { p.node_stroke }),
             );
         }
 
-        if is_initial {
-            let arrow_size = 20.0;
-            let arrow_height = 20.0;
-
-            let triangle_start_x = self.position.x - self.radius - arrow_size;
-            let triangle_y = self.position.y;
-
-            let tip = Point::new(self.position.x - self.radius, triangle_y);
-            let base_top = Point::new(triangle_start_x, triangle_y - arrow_height / 2.0);
-            let base_bottom = Point::new(triangle_start_x, triangle_y + arrow_height / 2.0);
-
-            let mut path_builder = canvas::path::Builder::new();
-            path_builder.move_to(tip);
-            path_builder.line_to(base_top);
-            path_builder.line_to(base_bottom);
-            path_builder.close();
-            let triangle_path = path_builder.build();
-
+        if look.initial {
+            let tip = Point::new(center.x - r - 3.0, center.y);
+            let pointer = Path::new(|b| {
+                b.move_to(tip);
+                b.line_to(Point::new(tip.x - 16.0, center.y - 9.0));
+                b.line_to(Point::new(tip.x - 12.0, center.y));
+                b.line_to(Point::new(tip.x - 16.0, center.y + 9.0));
+                b.close();
+            });
+            frame.fill(&pointer, p.accent);
             frame.stroke(
-                &triangle_path,
+                &pointer,
                 Stroke::default()
-                    .with_width(2.0)
-                    .with_color(theme::CREAM),
+                    .with_width(1.2)
+                    .with_color(p.accent_strong)
+                    .with_line_join(iced::widget::canvas::LineJoin::Round),
             );
         }
 
         frame.fill_text(Text {
             content: self.label.to_string(),
-            position: self.position,
-            color: theme::CREAM,
+            position: center,
+            color: p.text,
             size: 14.0.into(),
+            font: theme::SEMIBOLD,
+            shaping: crate::gui::widgets::shaping_for(&self.label),
             horizontal_alignment: alignment::Horizontal::Center,
             vertical_alignment: alignment::Vertical::Center,
             ..Text::default()
         });
-    }
-
-    pub(crate) fn draw_all(
-        nodes: &[StateNode],
-        frame: &mut Frame,
-        _theme: &Theme,
-        initial_state: Option<usize>,
-        final_states: &HashSet<usize>
-    ) {
-        for node in nodes {
-            let is_initial = initial_state == Some(node.id);
-            let is_final = final_states.contains(&node.id);
-            node.draw(frame, _theme, is_initial, is_final);
-        }
     }
 }

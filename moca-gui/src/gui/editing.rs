@@ -8,6 +8,7 @@ impl super::app::App {
     pub(crate) fn clear_active_tab(&mut self) -> Task<Message> {
         self.get_active_tab_mut().state_machine.reset_id_counter();
         self.get_active_tab_mut().state_machine.set_scroll(iced::Vector::new(0.0, 0.0));
+        self.get_active_tab_mut().state_machine.set_zoom(1.0);
         self.get_active_tab_mut().state_machine.request_redraw();
         self.get_active_tab_mut().transitions.clear();
         self.get_active_tab_mut().states.clear();
@@ -19,8 +20,6 @@ impl super::app::App {
         self.get_active_tab_mut().machine.clear();
         self.get_active_tab_mut().check_input_dialog_open = false;
         self.get_active_tab_mut().check_input_text.clear();
-        self.get_active_tab_mut().check_result_popup_open = false;
-        self.get_active_tab_mut().check_input_result = None;
         self.get_active_tab_mut().regex_dialog_open = false;
         self.get_active_tab_mut().tm_run = None;
         self.get_active_tab_mut().tm_frontier = None;
