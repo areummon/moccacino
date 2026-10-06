@@ -467,7 +467,9 @@ impl Tab {
         self.final_states.clear();
 
         let mut max_id_after_load = 0;
-        for (id, state) in self.machine.states_ref() {
+        let mut loaded: Vec<_> = self.machine.states_ref().iter().collect();
+        loaded.sort_unstable_by_key(|(id, _)| **id);
+        for (id, state) in loaded {
             let state_node = state_machine::StateNode::new(
                 *id as usize,
                 iced::Point::new(100.0, 100.0),

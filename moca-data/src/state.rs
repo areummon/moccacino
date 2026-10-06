@@ -1,5 +1,5 @@
-use std::collections::{HashMap, HashSet, BTreeSet};
-use std::collections::hash_map::Iter;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::btree_map::Iter;
 
 pub type StateID = u64;
 pub type Input = String;
@@ -7,7 +7,7 @@ pub type Input = String;
 #[derive(PartialEq, Debug, Eq, Clone)]
 pub struct State {
     pub name: String,
-    transitions_by_id: HashMap<StateID, HashSet<Input>>,
+    transitions_by_id: BTreeMap<StateID, BTreeSet<Input>>,
     input_transitions: HashSet<String>,
     pub label: BTreeSet<StateID>,
     pub initial_flag: bool,
@@ -18,7 +18,7 @@ impl State {
     pub fn new(name: String) -> Self {
         Self {
             name,
-            transitions_by_id: HashMap::new(),
+            transitions_by_id: BTreeMap::new(),
             input_transitions: HashSet::new(),
             label: BTreeSet::new(),
             initial_flag: false,
@@ -65,7 +65,7 @@ impl State {
             .collect();
     }
 
-    pub fn iter_by_transition(&self) -> Iter<'_, StateID, HashSet<Input>> {
+    pub fn iter_by_transition(&self) -> Iter<'_, StateID, BTreeSet<Input>> {
         self.transitions_by_id.iter()
     }
 }

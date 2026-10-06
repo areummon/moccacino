@@ -1019,3 +1019,43 @@ fn add_state_after_deletion_keeps_existing_states_test() {
     assert_eq!(automata.get_states_by_id_ref().len(), 3);
     assert_eq!(automata.get_states_by_id_ref()[&2].name, "kept");
 }
+
+fn ends_with_ab_nfa(labels_reversed: bool) -> FiniteAutomata {
+    let mut automata = FiniteAutomata::new();
+    automata.add_n_states(3);
+    automata.make_initial(0);
+    automata.make_final(2);
+    let mut loops = vec!["a", "b", "c"];
+    if labels_reversed {
+        loops.reverse();
+    }
+    for label in loops {
+        automata.add_transition(0, 0, label.to_string());
+    }
+    automata.add_transition(0, 1, "a".to_string());
+    automata.add_transition(1, 2, "b".to_string());
+    automata
+}
+
+#[test]
+fn derived_machines_are_reproducible_test() {
+    use crate::entity_file::write_finite_entity;
+    let reference = ends_with_ab_nfa(false);
+    let expected_dfa = write_finite_entity("m", &reference.to_dfa()).unwrap();
+    let expected_minimized = write_finite_entity("m", &reference.to_dfa().minimize()).unwrap();
+    for attempt in 0..32 {
+        let automata = ends_with_ab_nfa(attempt % 2 == 1);
+        let loop_labels: Vec<&String> = automata.get_states_by_id_ref()[&0]
+            .iter_by_transition()
+            .find(|(target, _)| **target == 0)
+            .map(|(_, labels)| labels.iter().collect())
+            .unwrap();
+        assert_eq!(loop_labels, ["a", "b", "c"], "labels iterate in sorted order");
+        let dfa = automata.to_dfa();
+        assert_eq!(write_finite_entity("m", &dfa).unwrap(), expected_dfa, "NFA -> DFA numbering is stable");
+        assert_eq!(dfa.get_initial_state_id(), &Some(0), "the DFA starts at q0");
+        let minimized = dfa.minimize();
+        assert_eq!(write_finite_entity("m", &minimized).unwrap(), expected_minimized, "minimized numbering is stable");
+        assert_eq!(minimized.get_initial_state_id(), &Some(0), "the minimized DFA starts at q0");
+    }
+}

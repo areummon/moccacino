@@ -6,7 +6,7 @@ use crate::regex::ast::RegexAst;
 #[derive(Debug, Default, Clone)]
 pub struct FiniteAutomata {
     states_by_id: HashMap<StateID, State>,
-    string_transitions: HashSet<String>,
+    string_transitions: BTreeSet<String>,
     initial_state_id: Option<StateID>,
     final_states: HashSet<StateID>,
     deterministic: bool,
@@ -32,7 +32,7 @@ impl FiniteAutomata {
     pub fn new() -> Self {
         FiniteAutomata {
             states_by_id: HashMap::new(),
-            string_transitions: HashSet::new(),
+            string_transitions: BTreeSet::new(),
             initial_state_id: None,
             final_states: HashSet::new(),
             deterministic: true,
@@ -47,7 +47,7 @@ impl FiniteAutomata {
         self.deterministic = true;
     }
 
-    pub fn get_string_transitions(&self) -> &HashSet<String> {
+    pub fn get_string_transitions(&self) -> &BTreeSet<String> {
         &self.string_transitions
     }
 
@@ -121,7 +121,7 @@ impl FiniteAutomata {
 
     fn refresh_determinism(&mut self) {
         let mut deterministic = true;
-        let mut alphabet: HashSet<String> = HashSet::new();
+        let mut alphabet: BTreeSet<String> = BTreeSet::new();
         for state in self.states_by_id.values() {
             let mut target_of: HashMap<&str, StateID> = HashMap::new();
             for (target, labels) in state.iter_by_transition() {
@@ -203,17 +203,20 @@ impl FiniteAutomata {
             panic!("For now this doesn't do anything, but it should return an Error()");
         }
         let subsets_and_transitions = subset_construction(self);
-        let initial_closure = self.initial_state_id.map(|initial_id| self.lambda_closure(initial_id, ""));
+        let initial_subset = self.lambda_closure(self.initial_state_id.expect("There is not an initial state."), "");
+        let order = breadth_first(&initial_subset, |subset| {
+            subsets_and_transitions[subset]
+                .iter()
+                .map(|(target, _)| target)
+                .filter(|target| !target.is_empty())
+                .collect()
+        });
         let mut states_by_id: HashMap<StateID, State> = HashMap::new();
         let mut id_by_subsets: HashMap<&BTreeSet<StateID>, StateID> = HashMap::new();
-        let mut new_initial_id = 0;
         let mut final_states: HashSet<StateID> = HashSet::new();
-        for (id, subset) in (0..).zip(subsets_and_transitions.keys()) {
+        for (id, subset) in (0..).zip(order) {
             let mut state = State::new(format!("q{id}"));
-            if initial_closure.as_ref() == Some(subset) {
-                new_initial_id = id;
-                state.initial_flag = true;
-            }
+            state.initial_flag = id == 0;
             if subset.iter().any(|member| self.states_by_id.get(member).is_some_and(|s| s.final_flag)) {
                 state.final_flag = true;
                 final_states.insert(id);
@@ -235,7 +238,7 @@ impl FiniteAutomata {
         FiniteAutomata {
             states_by_id,
             string_transitions: self.string_transitions.clone(),
-            initial_state_id: Some(new_initial_id),
+            initial_state_id: Some(0),
             final_states,
             deterministic: true,
         }
@@ -515,32 +518,63 @@ fn hopcroft_algorithm(automata: &FiniteAutomata) -> HashSet<BTreeSet<StateID>> {
 }
 
 fn convert_minimized_dfa(automata: &FiniteAutomata, partition: HashSet<BTreeSet<StateID>>) -> FiniteAutomata {
+    let mut blocks: Vec<BTreeSet<StateID>> = partition.into_iter().collect();
+    blocks.sort();
+    let block_of: HashMap<StateID, usize> = blocks
+        .iter()
+        .enumerate()
+        .flat_map(|(block, set)| set.iter().map(move |&id| (id, block)))
+        .collect();
+    let successor = |block: usize, symbol: &str| {
+        let representative = *blocks[block].first()?;
+        let target = automata.transition_function(representative, symbol)?;
+        block_of.get(&target).copied()
+    };
+    let mut order = match automata.initial_state_id.and_then(|initial_id| block_of.get(&initial_id)) {
+        Some(&start) => breadth_first(start, |block| {
+            automata.string_transitions.iter().filter_map(|symbol| successor(block, symbol)).collect()
+        }),
+        None => Vec::new(),
+    };
+    order.extend((0..blocks.len()).filter(|block| !order.contains(block)).collect::<Vec<_>>());
+
     let mut minimized_automata = FiniteAutomata::new();
-    let mut block_of: HashMap<StateID, StateID> = HashMap::new();
-    let mut representatives: Vec<(StateID, StateID)> = Vec::new();
-    for set in partition {
-        let block = minimized_automata.add_state();
-        if automata.initial_state_id.is_some_and(|initial_id| set.contains(&initial_id)) {
-            minimized_automata.make_initial(block);
-        }
-        if set.iter().any(|id| automata.final_states.contains(id)) {
-            minimized_automata.make_final(block);
-        }
-        block_of.extend(set.iter().map(|&id| (id, block)));
-        if let Some(&representative) = set.first() {
-            representatives.push((block, representative));
-        }
-        minimized_automata.add_label(block, set);
+    let mut id_of_block = vec![0; blocks.len()];
+    for &block in &order {
+        id_of_block[block] = minimized_automata.add_state();
     }
-    for (block, representative) in representatives {
+    for &block in &order {
+        let id = id_of_block[block];
+        let set = &blocks[block];
+        if automata.initial_state_id.is_some_and(|initial_id| set.contains(&initial_id)) {
+            minimized_automata.make_initial(id);
+        }
+        if set.iter().any(|state| automata.final_states.contains(state)) {
+            minimized_automata.make_final(id);
+        }
         for symbol in &automata.string_transitions {
-            let target = automata.transition_function(representative, symbol);
-            if let Some(&to) = target.and_then(|target| block_of.get(&target)) {
-                minimized_automata.add_transition(block, to, symbol.clone());
+            if let Some(target) = successor(block, symbol) {
+                minimized_automata.add_transition(id, id_of_block[target], symbol.clone());
             }
         }
+        minimized_automata.add_label(id, set.clone());
     }
     minimized_automata
+}
+
+fn breadth_first<K: Copy + Eq + std::hash::Hash>(start: K, successors: impl Fn(K) -> Vec<K>) -> Vec<K> {
+    let mut order = vec![start];
+    let mut seen = HashSet::from([start]);
+    let mut next = 0;
+    while let Some(&current) = order.get(next) {
+        for successor in successors(current) {
+            if seen.insert(successor) {
+                order.push(successor);
+            }
+        }
+        next += 1;
+    }
+    order
 }
 
 type SubsetTransitions<'a> = HashMap<BTreeSet<StateID>, Vec<(BTreeSet<StateID>, &'a str)>>;
