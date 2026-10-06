@@ -1,24 +1,14 @@
-/* Thompson construction: compiles a RegexAst into a nondeterministic finite
- * automaton using the existing FiniteAutomata structure. Every fragment has a
- * single start state (no incoming transitions from other fragments) and a
- * single end state (no outgoing transitions until further composition), which
- * is what makes the local compositions below sound.
- *
- * ε-transitions use the "ε" label per the library-wide conventions. */
 use crate::finite_automata::FiniteAutomata;
-use crate::state::{StateID, Input};
+use crate::state::StateID;
 use crate::state_machine::StateMachine;
 
 use super::ast::RegexAst;
 
-/* A built piece of the automaton: the ids of its entry and exit states. */
 struct Fragment {
     start: StateID,
     end: StateID,
 }
 
-/* Compiles an already parsed expression into a new automaton. The resulting
- * automaton has exactly one initial state and one final state. */
 pub fn compile(ast: &RegexAst) -> FiniteAutomata {
     let mut automata = FiniteAutomata::new();
     let fragment = build(ast, &mut automata);
@@ -27,10 +17,6 @@ pub fn compile(ast: &RegexAst) -> FiniteAutomata {
     automata
 }
 
-/* Convenience wrapper: parse a pattern and compile it in one step. A
- * literal ε symbol (`\ε`) parses, but automaton labels reserve "ε" for the
- * empty word, so it cannot be compiled faithfully and is rejected here
- * instead of silently turning into an ε move. */
 pub fn compile_str(pattern: &str) -> Result<FiniteAutomata, super::parser::ParseError> {
     let ast = super::parser::parse(pattern)?;
     if contains_literal_epsilon(&ast) {
@@ -60,34 +46,26 @@ fn contains_literal_epsilon(node: &RegexAst) -> bool {
     }
 }
 
-/* Adds a fresh state and returns its id. */
-fn add_state(automata: &mut FiniteAutomata) -> StateID {
-    automata.add_state()
-}
-
 fn add_epsilon(automata: &mut FiniteAutomata, from: StateID, to: StateID) {
-    let epsilon: Input = "ε".to_string();
-    automata.add_transition(from, to, epsilon);
+    automata.add_transition(from, to, "ε".to_string());
 }
 
 fn build(node: &RegexAst, automata: &mut FiniteAutomata) -> Fragment {
     match node {
-        /* Two states with no connection: the end is unreachable, so nothing
-         * is ever accepted. */
         RegexAst::Empty => {
-            let start = add_state(automata);
-            let end = add_state(automata);
+            let start = automata.add_state();
+            let end = automata.add_state();
             Fragment { start, end }
         },
         RegexAst::Epsilon => {
-            let start = add_state(automata);
-            let end = add_state(automata);
+            let start = automata.add_state();
+            let end = automata.add_state();
             add_epsilon(automata, start, end);
             Fragment { start, end }
         },
         RegexAst::Char(c) => {
-            let start = add_state(automata);
-            let end = add_state(automata);
+            let start = automata.add_state();
+            let end = automata.add_state();
             automata.add_transition(start, end, c.to_string());
             Fragment { start, end }
         },
@@ -101,10 +79,10 @@ fn build(node: &RegexAst, automata: &mut FiniteAutomata) -> Fragment {
             }
         },
         RegexAst::Union(left, right) => {
-            let start = add_state(automata);
+            let start = automata.add_state();
             let left_fragment = build(left, automata);
             let right_fragment = build(right, automata);
-            let end = add_state(automata);
+            let end = automata.add_state();
             add_epsilon(automata, start, left_fragment.start);
             add_epsilon(automata, start, right_fragment.start);
             add_epsilon(automata, left_fragment.end, end);
@@ -112,30 +90,28 @@ fn build(node: &RegexAst, automata: &mut FiniteAutomata) -> Fragment {
             Fragment { start, end }
         },
         RegexAst::Star(inner) => {
-            let start = add_state(automata);
+            let start = automata.add_state();
             let inner_fragment = build(inner, automata);
-            let end = add_state(automata);
-            // Zero repetitions...
+            let end = automata.add_state();
             add_epsilon(automata, start, end);
-            // ...and looping back for more.
             add_epsilon(automata, start, inner_fragment.start);
             add_epsilon(automata, inner_fragment.end, end);
             add_epsilon(automata, inner_fragment.end, inner_fragment.start);
             Fragment { start, end }
         },
         RegexAst::Plus(inner) => {
-            let start = add_state(automata);
+            let start = automata.add_state();
             let inner_fragment = build(inner, automata);
-            let end = add_state(automata);
+            let end = automata.add_state();
             add_epsilon(automata, start, inner_fragment.start);
             add_epsilon(automata, inner_fragment.end, end);
             add_epsilon(automata, inner_fragment.end, inner_fragment.start);
             Fragment { start, end }
         },
         RegexAst::Quest(inner) => {
-            let start = add_state(automata);
+            let start = automata.add_state();
             let inner_fragment = build(inner, automata);
-            let end = add_state(automata);
+            let end = automata.add_state();
             add_epsilon(automata, start, inner_fragment.start);
             add_epsilon(automata, inner_fragment.end, end);
             add_epsilon(automata, start, end);

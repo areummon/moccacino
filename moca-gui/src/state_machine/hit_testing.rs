@@ -7,7 +7,6 @@ use super::node::StateNode;
 use super::program::StateMachine;
 use super::util::VectorExt;
 
-/* What sits under the cursor. */
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Hit {
     State(usize),
@@ -19,7 +18,6 @@ impl StateMachine<'_> {
         self.states.iter().map(|node| (node.id, node)).collect()
     }
 
-    /* Geometry of the drawn edge for one (from, to) pair. */
     pub(crate) fn edge_geometry(
         &self,
         node_by_id: &HashMap<usize, &StateNode>,
@@ -37,8 +35,6 @@ impl StateMachine<'_> {
         Some(EdgeGeometry::new(from_node, to_node, has_reverse, loop_direction))
     }
 
-    /* Self-loops point away from the state's neighbors: opposite the mean
-     * direction of its other edges, upwards when that is ambiguous. */
     fn loop_direction(&self, node_by_id: &HashMap<usize, &StateNode>, node: &StateNode) -> Vector {
         let mut sum = Vector::new(0.0, 0.0);
         for &(from, to) in self.transitions.keys() {
@@ -60,7 +56,6 @@ impl StateMachine<'_> {
         }
     }
 
-    /* States win over edges; among states the topmost (last drawn) wins. */
     pub(crate) fn hit_test(&self, point: Point) -> Option<Hit> {
         if let Some(node) = self
             .states

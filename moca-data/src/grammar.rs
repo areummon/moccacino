@@ -1,30 +1,8 @@
-/* Context-free grammars: model, text parsing, derivations, Chomsky normal
- * form and CYK membership. Grammars are deliberately NOT state machines, so
- * they implement neither the StateMachine nor the Machine trait.
- *
- * A symbol is any string; variables are exactly the symbols that appear as
- * the left-hand side of some production, and every other body symbol is a
- * terminal by derivation. An empty production body is an ε-production.
- *
- * Text format ("A -> B c | ε"), one production group per line:
- *   S -> a S b
- *   S -> ε
- * The variable of the first line becomes the start symbol; "ε" denotes the
- * empty body, and so does a blank alternative — "a |", "| a" and "a | | b"
- * parse exactly like "a | ε | b" — while whitespace between symbols stays a
- * plain separator. Alternatives are separated with "|".
- *
- * Membership (`generate`) assumes single-character terminals and runs CYK
- * over an internal Chomsky normal form; `generate_tokens` accepts explicit
- * token slices instead. */
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 
-/* Error produced while parsing a grammar description. */
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParseError {
-    /* One-based line number of the offending line (0 when there was no
-     * production at all). */
     pub line: usize,
     pub message: String,
 }
@@ -37,7 +15,6 @@ impl fmt::Display for ParseError {
 
 impl std::error::Error for ParseError {}
 
-/* Structure that represents a context-free grammar. */
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Grammar {
     nonterminals: BTreeSet<String>,
@@ -45,11 +22,9 @@ pub struct Grammar {
     start_symbol: String,
 }
 
-/* Production table shared between the model and the transformation helpers. */
 type ProductionTable = BTreeMap<String, Vec<Vec<String>>>;
 
 impl Grammar {
-    /* Creates a grammar whose start symbol is registered as a variable. */
     pub fn new(start_symbol: &str) -> Self {
         let mut grammar = Grammar::default();
         grammar.add_variable(start_symbol);
@@ -65,8 +40,6 @@ impl Grammar {
         &self.nonterminals
     }
 
-    /* Terminals are derived: every symbol occurring in a production body
-     * without being a variable. */
     pub fn terminals(&self) -> BTreeSet<String> {
         let mut terminals = BTreeSet::new();
         for bodies in self.productions.values() {
@@ -85,7 +58,6 @@ impl Grammar {
         self.productions.get(variable)
     }
 
-    /* All (variable, body) pairs sorted by variable name. */
     pub fn productions(&self) -> Vec<(String, Vec<String>)> {
         let mut result = Vec::new();
         for (variable, bodies) in &self.productions {
@@ -103,7 +75,6 @@ impl Grammar {
         }
     }
 
-    /* Adds one alternative. An empty body slice is an ε-production. */
     pub fn add_production(&mut self, variable: &str, body: &[&str]) {
         self.add_variable(variable);
         let body: Vec<String> = body.iter().map(|s| s.to_string()).collect();
@@ -113,10 +84,6 @@ impl Grammar {
             .push(body);
     }
 
-    /* The production table with an (empty) entry for every declared
-     * variable. The transformation helpers tell variables from terminals by
-     * table membership, so a variable without productions must still appear
-     * (as non-generating) instead of passing for a terminal. */
     fn production_table(&self) -> ProductionTable {
         let mut table = self.productions.clone();
         for variable in &self.nonterminals {
@@ -125,17 +92,10 @@ impl Grammar {
         table
     }
 
-    /* True when the start symbol derives the empty word. */
     pub fn contains_epsilon(&self) -> bool {
         nullable_from_table(&self.productions).contains(&self.start_symbol)
     }
 
-    /* Leftmost/rightmost derivations as the sequence of sentential forms,
-     * starting at [start] and ending with the input string itself; None when
-     * the input cannot be derived within `max_steps` rule applications.
-     * Terminal prefixes/suffixes already produced never change, which prunes
-     * the search against the input. Assumes single-character terminals so
-     * sentential forms can be compared with the plain string. */
     pub fn derive_leftmost(&self, input: &str, max_steps: usize) -> Option<Vec<Vec<String>>> {
         self.derive_extreme(input.to_string(), true, max_steps)
     }
@@ -150,13 +110,6 @@ impl Grammar {
         leftmost: bool,
         max_steps: usize,
     ) -> Option<Vec<Vec<String>>> {
-        // Best-first expansion ordered by variable count (then discovery
-        // order): derivations shrink toward their final terminal form, so
-        // this biases the search toward short completions without giving up
-        // completeness — every ordering still visits all reachable forms
-        // given enough budget. Breadth-ish ordering also avoids deep
-        // recursion on grammars like S -> SS whose sentential forms wander
-        // widely.
         use std::cmp::Reverse;
         #[derive(Clone)]
         struct Node {
@@ -172,12 +125,8 @@ impl Grammar {
         };
         let mut nodes: Vec<Node> = vec![initial];
         let mut seen: HashSet<String> = HashSet::from([form_key(&nodes[0].form)]);
-        // Min-heap over (variable count, discovery index).
         let mut heap: std::collections::BinaryHeap<Reverse<(usize, usize)>> =
             std::collections::BinaryHeap::from([Reverse((1, 0))]);
-        // Every terminal spells its characters and every non-nullable variable
-        // at least one more, so a form already longer than the input can
-        // never shrink back to it.
         let nullable = nullable_from_table(&self.production_table());
         let input_length = input.chars().count();
         let minimum_length = |form: &[String]| -> usize {
@@ -193,15 +142,21 @@ impl Grammar {
                 })
                 .sum()
         };
+        let sorted_productions: HashMap<&String, Vec<&Vec<String>>> = self
+            .productions
+            .iter()
+            .map(|(variable, bodies)| {
+                let mut sorted: Vec<&Vec<String>> = bodies.iter().collect();
+                sorted.sort();
+                (variable, sorted)
+            })
+            .collect();
         let mut steps_left = max_steps;
 
         while let Some(Reverse((_, index))) = heap.pop() {
             let form = nodes[index].form.clone();
             if is_terminal_form(self, &form) {
-                // A finished sentential form either spells the input or is a
-                // dead end for this word only.
-                if concatenate(&form) == input {
-                    // Reconstruct the chain from parent links.
+                if form.concat() == input {
                     let mut chain_rev = Vec::new();
                     let mut cursor = Some(index);
                     while let Some(node_index) = cursor {
@@ -217,13 +172,7 @@ impl Grammar {
                 Some(found) => found,
                 None => continue,
             };
-            let variable = form[position].clone();
-            let mut bodies: Vec<Vec<String>> = self
-                .productions_of(&variable)
-                .cloned()
-                .unwrap_or_default();
-            bodies.sort();
-            for body in bodies {
+            for body in sorted_productions.get(&form[position]).map(Vec::as_slice).unwrap_or_default() {
                 if steps_left == 0 {
                     break;
                 }
@@ -232,16 +181,15 @@ impl Grammar {
                 let mut next = form.clone();
                 next.splice(position..position + 1, body.iter().cloned());
 
-                // Locked-terminal pruning.
                 let terminal_matches_target = if leftmost {
                     let cut = extreme_variable_position(self, &next, true)
                         .unwrap_or(next.len());
-                    input.starts_with(&concatenate(&next[..cut]))
+                    input.starts_with(&next[..cut].concat())
                 } else {
                     let cut = extreme_variable_position(self, &next, false)
                         .map(|p| p + 1)
                         .unwrap_or(0);
-                    input.ends_with(&concatenate(&next[cut..]))
+                    input.ends_with(&next[cut..].concat())
                 };
                 if !terminal_matches_target || minimum_length(&next) > input_length {
                     continue;
@@ -258,18 +206,13 @@ impl Grammar {
         None
     }
 
-    /* Equivalent grammar in Chomsky normal form: every body is a single
-     * terminal, two variables, or ε on the (fresh) start symbol. The output
-     * keeps the exact language, ε included, via fresh helper variables. */
     pub fn to_chomsky_normal_form(&self) -> Grammar {
         let mut productions = self.production_table();
         let mut counter = 0usize;
         let mut names_in_use = all_symbol_names(&productions, &self.nonterminals);
 
-        // Whether the final grammar must carry an ε-production.
         let has_epsilon = nullable_from_table(&productions).contains(&self.start_symbol);
 
-        // 1. Fresh start symbol pointing at the original one.
         let start = fresh_name("S0", &names_in_use, &mut counter);
         names_in_use.insert(start.clone());
         productions
@@ -277,32 +220,12 @@ impl Grammar {
             .or_default()
             .push(vec![self.start_symbol.clone()]);
 
-        // 2. ε-elimination: rebuild every body dropping any subset of its
-        // nullable positions, removing all empty bodies.
-        let nullable = nullable_from_table(&productions);
-        let mut stripped: ProductionTable = BTreeMap::new();
-        for (variable, bodies) in &productions {
-            let entry = stripped.entry(variable.clone()).or_default();
-            for body in bodies {
-                for variant in nullable_dropping_variants(body, &nullable) {
-                    if !variant.is_empty() {
-                        entry.push(variant);
-                    }
-                }
-            }
-        }
-        let productions = dedup_bodies(stripped);
+        let productions = without_nullable_bodies(&productions, &nullable_from_table(&productions));
 
-        // 3. Unit-pair elimination.
         let productions = eliminate_unit_productions(productions);
 
-        // 4. Useless-symbol elimination.
         let mut productions = remove_useless_variables(productions, &start);
 
-        // 5. Restore ε on the fresh start when the language contains it. This
-        // happens after pruning so ε alone cannot resurrect dead variables;
-        // the fresh start either inherited real bodies in step 3 or stands
-        // alone carrying the empty word.
         if has_epsilon {
             productions
                 .entry(start.clone())
@@ -310,39 +233,29 @@ impl Grammar {
                 .push(Vec::new());
         }
 
-        // 6. Binarize bodies longer than two symbols.
         let productions = binarize_all(productions, &mut names_in_use, &mut counter);
 
-        // 7. Isolate terminals inside length-2 bodies.
         let productions = isolate_terminals(productions, &mut names_in_use, &mut counter);
 
-        let mut cnf = Grammar::default();
-        cnf.productions = dedup_bodies(productions);
-        cnf.start_symbol = start;
-        for variable in cnf.productions.keys() {
-            cnf.nonterminals.insert(variable.clone());
+        let productions = dedup_bodies(productions);
+        Grammar {
+            nonterminals: productions.keys().cloned().collect(),
+            productions,
+            start_symbol: start,
         }
-        cnf
     }
 
-    /* Membership assuming single-character terminals: CYK over an internal
-     * Chomsky normal form. */
     pub fn generate(&self, input: &str) -> bool {
         let tokens: Vec<String> = input.chars().map(|c| c.to_string()).collect();
         self.generate_tokens(&tokens)
     }
 
-    /* CYK membership over explicit tokens, compiled to CNF internally. */
     pub fn generate_tokens(&self, tokens: &[String]) -> bool {
         let cnf = self.to_chomsky_normal_form();
         cyk_accepts(&cnf, tokens)
     }
 }
 
-// ---------------------------------------------------------------------------
-// Text parsing
-
-/* Parses the "S -> a S b | ε" line format described in the module docs. */
 pub fn parse_grammar(source: &str) -> Result<Grammar, ParseError> {
     let mut grammar = Grammar::default();
     let mut first_lhs: Option<String> = None;
@@ -358,7 +271,7 @@ pub fn parse_grammar(source: &str) -> Result<Grammar, ParseError> {
             None => {
                 return Err(ParseError {
                     line: line_number,
-                    message: format!("missing '->' in {:?}", line),
+                    message: format!("missing '->' in {line:?}"),
                 })
             },
         };
@@ -375,10 +288,6 @@ pub fn parse_grammar(source: &str) -> Result<Grammar, ParseError> {
         }
         for alternative in rhs.split('|') {
             let alternative = alternative.trim();
-            // Lenient empty-body spellings: the literal ε or a blank
-            // alternative (trailing/leading/doubled "|", empty right-hand
-            // side). An ε among other symbols is the empty word too, so it
-            // is dropped rather than kept as a terminal.
             let body: Vec<&str> = alternative
                 .split_whitespace()
                 .filter(|symbol| *symbol != "ε")
@@ -398,13 +307,8 @@ pub fn parse_grammar(source: &str) -> Result<Grammar, ParseError> {
     Ok(grammar)
 }
 
-// ---------------------------------------------------------------------------
-// Derived membership machinery
-
 type NullableSet = BTreeSet<String>;
 
-/* Least fixpoint of variables that can derive the empty word. Bodies with no
- * entry in the table count as terminals and block nullability. */
 fn nullable_from_table(productions: &ProductionTable) -> NullableSet {
     let mut nullable: NullableSet = BTreeSet::new();
     loop {
@@ -436,32 +340,14 @@ fn is_terminal_form(grammar: &Grammar, form: &[String]) -> bool {
     form.iter().all(|symbol| !grammar.nonterminals.contains(symbol))
 }
 
-fn concatenate(symbols: &[String]) -> String {
-    symbols.concat()
-}
-
-/* Position of the leftmost (leftmost=true) or rightmost variable. */
-fn extreme_variable_position(
-    grammar: &Grammar,
-    form: &[String],
-    leftmost: bool,
-) -> Option<usize> {
-    let indices: Box<dyn Iterator<Item = usize>> = if leftmost {
-        Box::new(0..form.len())
+fn extreme_variable_position(grammar: &Grammar, form: &[String], leftmost: bool) -> Option<usize> {
+    let is_variable = |symbol: &String| grammar.nonterminals.contains(symbol);
+    if leftmost {
+        form.iter().position(is_variable)
     } else {
-        Box::new((0..form.len()).rev())
-    };
-    for index in indices {
-        if grammar.nonterminals.contains(&form[index]) {
-            return Some(index);
-        }
+        form.iter().rposition(is_variable)
     }
-    None
 }
-
-
-// ---------------------------------------------------------------------------
-// CNF helpers
 
 fn all_symbol_names(productions: &ProductionTable, declared: &BTreeSet<String>) -> BTreeSet<String> {
     let mut names: BTreeSet<String> = declared.clone();
@@ -476,7 +362,7 @@ fn all_symbol_names(productions: &ProductionTable, declared: &BTreeSet<String>) 
 
 fn fresh_name(prefix: &str, taken: &BTreeSet<String>, counter: &mut usize) -> String {
     loop {
-        let candidate = format!("{}{}", prefix, counter);
+        let candidate = format!("{prefix}{counter}");
         *counter += 1;
         if !taken.contains(&candidate) {
             return candidate;
@@ -492,39 +378,41 @@ fn dedup_bodies(mut table: ProductionTable) -> ProductionTable {
     table
 }
 
-/* Every nonempty variant of the body obtainable by omitting any subset of
- * its nullable positions (including omitting none). */
-fn nullable_dropping_variants(body: &[String], nullable: &NullableSet) -> Vec<Vec<String>> {
-    let droppable: Vec<usize> = body
+fn without_nullable_bodies(productions: &ProductionTable, nullable: &NullableSet) -> ProductionTable {
+    let stripped = productions
         .iter()
-        .enumerate()
-        .filter(|(_, symbol)| nullable.contains(*symbol))
-        .map(|(index, _)| index)
+        .map(|(variable, bodies)| {
+            let variants = bodies
+                .iter()
+                .flat_map(|body| nullable_dropping_variants(body, nullable))
+                .filter(|variant| !variant.is_empty())
+                .collect();
+            (variable.clone(), variants)
+        })
         .collect();
-    let variants_cap = 1u64 << droppable.len().min(20);
-    let mut out = Vec::new();
-    for mask in 0..variants_cap {
-        let dropped: HashSet<usize> = droppable
-            .iter()
-            .enumerate()
-            .filter(|(bit, _)| mask & (1u64 << bit) != 0)
-            .map(|(_, &position)| position)
-            .collect();
-        let variant: Vec<String> = body
-            .iter()
-            .enumerate()
-            .filter(|(index, _)| !dropped.contains(index))
-            .map(|(_, symbol)| symbol.clone())
-            .collect();
-        out.push(variant);
-    }
-    out
+    dedup_bodies(stripped)
 }
 
-/* Replaces unit chains A -> B by copying every non-unit body of B into A,
- * transitively; cycles collapse through the transitive closure. */
+fn nullable_dropping_variants(body: &[String], nullable: &NullableSet) -> Vec<Vec<String>> {
+    let droppable = body.iter().filter(|symbol| nullable.contains(*symbol)).count();
+    (0..1u64 << droppable.min(20))
+        .map(|mask| {
+            let mut bit = 0;
+            body.iter()
+                .filter(|symbol| {
+                    if !nullable.contains(*symbol) {
+                        return true;
+                    }
+                    bit += 1;
+                    bit > 20 || mask & (1 << (bit - 1)) == 0
+                })
+                .cloned()
+                .collect()
+        })
+        .collect()
+}
+
 fn eliminate_unit_productions(productions: ProductionTable) -> ProductionTable {
-    // Adjacency of unit edges.
     let mut unit_edges: HashMap<String, BTreeSet<String>> = HashMap::new();
     for (variable, bodies) in &productions {
         for body in bodies {
@@ -537,7 +425,6 @@ fn eliminate_unit_productions(productions: ProductionTable) -> ProductionTable {
         }
     }
 
-    // Transitive closure.
     let mut closure: HashMap<String, BTreeSet<String>> = unit_edges.clone();
     loop {
         let mut changed = false;
@@ -595,10 +482,7 @@ fn eliminate_unit_productions(productions: ProductionTable) -> ProductionTable {
     dedup_bodies(expanded)
 }
 
-/* Removes non-generating variables first, then unreachable ones. The start
- * symbol is treated as the root; entries whose bodies die drop with them. */
 fn remove_useless_variables(mut productions: ProductionTable, start: &str) -> ProductionTable {
-    // Generating fixpoint.
     let mut generating: HashSet<String> = HashSet::new();
     loop {
         let mut changed = false;
@@ -619,9 +503,6 @@ fn remove_useless_variables(mut productions: ProductionTable, start: &str) -> Pr
             break;
         }
     }
-    // Bodies are judged against the variables as they were before the
-    // pruning: a dropped (non-generating) variable must kill every body that
-    // mentions it, not linger there looking like a terminal.
     let variables: HashSet<String> = productions.keys().cloned().collect();
     productions.retain(|variable, _| generating.contains(variable));
     for bodies in productions.values_mut() {
@@ -633,8 +514,6 @@ fn remove_useless_variables(mut productions: ProductionTable, start: &str) -> Pr
     }
     productions.retain(|_, bodies| !bodies.is_empty());
 
-    // Reachability from the start; if the start vanished (non-generating),
-    // whatever remains is dropped entirely.
     let mut reachable: HashSet<String> = HashSet::new();
     if productions.contains_key(start) {
         let mut stack = vec![start.to_string()];
@@ -666,8 +545,6 @@ fn remove_useless_variables(mut productions: ProductionTable, start: &str) -> Pr
     productions
 }
 
-/* While any body longer than two symbols exists anywhere, lift its last two
- * symbols under a fresh helper variable. */
 fn binarize_all(
     mut productions: ProductionTable,
     names_in_use: &mut BTreeSet<String>,
@@ -697,8 +574,6 @@ fn binarize_all(
     productions
 }
 
-/* Substitutes terminals inside length-2 bodies by fresh per-terminal helper
- * variables with single-terminal bodies. */
 fn isolate_terminals(
     mut productions: ProductionTable,
     names_in_use: &mut BTreeSet<String>,
@@ -741,40 +616,15 @@ fn isolate_terminals(
     productions
 }
 
-// ---------------------------------------------------------------------------
-// ---------------------------------------------------------------------------
-// Conversions to and from other machine families
-
 use crate::finite_automata::FiniteAutomata;
 use crate::pushdown_automata::PushdownAutomata;
 use crate::state_machine::StateMachine;
 
 impl Grammar {
-    /* Converts a right-linear grammar into a nondeterministic finite
-     * automaton over the same language. Production shapes allowed:
-     * `A -> ε`, `A -> a` and `A -> a B` (terminal first, variable last);
-     * unit productions `A -> B` are eliminated automatically before the
-     * construction, anything else is rejected with a message naming the
-     * production.
-     * Construction states: one per variable plus one extra accepting state
-     * that collects every terminal-only production. */
     pub fn to_finite_automata(&self) -> Result<FiniteAutomata, String> {
-        let mut productions: ProductionTable = self.production_table();
-        // A -> ε stops nullability; strip it after remembering which units it
-        // feeds, mirroring the CNF pipeline's ε handling.
-        let nullable = nullable_from_table(&productions);
-        let mut stripped: ProductionTable = BTreeMap::new();
-        for (variable, bodies) in &productions {
-            let entry = stripped.entry(variable.clone()).or_default();
-            for body in bodies {
-                for variant in nullable_dropping_variants(body, &nullable) {
-                    if !variant.is_empty() {
-                        entry.push(variant);
-                    }
-                }
-            }
-        }
-        productions = eliminate_unit_productions(dedup_bodies(stripped));
+        let table = self.production_table();
+        let nullable = nullable_from_table(&table);
+        let productions = eliminate_unit_productions(without_nullable_bodies(&table, &nullable));
 
         for (variable, bodies) in &productions {
             for body in bodies {
@@ -786,8 +636,7 @@ impl Grammar {
                 };
                 if !well_shaped {
                     return Err(format!(
-                        "production {:?} -> {:?} is not right-linear (expected \"a\" or \"a B\" after unit elimination)",
-                        variable, body
+                        "production {variable:?} -> {body:?} is not right-linear (expected \"a\" or \"a B\" after unit elimination)"
                     ));
                 }
             }
@@ -804,8 +653,6 @@ impl Grammar {
         automata.make_initial(index_of(self.start_symbol()) as u64);
         automata.make_final(accept_state as u64);
 
-        // ε-production information survives stripping through finality of the
-        // variable's own state.
         for variable in &variables {
             if nullable.contains(variable) {
                 automata.make_final(index_of(variable) as u64);
@@ -828,9 +675,6 @@ impl Grammar {
         Ok(automata)
     }
 
-    /* Builds a right-linear grammar generating exactly the language of the
-     * automaton; variable names are chosen fresh so they never collide with
-     * any transition label used as a terminal. Requires an initial state. */
     pub fn from_finite_automata(machine: &FiniteAutomata) -> Result<Grammar, String> {
         let initial_id = match machine.get_initial_state_id() {
             Some(id) => *id,
@@ -864,7 +708,7 @@ impl Grammar {
             let name = match candidate {
                 Some(found) => found,
                 None => loop {
-                    let proposal = format!("V{}", fallback_counter);
+                    let proposal = format!("V{fallback_counter}");
                     fallback_counter += 1;
                     if !labels_in_use.contains(&proposal) && !taken.contains(&proposal) {
                         break proposal;
@@ -876,7 +720,6 @@ impl Grammar {
             name
         };
 
-        // Deterministic order: sorted by state id.
         let mut ids: Vec<u64> = machine.get_states_by_id_ref().keys().copied().collect();
         ids.sort();
         for id in &ids {
@@ -886,9 +729,6 @@ impl Grammar {
         let finals = machine.get_final_states();
         let start_variable = name_by_id[&initial_id].clone();
         let mut grammar = Grammar::new(&start_variable);
-        // Every state becomes a declared variable even when it has no
-        // outgoing productions (e.g. pure accepting states), otherwise its
-        // occurrences would count as terminals.
         for name in name_by_id.values() {
             grammar.add_variable(name);
         }
@@ -900,9 +740,6 @@ impl Grammar {
             if let Some(state) = machine.get_states_by_id_ref().get(id) {
                 for (target, labels) in state.iter_by_transition() {
                     for label in labels {
-                        // An ε/"" move reads nothing: it becomes the unit
-                        // production A -> B (and A -> ε into a final state),
-                        // never a terminal spelled "ε".
                         let read: Vec<&str> = if label.is_empty() || label == "ε" {
                             Vec::new()
                         } else {
@@ -922,18 +759,13 @@ impl Grammar {
         Ok(grammar)
     }
 
-    /* Removes, until nothing changes, every body mentioning a declared
-     * variable that has no productions left. Such bodies can never finish a
-     * derivation, so the language is unchanged, and the text form no longer
-     * mentions variables it cannot define (which a reparse would read as
-     * terminals). */
     fn drop_bodies_with_dead_variables(&mut self) {
         loop {
             let dead: HashSet<String> = self
                 .nonterminals
                 .iter()
                 .filter(|variable| {
-                    self.productions.get(*variable).map_or(true, |bodies| bodies.is_empty())
+                    self.productions.get(*variable).is_none_or(|bodies| bodies.is_empty())
                 })
                 .cloned()
                 .collect();
@@ -953,18 +785,6 @@ impl Grammar {
         }
     }
 
-    /* Constructs the standard top-down recognizer pushdown automaton for the
-     * grammar: expansion rules pop the leftmost stack entry (a variable) and
-     * push the body's symbols as atomic entries, terminal rules match-and-pop
-     * their token from the input, and reaching the bottom marker accepts (by
-     * final state).
-     *
-     * Terminals may be multi-character tokens; variables keep their original
-     * names because pushes are comma-segmented atomic entries. A trailing
-     * ",ε" segment (a no-op) is appended to non-empty bodies so even
-     * single-symbol bodies travel through the atomic path. Symbol names may
-     * not contain the reserved characters ',', ';' or '/', nor be "ε"; the
-     * bottom marker is chosen fresh and disjoint from every symbol. */
     pub fn to_pushdown_automata(&self) -> Result<PushdownAutomata, String> {
         let terminals = self.terminals();
         for symbol in self.nonterminals.iter().chain(terminals.iter()) {
@@ -974,14 +794,11 @@ impl Grammar {
                 || symbol == "ε"
             {
                 return Err(format!(
-                    "symbol {:?} cannot be converted: ',', ';' and '/' are reserved by the pushdown label format",
-                    symbol
+                    "symbol {symbol:?} cannot be converted: ',', ';' and '/' are reserved by the pushdown label format"
                 ));
             }
         }
 
-        // Fresh bottom-of-stack marker, disjoint from every grammar symbol.
-        let terminals = self.terminals();
         let symbols: HashSet<&String> = self
             .nonterminals
             .iter()
@@ -990,7 +807,7 @@ impl Grammar {
         let mut marker = "Z".to_string();
         let mut marker_counter = 0usize;
         while symbols.contains(&marker) {
-            marker = format!("Z{}", marker_counter);
+            marker = format!("Z{marker_counter}");
             marker_counter += 1;
         }
 
@@ -999,17 +816,12 @@ impl Grammar {
         pda.make_initial(0);
         pda.make_final(2);
 
-        // Bootstrap: push the start symbol over the bottom marker.
         pda.add_transition(
             0,
             1,
             format!("ε;{}/{},{}", marker, self.start_symbol, marker),
         );
 
-        // Expansions: pop the variable, push the body's symbols as atomic
-        // entries (leftmost on top). An empty body pushes "ε" (no-op after
-        // the pop). The trailing ",ε" forces the atomic path even for
-        // single-symbol bodies.
         for (variable, bodies) in &self.productions {
             for body in bodies {
                 let pushed = if body.is_empty() {
@@ -1017,25 +829,20 @@ impl Grammar {
                 } else {
                     format!("{},ε", body.join(","))
                 };
-                pda.add_transition(1, 1, format!("ε;{}/{}", variable, pushed));
+                pda.add_transition(1, 1, format!("ε;{variable}/{pushed}"));
             }
         }
 
-        // Terminal matching consumes the whole token from the input.
         for terminal in &terminals {
-            pda.add_transition(1, 1, format!("{};{}/ε", terminal, terminal));
+            pda.add_transition(1, 1, format!("{terminal};{terminal}/ε"));
         }
 
-        // Bottom-of-stack marker reached: accept.
-        pda.add_transition(1, 2, format!("ε;{}/{}", marker, marker));
+        pda.add_transition(1, 2, format!("ε;{marker}/{marker}"));
 
         Ok(pda)
     }
 }
 
-/* Renders the grammar back into the text format accepted by parse_grammar,
- * variables grouped one line each: the start symbol first (parse_grammar
- * takes the first line's variable as the start), the rest in sorted order. */
 impl fmt::Display for Grammar {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let start = self.nonterminals.get(&self.start_symbol);
@@ -1045,7 +852,7 @@ impl fmt::Display for Grammar {
                 Some(bodies) => bodies,
                 None => continue,
             };
-            write!(f, "{} ->", variable)?;
+            write!(f, "{variable} ->")?;
             for (index, body) in bodies.iter().enumerate() {
                 if index > 0 {
                     write!(f, " |")?;
@@ -1062,8 +869,6 @@ impl fmt::Display for Grammar {
     }
 }
 
-// CYK over the CNF grammar
-
 fn cyk_accepts(cnf: &Grammar, tokens: &[String]) -> bool {
     let n = tokens.len();
     if n == 0 {
@@ -1072,47 +877,40 @@ fn cyk_accepts(cnf: &Grammar, tokens: &[String]) -> bool {
             .map(|bodies| bodies.iter().any(Vec::is_empty))
             .unwrap_or(false);
     }
-    // table[i][len] holds the variables deriving tokens[i .. i+len].
-    let mut table: Vec<Vec<BTreeSet<String>>> = vec![vec![BTreeSet::new(); n + 1]; n];
-    for i in 0..n {
-        for (variable, bodies) in &cnf.productions {
-            if bodies.iter().any(|body| body.len() == 1 && body[0] == tokens[i]) {
-                table[i][1].insert(variable.clone());
-            }
-        }
+    let rules = || {
+        cnf.productions
+            .iter()
+            .flat_map(|(variable, bodies)| bodies.iter().map(move |body| (variable.as_str(), body.as_slice())))
+    };
+    let binary: Vec<(&str, &str, &str)> = rules()
+        .filter_map(|(variable, body)| match body {
+            [left, right] => Some((variable, left.as_str(), right.as_str())),
+            _ => None,
+        })
+        .collect();
+    let mut table: Vec<Vec<BTreeSet<&str>>> = vec![vec![BTreeSet::new(); n + 1]; n];
+    for (i, token) in tokens.iter().enumerate() {
+        table[i][1] = rules()
+            .filter(|(_, body)| matches!(body, [symbol] if symbol == token))
+            .map(|(variable, _)| variable)
+            .collect();
     }
     for len in 2..=n {
         for i in 0..=(n - len) {
+            let mut cell: BTreeSet<&str> = BTreeSet::new();
             for split in 1..len {
-                if table[i][split].is_empty() || table[i + split][len - split].is_empty() {
+                let (left, right) = (&table[i][split], &table[i + split][len - split]);
+                if left.is_empty() || right.is_empty() {
                     continue;
                 }
-                // Borrow the two child sets and collect the variables this
-                // split derives; inserting afterwards keeps the borrows and
-                // the mutation from overlapping (a set union is
-                // order-independent, so the result is identical).
-                let mut to_add: Vec<String> = Vec::new();
-                {
-                    let left_set = &table[i][split];
-                    let right_set = &table[i + split][len - split];
-                    for (variable, bodies) in &cnf.productions {
-                        if table[i][len].contains(variable) || to_add.contains(variable) {
-                            continue;
-                        }
-                        let derives = bodies.iter().any(|body| {
-                            body.len() == 2
-                                && left_set.contains(&body[0])
-                                && right_set.contains(&body[1])
-                        });
-                        if derives {
-                            to_add.push(variable.clone());
-                        }
-                    }
-                }
-                for variable in to_add {
-                    table[i][len].insert(variable);
-                }
+                cell.extend(
+                    binary
+                        .iter()
+                        .filter(|(_, b, c)| left.contains(b) && right.contains(c))
+                        .map(|(a, _, _)| *a),
+                );
             }
+            table[i][len] = cell;
         }
     }
     table[0][n].contains(cnf.start_symbol())

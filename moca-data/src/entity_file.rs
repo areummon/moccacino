@@ -1,16 +1,3 @@
-/* Loader for `.ce` ("computational entities") files: a small key-based
- * text format declaring any number of machines, regular expressions and
- * grammars in one document. Each `entity:` block is parsed and built
- * independently, so one broken entity never sinks the rest of the file.
- *
- * Transition syntax is structurally distinct per family, which keeps
- * hand-written and LLM-generated files unambiguous:
- *   finite: (from, symbol) -> to
- *   pda:    (from, input, pop, push...) -> to   (push tail may contain commas)
- *   tm:     (from, read, write, dir[, read, write, dir...]) -> to
- * The internal repo labels (`input;pop/push`, `read;write/dir`, tapes
- * comma-joined) are assembled from these parts and then validated. */
-
 use crate::finite_automata::FiniteAutomata;
 use crate::grammar::{parse_grammar, Grammar};
 use crate::pushdown_automata::PushdownAutomata;
@@ -20,7 +7,6 @@ use crate::state_machine::{Machine, StateMachine};
 use crate::turing_machine::TuringMachine;
 use std::collections::{HashMap, HashSet};
 
-/* A built computational entity ready to be opened as a tab. */
 #[derive(Debug)]
 pub enum Entity {
     Finite(FiniteAutomata),
@@ -29,17 +15,12 @@ pub enum Entity {
     Grammar(Grammar),
 }
 
-/* One successfully loaded entity: a usable display name, the alias the
- * file declared it with, and the object itself. */
 #[derive(Debug)]
 pub struct NamedEntity {
     pub name: String,
-    pub kind_label: String,
     pub entity: Entity,
 }
 
-/* One failed entity (or file-level problem). `entity_name` is empty for
- * file-level errors; `line` is 1-based. */
 #[derive(Debug)]
 pub struct EntityError {
     pub entity_name: String,
@@ -56,7 +37,6 @@ enum Kind {
     Grammar,
 }
 
-/* Maps the declared alias to its canonical kind and default tab name. */
 fn resolve_kind(alias: &str) -> Option<(Kind, &'static str)> {
     match alias {
         "tm" | "turing" => Some((Kind::Turing, "TM")),
@@ -74,8 +54,6 @@ fn normalize_final_key(key: &str) -> bool {
     matches!(key, "final" | "finals" | "halt" | "final/halt" | "final_halt")
 }
 
-/* Parses the whole file: valid entities come back in file order, broken
- * ones come back as errors (with the rest of the file unaffected). */
 pub fn parse_entity_file(source: &str) -> (Vec<NamedEntity>, Vec<EntityError>) {
     struct Block {
         header_line: usize,
@@ -133,7 +111,6 @@ pub fn parse_entity_file(source: &str) -> (Vec<NamedEntity>, Vec<EntityError>) {
     (entities, errors)
 }
 
-/* Matches an `entity: <kind>` header line and returns the kind text. */
 fn strip_entity_header(line: &str) -> Option<&str> {
     let (key, value) = line.split_once(':')?;
     if key.trim().eq_ignore_ascii_case("entity") {
@@ -145,8 +122,6 @@ fn strip_entity_header(line: &str) -> Option<&str> {
 
 type BlockError = (String, usize, String);
 
-/* Assigns integer ids to state labels on first sight (auto-registering
- * labels that only appear in transitions or finals). */
 #[derive(Default)]
 struct Interner {
     ids: HashMap<String, u64>,
@@ -173,8 +148,6 @@ impl Interner {
     }
 }
 
-/* Splits a `transitions:` value on commas that sit outside parentheses,
- * so multitape TM labels like `_ ; _ / S` groups stay intact. */
 fn split_tuples(value: &str) -> Vec<String> {
     let mut parts = Vec::new();
     let mut current = String::new();
@@ -186,9 +159,7 @@ fn split_tuples(value: &str) -> Vec<String> {
                 current.push(c);
             }
             ')' => {
-                if depth > 0 {
-                    depth -= 1;
-                }
+                depth = depth.saturating_sub(1);
                 current.push(c);
             }
             ',' if depth == 0 => {
@@ -208,35 +179,32 @@ fn split_tuples(value: &str) -> Vec<String> {
     parts
 }
 
-/* Parses one `(from, parts...) -> to` tuple. */
 fn parse_transition_tuple(tuple: &str) -> Result<(String, Vec<String>, String), String> {
     let trimmed = tuple.trim();
     if !trimmed.starts_with('(') {
         return Err(format!(
-            "expected a '(state, ...) -> state' tuple, found '{}'",
-            trimmed
+            "expected a '(state, ...) -> state' tuple, found '{trimmed}'"
         ));
     }
     let close = trimmed
         .rfind(')')
-        .ok_or_else(|| format!("missing ')' in '{}'", trimmed))?;
+        .ok_or_else(|| format!("missing ')' in '{trimmed}'"))?;
     let inner = trimmed[1..close].trim();
     let rest = trimmed[close + 1..].trim();
     let target = rest
         .strip_prefix("->")
-        .ok_or_else(|| format!("missing '->' in '{}'", trimmed))?
+        .ok_or_else(|| format!("missing '->' in '{trimmed}'"))?
         .trim();
     if target.is_empty() {
-        return Err(format!("missing target state in '{}'", trimmed));
+        return Err(format!("missing target state in '{trimmed}'"));
     }
     if inner.is_empty() {
-        return Err(format!("missing states in '{}'", trimmed));
+        return Err(format!("missing states in '{trimmed}'"));
     }
     let parts: Vec<String> = inner.split(',').map(|part| part.trim().to_string()).collect();
     Ok((parts[0].clone(), parts, target.to_string()))
 }
 
-/* Blank or whitespace-only components mean ε on finite and PDA labels. */
 fn normalize_epsilon(component: &str) -> String {
     let trimmed = component.trim();
     if trimmed.is_empty() {
@@ -250,10 +218,6 @@ fn split_csv(value: &str) -> Vec<String> {
     value.split(',').map(|part| part.trim().to_string()).collect()
 }
 
-/* Builds one entity block: distributes keys, enforces family-specific
- * transition arity, assembles internal labels and validates the result.
- * The returned error carries the entity name, the offending line and a
- * human-readable message. */
 fn build_block(
     header_line: usize,
     kind_text: &str,
@@ -262,14 +226,12 @@ fn build_block(
     let (kind, fallback_name) =
         resolve_kind(&kind_text.to_ascii_lowercase()).ok_or_else(|| {
             (
-                format!("entity at line {}", header_line),
+                format!("entity at line {header_line}"),
                 header_line,
-                format!("unknown entity kind '{}'", kind_text),
+                format!("unknown entity kind '{kind_text}'"),
             )
         })?;
 
-    // Errors report the declared name when there is one, else the kind's
-    // default name, else a positional description.
     let declared_name = entries
         .iter()
         .find(|(_, key, _)| key == "name")
@@ -304,7 +266,7 @@ fn build_block(
             if matches!(kind, Kind::Regex | Kind::Grammar) {
                 return Err(err(
                     *line,
-                    format!("'states:' is not valid for {} entities", fallback_name),
+                    format!("'states:' is not valid for {fallback_name} entities"),
                 ));
             }
             states.extend(split_csv(value));
@@ -313,8 +275,7 @@ fn build_block(
                 return Err(err(
                     *line,
                     format!(
-                        "'transitions:' is not valid for {} entities",
-                        fallback_name
+                        "'transitions:' is not valid for {fallback_name} entities"
                     ),
                 ));
             }
@@ -324,8 +285,7 @@ fn build_block(
                 return Err(err(
                     *line,
                     format!(
-                        "'initial:' is not valid for {} entities",
-                        fallback_name
+                        "'initial:' is not valid for {fallback_name} entities"
                     ),
                 ));
             }
@@ -336,7 +296,7 @@ fn build_block(
             if matches!(kind, Kind::Regex | Kind::Grammar) {
                 return Err(err(
                     *line,
-                    format!("'{}:' is not valid for {} entities", key, fallback_name),
+                    format!("'{key}:' is not valid for {fallback_name} entities"),
                 ));
             }
             finals.extend(split_csv(value));
@@ -384,7 +344,7 @@ fn build_block(
                 "expected 'key: value' lines inside an entity block".to_string(),
             ));
         } else {
-            return Err(err(*line, format!("unknown key '{}:'", key)));
+            return Err(err(*line, format!("unknown key '{key}:'")));
         }
     }
 
@@ -398,7 +358,7 @@ fn build_block(
                 return Err(err(line, "empty 'regex:' value".to_string()));
             }
             let automaton = regex::compile_str(&pattern)
-                .map_err(|error| err(line, format!("invalid regex: {}", error)))?;
+                .map_err(|error| err(line, format!("invalid regex: {error}")))?;
             Entity::Finite(automaton)
         }
         Kind::Grammar => {
@@ -429,13 +389,10 @@ fn build_block(
 
     Ok(NamedEntity {
         name,
-        kind_label: kind_text.to_string(),
         entity,
     })
 }
 
-/* Builds a FiniteAutomata, PushdownAutomata or TuringMachine from the
- * collected block keys. */
 fn build_machine(
     kind: Kind,
     header_line: usize,
@@ -482,7 +439,6 @@ fn build_machine(
             .ok_or_else(|| err(header_line, "empty state name in 'states:'".to_string()))?;
     }
 
-    // Assemble internal labels from the family-specific tuples.
     let mut assembled: Vec<(u64, u64, String)> = Vec::new();
     let mut tape_count: Option<usize> = None;
     for (line, raw) in transitions {
@@ -531,7 +487,7 @@ fn build_machine(
                     )
                 }
                 Kind::Turing => {
-                    if parts.len() < 4 || (parts.len() - 1) % 3 != 0 {
+                    if parts.len() < 4 || !(parts.len() - 1).is_multiple_of(3) {
                         return Err(err(
                             *line,
                             format!(
@@ -546,8 +502,7 @@ fn build_machine(
                             return Err(err(
                                 *line,
                                 format!(
-                                    "inconsistent tape count: this transition uses {}, earlier ones use {}",
-                                    tapes, existing
+                                    "inconsistent tape count: this transition uses {tapes}, earlier ones use {existing}"
                                 ),
                             ));
                         }
@@ -574,7 +529,7 @@ fn build_machine(
                                 ),
                             ));
                         }
-                        pieces.push(format!("{};{}/{}", read, write, direction));
+                        pieces.push(format!("{read};{write}/{direction}"));
                     }
                     pieces.join(",")
                 }
@@ -614,52 +569,34 @@ fn build_machine(
         err(line, machine_problem)
     };
 
+    let populate = |machine: &mut dyn StateMachine| {
+        for (label, &id) in &interner.ids {
+            machine.add_state_with_id_label(id, label);
+        }
+        for (from, to, label) in assembled {
+            machine.add_transition(from, to, label);
+        }
+        machine.make_initial(initial_id);
+        for id in final_ids {
+            machine.make_final(id);
+        }
+    };
     let entity = match kind {
         Kind::Finite => {
-            // `new()`, not `default()`: the derived Default leaves the
-            // determinism flag false, which would mislabel the entity on
-            // a subsequent save.
             let mut machine = FiniteAutomata::new();
-            for (label, &id) in &interner.ids {
-                machine.add_state_with_id_label(id, label);
-            }
-            for (from, to, label) in assembled {
-                machine.add_transition(from, to, label);
-            }
-            machine.make_initial(initial_id);
-            for id in final_ids {
-                machine.make_final(id);
-            }
+            populate(&mut machine);
             Machine::validate(&machine).map_err(report_validation)?;
             Entity::Finite(machine)
         }
         Kind::Pushdown => {
             let mut machine = PushdownAutomata::new(stack_symbol);
-            for (label, &id) in &interner.ids {
-                machine.add_state_with_id_label(id, label);
-            }
-            for (from, to, label) in assembled {
-                machine.add_transition(from, to, label);
-            }
-            machine.make_initial(initial_id);
-            for id in final_ids {
-                machine.make_final(id);
-            }
+            populate(&mut machine);
             Machine::validate(&machine).map_err(report_validation)?;
             Entity::Pushdown(machine)
         }
         Kind::Turing => {
             let mut machine = TuringMachine::new(blank_symbol);
-            for (label, &id) in &interner.ids {
-                machine.add_state_with_id_label(id, label);
-            }
-            for (from, to, label) in assembled {
-                machine.add_transition(from, to, label);
-            }
-            machine.make_initial(initial_id);
-            for id in final_ids {
-                machine.make_final(id);
-            }
+            populate(&mut machine);
             Machine::validate(&machine).map_err(report_validation)?;
             Entity::Turing(machine)
         }
@@ -668,12 +605,6 @@ fn build_machine(
     Ok(entity)
 }
 
-/* ---------- serialization: entities -> .ce text ---------- */
-
-/* Writes one `entity:` block per call, mirroring the keys `build_block`
- * consumes. Every writer rejects empty entities and labels the tuple
- * format cannot round-trip, so saved files always reload. */
-
 fn entity_header(kind_alias: &str, name: &str) -> String {
     let sanitized: String = name
         .chars()
@@ -681,14 +612,9 @@ fn entity_header(kind_alias: &str, name: &str) -> String {
         .collect();
     let trimmed = sanitized.trim();
     let name = if trimmed.is_empty() { "entity" } else { trimmed };
-    format!("entity: {}\nname: {}", kind_alias, name)
+    format!("entity: {kind_alias}\nname: {name}")
 }
 
-/* Trims a component of a transition tuple and rejects the characters the
- * tuple layer itself parses: commas segment tuple parts and the states
- * list, parentheses bracket tuples (and steer `split_tuples` depth
- * counting), line breaks would splice the line-oriented format. Push
- * tails pass `allow_comma` because the loader segments them on commas. */
 fn check_tuple_component(component: &str, role: &str, allow_comma: bool) -> Result<String, String> {
     let trimmed = component.trim();
     for c in trimmed.chars() {
@@ -699,17 +625,13 @@ fn check_tuple_component(component: &str, role: &str, allow_comma: bool) -> Resu
         };
         if reserved {
             return Err(format!(
-                "{} '{}' uses '{}' which the .ce format reserves for its structure",
-                role, trimmed, c
+                "{role} '{trimmed}' uses '{c}' which the .ce format reserves for its structure"
             ));
         }
     }
     Ok(trimmed.to_string())
 }
 
-/* Shared machine-block core: states/initial/finals scaffolding plus the
- * sorted `transitions:` lines, delegating per-family label decomposition
- * to `label_to_parts` (the components after the source state name). */
 fn write_machine_block<F>(
     kind_alias: &str,
     name: &str,
@@ -734,10 +656,10 @@ where
     for id in &ids {
         let label = check_tuple_component(&states[id].name, "state name", false)?;
         if label.is_empty() {
-            return Err(format!("state {} has an empty name", id));
+            return Err(format!("state {id} has an empty name"));
         }
         if !seen.insert(label.clone()) {
-            return Err(format!("state name '{}' is used more than once", label));
+            return Err(format!("state name '{label}' is used more than once"));
         }
         labels.push(label);
     }
@@ -745,7 +667,7 @@ where
         ids.iter().copied().zip(labels.iter()).collect();
     let initial_id = initial.ok_or_else(|| no_initial_message.to_string())?;
     if !states.contains_key(&initial_id) {
-        return Err(format!("initial state {} is missing", initial_id));
+        return Err(format!("initial state {initial_id} is missing"));
     }
 
     let mut text = entity_header(kind_alias, name);
@@ -764,10 +686,10 @@ where
     for (from_id, to_id, label) in triples {
         let parts = label_to_parts(&label)?;
         let from_label = name_of.get(&from_id).ok_or_else(|| {
-            format!("transition leaves state {}, which is missing", from_id)
+            format!("transition leaves state {from_id}, which is missing")
         })?;
         let to_label = name_of.get(&to_id).ok_or_else(|| {
-            format!("transition targets state {}, which is missing", to_id)
+            format!("transition targets state {to_id}, which is missing")
         })?;
         text.push_str(&format!(
             "\ntransitions: ({}, {}) -> {}",
@@ -809,7 +731,6 @@ pub fn write_finite_entity(name: &str, fa: &FiniteAutomata) -> Result<String, St
         fa.get_final_states(),
         None,
         |label| {
-            // A blank symbol is the loader's ε spelling too.
             let symbol = check_tuple_component(label, "transition symbol", false)?;
             Ok(vec![if symbol.is_empty() {
                 "ε".to_string()
@@ -825,7 +746,7 @@ pub fn write_pushdown_entity(name: &str, pda: &PushdownAutomata) -> Result<Strin
     let extra = if stack_symbol == "Z" {
         None
     } else {
-        Some(format!("stack: {}", stack_symbol))
+        Some(format!("stack: {stack_symbol}"))
     };
     write_machine_block(
         "pda",
@@ -837,8 +758,6 @@ pub fn write_pushdown_entity(name: &str, pda: &PushdownAutomata) -> Result<Strin
         pda.get_final_states(),
         extra,
         |label| {
-            // The state layer stores bare "ε" for no-op transitions; the
-            // tuple spelling of the same behavior is (ε, ε, ε).
             if label == "ε" {
                 return Ok(vec![
                     "ε".to_string(),
@@ -847,13 +766,12 @@ pub fn write_pushdown_entity(name: &str, pda: &PushdownAutomata) -> Result<Strin
                 ]);
             }
             let malformed =
-                || format!("malformed pushdown label '{}' (expected 'input;pop/push')", label);
+                || format!("malformed pushdown label '{label}' (expected 'input;pop/push')");
             let (input, rest) = label.split_once(';').ok_or_else(malformed)?;
             let (pop, push) = rest.split_once('/').ok_or_else(malformed)?;
             let input = check_tuple_component(input, "pushdown input symbol", false)?;
             let pop = check_tuple_component(pop, "pushdown popped symbol", false)?;
             let push = check_tuple_component(push, "pushdown pushed symbols", true)?;
-            // Blank components are the loader's ε (no-op) spelling.
             let to_epsilon = |component: String| {
                 if component.is_empty() {
                     "ε".to_string()
@@ -871,7 +789,7 @@ pub fn write_turing_entity(name: &str, tm: &TuringMachine) -> Result<String, Str
     let extra = if blank == '_' {
         None
     } else {
-        Some(format!("blank: {}", blank))
+        Some(format!("blank: {blank}"))
     };
     write_machine_block(
         "tm",
@@ -883,13 +801,11 @@ pub fn write_turing_entity(name: &str, tm: &TuringMachine) -> Result<String, Str
         tm.get_final_states(),
         extra,
         |label| {
-            // The label is tape groups joined by commas, each 'read;write/dir'.
             let mut parts = Vec::new();
             for group in label.split(',') {
                 let malformed = || {
                     format!(
-                        "malformed turing tape group '{}' in label '{}' (expected 'read;write/dir')",
-                        group, label
+                        "malformed turing tape group '{group}' in label '{label}' (expected 'read;write/dir')"
                     )
                 };
                 let (read, rest) = group.split_once(';').ok_or_else(malformed)?;
@@ -898,15 +814,13 @@ pub fn write_turing_entity(name: &str, tm: &TuringMachine) -> Result<String, Str
                 let write = check_tuple_component(write, "turing write symbol", false)?;
                 if read.is_empty() || write.is_empty() {
                     return Err(format!(
-                        "turing read/write symbols cannot be empty in label '{}' (use the blank symbol)",
-                        label
+                        "turing read/write symbols cannot be empty in label '{label}' (use the blank symbol)"
                     ));
                 }
                 let dir = dir.trim().to_ascii_uppercase();
                 if !matches!(dir.as_str(), "L" | "R" | "S") {
                     return Err(format!(
-                        "invalid direction '{}' in label '{}' (use L, R or S)",
-                        dir, label
+                        "invalid direction '{dir}' in label '{label}' (use L, R or S)"
                     ));
                 }
                 parts.push(read);
@@ -919,49 +833,21 @@ pub fn write_turing_entity(name: &str, tm: &TuringMachine) -> Result<String, Str
 }
 
 pub fn write_grammar_entity(name: &str, grammar: &Grammar) -> Result<String, String> {
-    let productions = grammar.productions();
-    if productions.is_empty() {
+    if grammar.productions().is_empty() {
         return Err("the grammar has no productions".to_string());
     }
     let mut text = entity_header("grammar", name);
-    // The .ce format derives the start symbol from the first production
-    // line, so the start variable's alternatives are emitted first; the
-    // remaining variables follow in `productions()`'s sorted order (the
-    // same order Display uses, so the text also matches Display output).
-    let start = grammar.start_symbol().to_string();
-    let (start_pairs, other_pairs): (Vec<_>, Vec<_>) =
-        productions.into_iter().partition(|(variable, _)| *variable == start);
-    // `productions()` yields (variable, body) pairs grouped by variable;
-    // fold consecutive pairs back into one line per variable.
-    let mut current: Option<(String, Vec<String>)> = None;
-    for (variable, body) in start_pairs.into_iter().chain(other_pairs) {
-        let alternative = if body.is_empty() {
-            "ε".to_string()
-        } else {
-            body.join(" ")
+    let start = grammar.start_symbol();
+    let others = grammar.nonterminals().iter().filter(|variable| *variable != start);
+    for variable in std::iter::once(start).chain(others.map(String::as_str)) {
+        let Some(bodies) = grammar.productions_of(variable).filter(|bodies| !bodies.is_empty()) else {
+            continue;
         };
-        match &mut current {
-            Some((var, alternatives)) if *var == variable => {
-                alternatives.push(alternative);
-            }
-            _ => {
-                if let Some((var, alternatives)) = current.take() {
-                    text.push_str(&format!(
-                        "\nproductions: {} -> {}",
-                        var,
-                        alternatives.join(" | ")
-                    ));
-                }
-                current = Some((variable, vec![alternative]));
-            }
-        }
-    }
-    if let Some((var, alternatives)) = current {
-        text.push_str(&format!(
-            "\nproductions: {} -> {}",
-            var,
-            alternatives.join(" | ")
-        ));
+        let alternatives: Vec<String> = bodies
+            .iter()
+            .map(|body| if body.is_empty() { "ε".to_string() } else { body.join(" ") })
+            .collect();
+        text.push_str(&format!("\nproductions: {} -> {}", variable, alternatives.join(" | ")));
     }
     Ok(text)
 }

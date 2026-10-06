@@ -1,7 +1,3 @@
-/* View builders for the app chrome: the single-row header (brand, menus,
- * tabs, theme toggle), the dropdown menus, the canvas workspace with its
- * floating tool palette / zoom chip / empty-state hint, and the status
- * bar. */
 
 use iced::widget::{
     button, column, container, horizontal_space, mouse_area, row, scrollable, stack, text_input, tooltip,
@@ -18,16 +14,11 @@ use super::workspace::TAB_RENAME_INPUT;
 use crate::gui::theme::{self, Family, ThemeMode, Tone};
 use crate::state_machine::{CanvasContext, EditorTool};
 
-/* Header geometry. Menu triggers have fixed widths so their dropdowns can
- * be anchored exactly without measuring the layout. */
 const HEADER_HEIGHT: f32 = 52.0;
-/* Second header row holding the tabs on narrow windows. */
 const TAB_ROW_HEIGHT: f32 = 44.0;
 const HEADER_PADDING_X: f32 = 12.0;
 const BRAND_WIDTH: f32 = 128.0;
 const BRAND_WIDTH_COMPACT: f32 = 34.0;
-/* Breakpoints (logical px): the brand drops its word mark, then the tabs
- * move to their own row. */
 const BRAND_TEXT_MIN_WIDTH: f32 = 1000.0;
 const STACKED_HEADER_MAX_WIDTH: f32 = 800.0;
 const MENU_GAP: f32 = 2.0;
@@ -37,23 +28,16 @@ const MENUS: [(Menu, &str, f32); 4] = [
     (Menu::File, "File", 60.0),
     (Menu::Export, "Export", 78.0),
 ];
-/* Right cluster: "+" · gap · help · theme, each 32px wide. */
 const ICON_BUTTON: f32 = 32.0;
 const RIGHT_CLUSTER_SPACING: f32 = 4.0;
 const DROPDOWN_WIDTH: f32 = 272.0;
 pub(crate) const TAB_STRIP: &str = "tab-strip";
-/* Below these widths the run dock stacks its header, the tool palette
- * drops its captions and the status bar sheds its hint and counters. */
 const DOCK_COMPACT_MAX_WIDTH: f32 = 1150.0;
 const PALETTE_ICONS_ONLY_MAX_WIDTH: f32 = 760.0;
 const STATUS_HINT_MIN_WIDTH: f32 = 1000.0;
 const STATUS_COUNTS_MIN_WIDTH: f32 = 700.0;
 
 impl super::app::App {
-    /* ---------------- Header ---------------- */
-
-    /* Brand width and whether the tabs get their own row, from the window
-     * width. The menu layer uses the same numbers to anchor dropdowns. */
     fn header_layout(&self) -> (f32, bool) {
         let width = self.layout_width();
         let brand = if width >= BRAND_TEXT_MIN_WIDTH { BRAND_WIDTH } else { BRAND_WIDTH_COMPACT };
@@ -150,7 +134,6 @@ impl super::app::App {
         container(header).width(Length::Fill).style(theme::header).into()
     }
 
-    /* Pill tabs with a family dot; overflowing tabs scroll sideways. */
     fn create_tab_strip(&self) -> Element<'_, Message> {
         let closable = self.tabs.len() > 1;
         let mut strip = row![].spacing(4).align_y(Alignment::Center);
@@ -209,10 +192,6 @@ impl super::app::App {
             .into()
     }
 
-    /* ---------------- Menus ---------------- */
-
-    /* The open dropdown, positioned under its trigger, plus a click-away
-     * layer that starts below the header so other triggers stay live. */
     pub(crate) fn create_menu_layer(&self, menu: Menu) -> Element<'_, Message> {
         let (brand_width, stacked) = self.header_layout();
         let panel = container(self.create_menu(menu))
@@ -222,7 +201,6 @@ impl super::app::App {
 
         let placed: Element<'_, Message> = match menu {
             Menu::NewFromTabs => {
-                // Right-aligned under the "+" button.
                 let right = HEADER_PADDING_X + 2.0 * ICON_BUTTON + 8.0 + 3.0 * RIGHT_CLUSTER_SPACING;
                 container(panel)
                     .width(Length::Fill)
@@ -238,7 +216,6 @@ impl super::app::App {
                     }
                     left += width + MENU_GAP;
                 }
-                // Keep the dropdown inside narrow windows.
                 let left = left.min((self.layout_width() - DROPDOWN_WIDTH - 8.0).max(0.0));
                 container(panel)
                     .width(Length::Fill)
@@ -360,10 +337,6 @@ impl super::app::App {
         }
     }
 
-    /* ---------------- Canvas workspace ---------------- */
-
-    /* The canvas with its floating overlays: tool palette (top center),
-     * Clear (top right), zoom chip (bottom right) and an empty-state hint. */
     pub(crate) fn create_workspace(&self) -> Element<'_, Message> {
         let tab = self.get_active_tab();
         let active_states = &tab.run_highlight;
@@ -409,8 +382,6 @@ impl super::app::App {
             );
         }
 
-        // Tool palette, swallowing clicks on its own padding so they never
-        // reach the canvas underneath.
         layers.push(
             container(mouse_area(self.create_tool_palette()).on_press(Message::Noop))
                 .width(Length::Fill)
@@ -495,23 +466,17 @@ impl super::app::App {
         container(chip).padding([2, 6]).style(theme::floating).into()
     }
 
-    /* ---------------- Run dock ---------------- */
-
     pub(crate) fn dock_is_compact(&self) -> bool {
         self.layout_width() < DOCK_COMPACT_MAX_WIDTH
     }
 
     pub(crate) fn create_run_dock(&self) -> Element<'_, Message> {
-        let dock = match self.get_active_tab().machine {
-            TabMachine::Finite(_) => self.create_finite_panel(),
-            TabMachine::Pushdown(_) => self.create_pda_panel(),
-            TabMachine::Turing(_) => self.create_tm_panel(),
-            TabMachine::Grammar(_) => return Space::new(0, 0).into(),
-        };
+        if self.get_active_tab().machine.is_grammar() {
+            return Space::new(0, 0).into();
+        }
+        let dock = self.create_run_panel();
         container(dock).padding(Padding { top: 0.0, right: 12.0, bottom: 8.0, left: 12.0 }).into()
     }
-
-    /* ---------------- Status bar ---------------- */
 
     pub(crate) fn create_status_bar(&self) -> Element<'_, Message> {
         let tab = self.get_active_tab();
@@ -590,8 +555,6 @@ impl super::app::App {
     }
 }
 
-/* One dropdown row: icon, label, optional shortcut on the right, and when
- * disabled, the reason underneath instead of a dead click. */
 fn menu_item<'a>(
     glyph: Icon,
     label: &'a str,

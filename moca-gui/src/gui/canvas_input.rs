@@ -5,7 +5,6 @@ use crate::state_machine::{self, EditorTool};
 
 use super::dialogs::{EDIT_LABEL_INPUT, EDIT_TEXT_INPUT};
 use super::message::{Menu, Message};
-use super::tab::TabMachine;
 
 impl super::app::App {
     pub(crate) fn handle_canvas_message(&mut self, canvas_message: state_machine::CanvasMessage) -> Task<Message> {
@@ -16,7 +15,6 @@ impl super::app::App {
             state_machine::CanvasMessage::StateClicked(state_id) => self.canvas_state_clicked(state_id),
             state_machine::CanvasMessage::TransitionClicked(pair) => self.canvas_transition_clicked(pair),
             state_machine::CanvasMessage::StateDoubleClicked(state_id) => self.canvas_state_double_clicked(state_id),
-            // A single click already opens the label editor.
             state_machine::CanvasMessage::TransitionDoubleClicked(_) => Task::none(),
             state_machine::CanvasMessage::RequestTransitionLabel { from_state_id, to_state_id, from_point, to_point } => {
                 self.canvas_request_transition_label(from_state_id, to_state_id, from_point, to_point)
@@ -30,8 +28,6 @@ impl super::app::App {
                 Task::none()
             }
             state_machine::CanvasMessage::Viewport(size) => {
-                // Machines opened before the canvas ever reported its size
-                // were fitted to a guess; refit them to the real viewport.
                 let first_report = self.canvas_viewport.is_none();
                 self.canvas_viewport = Some(size);
                 if first_report && !self.get_active_tab().states.is_empty() {
@@ -42,7 +38,6 @@ impl super::app::App {
         }
     }
 
-    /* Wheel panning: store the clamped viewport offset and redraw. */
     pub(crate) fn canvas_scrolled(&mut self, scroll: iced::Vector) -> Task<Message> {
         let active_tab = self.get_active_tab_mut();
         active_tab.state_machine.set_scroll(scroll);
@@ -58,8 +53,6 @@ impl super::app::App {
         active_tab.states.push(state);
         active_tab.state_id_to_index.insert(assigned_id, index);
         active_tab.state_machine.next_id += 1;
-        // The very first state of a machine becomes its initial state, so a
-        // freshly drawn machine can run without an extra Alt+click.
         if active_tab.states.len() == 1 && active_tab.initial_state.is_none() {
             active_tab.initial_state = Some(assigned_id);
         }
@@ -71,7 +64,7 @@ impl super::app::App {
         let active_tab = self.get_active_tab_mut();
         let key = (transition.from_state_id, transition.to_state_id);
         let label = transition.label.to_string();
-        let entry = active_tab.transitions.entry(key).or_insert_with(indexmap::IndexSet::new);
+        let entry = active_tab.transitions.entry(key).or_default();
         if !entry.contains(&label) {
             entry.insert(label);
             active_tab.state_machine.request_redraw();
@@ -86,14 +79,10 @@ impl super::app::App {
                 state.position = new_position;
             }
         }
-        // Moving a state never changes the vec order, so the
-        // state_id_to_index map stays valid — no rebuild per mouse move.
         active_tab.state_machine.request_redraw();
         Task::none()
     }
 
-    /* Only reached from the Delete tool (the Arrow tool's Shift/Alt
-     * presses also land here and take the toggle branches below). */
     fn canvas_state_clicked(&mut self, state_id: usize) -> Task<Message> {
         let active_tab = self.get_active_tab_mut();
         if active_tab.state_machine.is_deletion_mode() {
@@ -122,18 +111,16 @@ impl super::app::App {
             return Task::none();
         };
         if active_tab.state_machine.is_deletion_mode() {
-            // Remove the transition in the Delete tool
             active_tab.transitions.remove(&(from, to));
             active_tab.state_machine.request_redraw();
             Task::none()
         } else {
-            // Open edit dialog in the Arrow tool
             active_tab.editing_transition_labels = labels.iter().cloned().collect();
             active_tab.editing_transition_pair = Some((from, to));
             active_tab.editing_transition_label_inputs = active_tab.editing_transition_labels.clone();
             active_tab.editing_transition_dialog_open = true;
             active_tab.state_machine.request_redraw();
-            iced::widget::text_input::focus(format!("{}-0", EDIT_LABEL_INPUT))
+            iced::widget::text_input::focus(format!("{EDIT_LABEL_INPUT}-0"))
         }
     }
 
@@ -169,8 +156,6 @@ impl super::app::App {
     }
 
     pub(crate) fn handle_key_pressed(&mut self, key: Key, modifiers: Modifiers, captured: bool) -> Task<Message> {
-        // Modifier tracking for canvas gestures (Shift/Alt+click, Ctrl+wheel)
-        // always runs, whoever has focus.
         match key {
             Key::Named(Named::Control) => self.get_active_tab_mut().state_machine.set_ctrl_pressed(true),
             Key::Named(Named::Shift) => self.get_active_tab_mut().state_machine.set_shift_pressed(true),
@@ -178,8 +163,6 @@ impl super::app::App {
             _ => {}
         }
 
-        // The startup picker owns the keyboard until a module is chosen:
-        // arrows move the highlight in the 2×2 grid, Enter opens, Esc quits.
         if self.startup_picker_open {
             return match key {
                 Key::Named(Named::ArrowLeft) => self.move_startup_selection(-1),
@@ -203,13 +186,10 @@ impl super::app::App {
             if self.any_modal_open() {
                 return self.dismiss_modal();
             }
-            // Esc returns to the Arrow tool.
             self.get_active_tab_mut().set_active_tool(EditorTool::Arrow);
             return Task::none();
         }
 
-        // Everything below is a shortcut: never while a dialog is up, and
-        // single keys never while a text field is consuming them.
         if self.any_modal_open() {
             return Task::none();
         }
@@ -240,10 +220,6 @@ impl super::app::App {
         let on_canvas = !self.get_active_tab().machine.is_grammar();
         match key.as_ref() {
             Key::Named(Named::F1) | Key::Character("?") => self.update(Message::ToggleShortcuts),
-            // Tool shortcuts: 1-4 pick the tools, Tab toggles between the
-            // Arrow tool and the Delete tool (the old deletion-mode
-            // keybind), and holding Delete temporarily engages the Delete
-            // tool until the key is released.
             Key::Named(Named::Tab) if on_canvas => {
                 let active_tab = self.get_active_tab_mut();
                 let next = if active_tab.state_machine.is_deletion_mode() {
@@ -263,7 +239,7 @@ impl super::app::App {
                 Task::none()
             }
             Key::Named(Named::Space) if on_canvas => self.toggle_active_play(),
-            Key::Named(Named::ArrowRight) if on_canvas => self.step_active_run(),
+            Key::Named(Named::ArrowRight) if on_canvas => self.run_step(),
             Key::Character("f") if on_canvas => self.fit_view(),
             Key::Character(digit) if on_canvas => {
                 let tool = EditorTool::ALL.into_iter().find(|tool| tool.shortcut() == digit);
@@ -288,9 +264,6 @@ impl super::app::App {
                 self.get_active_tab_mut().state_machine.set_alt_pressed(false);
             }
             Key::Named(Named::Delete) => {
-                // Releasing always restores the stashed tool, even behind
-                // a modal: it can only de-engage, never engage, so it
-                // self-heals.
                 if self.get_active_tab().state_machine.is_deletion_mode() {
                     self.get_active_tab_mut().state_machine.restore_tool();
                     self.get_active_tab_mut().state_machine.request_redraw();
@@ -301,33 +274,17 @@ impl super::app::App {
         Task::none()
     }
 
-    /* Toolbar-driven tool switch on the active tab. */
     pub(crate) fn select_tool(&mut self, tool: EditorTool) -> Task<Message> {
         self.get_active_tab_mut().set_active_tool(tool);
         Task::none()
     }
 
-    /* Space: play/pause the active run dock (only once a run is loaded). */
     fn toggle_active_play(&mut self) -> Task<Message> {
         let (loaded, _, _) = self.get_active_tab().run_state();
         if !loaded {
             return Task::none();
         }
-        match self.get_active_tab().machine {
-            TabMachine::Finite(_) => self.finite_toggle_play(),
-            TabMachine::Pushdown(_) => self.pda_toggle_play(),
-            TabMachine::Turing(_) => self.tm_toggle_play(),
-            TabMachine::Grammar(_) => Task::none(),
-        }
+        self.run_toggle_play()
     }
 
-    /* →: one step (or one nondeterministic level) of the active run. */
-    fn step_active_run(&mut self) -> Task<Message> {
-        match self.get_active_tab().machine {
-            TabMachine::Finite(_) => self.finite_step(),
-            TabMachine::Pushdown(_) => self.pda_step(),
-            TabMachine::Turing(_) => self.tm_step(),
-            TabMachine::Grammar(_) => Task::none(),
-        }
-    }
 }

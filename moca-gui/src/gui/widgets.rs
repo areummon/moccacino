@@ -1,5 +1,3 @@
-/* Reusable view helpers shared by the header, dialogs, run docks and the
- * grammar panel, so every surface speaks the same visual language. */
 
 use iced::widget::text::Wrapping;
 use iced::widget::{button, column, container, horizontal_space, row, tooltip, Space};
@@ -9,20 +7,12 @@ use super::icons::{icon, Icon, Ink};
 use super::message::Message;
 use crate::gui::theme::{self, Family, Tone};
 
-/* ---- Text ---- */
-
-/* All UI text goes through here. Glyphs the UI fonts lack (ε, arrows, check
- * marks) come from the bundled DejaVu Sans, but only advanced shaping falls
- * back to other fonts - and it is costly, so it is used only for strings
- * that need it. */
 pub(crate) fn text<'a>(content: impl iced::widget::text::IntoFragment<'a>) -> iced::widget::Text<'a> {
     let content = content.into_fragment();
     let shaping = shaping_for(&content);
     iced::widget::text(content).shaping(shaping)
 }
 
-/* Basic shaping for text the bundled fonts cover (ASCII, Latin-1, general
- * punctuation, minus sign); advanced (with font fallback) otherwise. */
 pub(crate) fn shaping_for(content: &str) -> iced::widget::text::Shaping {
     let covered = content.chars().all(|c| {
         (c as u32) < 0x100 || (0x2000..=0x206F).contains(&(c as u32)) || c == '\u{2212}'
@@ -33,8 +23,6 @@ pub(crate) fn shaping_for(content: &str) -> iced::widget::text::Shaping {
         iced::widget::text::Shaping::Advanced
     }
 }
-
-/* ---- Tooltips ---- */
 
 pub(crate) fn tip<'a>(
     content: impl Into<Element<'a, Message>>,
@@ -51,10 +39,6 @@ pub(crate) fn tip<'a>(
     .into()
 }
 
-/* ---- Buttons ---- */
-
-/* Square ghost button holding a single icon. A `None` message renders it
- * disabled. */
 pub(crate) fn icon_button<'a>(glyph: Icon, message: Option<Message>, ink: Ink) -> button::Button<'a, Message> {
     button(icon(glyph, 16.0, ink))
         .on_press_maybe(message)
@@ -62,7 +46,6 @@ pub(crate) fn icon_button<'a>(glyph: Icon, message: Option<Message>, ink: Ink) -
         .style(theme::button_ghost)
 }
 
-/* Text button with an optional leading icon. */
 pub(crate) fn labeled<'a>(glyph: Option<(Icon, Ink)>, label: impl Into<String>) -> Element<'a, Message> {
     let label = text(label.into()).size(14).font(theme::SEMIBOLD).wrapping(Wrapping::None);
     match glyph {
@@ -95,8 +78,6 @@ pub(crate) fn ghost<'a>(label: impl Into<String>, message: Option<Message>) -> b
         .style(theme::button_ghost)
 }
 
-/* ---- Chips and small labels ---- */
-
 pub(crate) fn chip<'a>(label: impl Into<String>, tone: Tone) -> Element<'a, Message> {
     container(text(label.into()).size(12).font(theme::SEMIBOLD).wrapping(Wrapping::None))
         .padding([3, 10])
@@ -121,7 +102,6 @@ pub(crate) fn family_dot<'a>(family: Family, size: f32) -> Element<'a, Message> 
         .into()
 }
 
-/* Keycap for shortcut hints. */
 pub(crate) fn kbd<'a>(label: impl Into<String>) -> Element<'a, Message> {
     container(text(label.into()).size(11).font(theme::MONO).wrapping(Wrapping::None))
         .padding([1, 6])
@@ -129,17 +109,13 @@ pub(crate) fn kbd<'a>(label: impl Into<String>) -> Element<'a, Message> {
         .into()
 }
 
-/* Small caption above a group of controls. */
 pub(crate) fn caption<'a>(label: impl Into<String>) -> Element<'a, Message> {
     text(label.into()).size(12).font(theme::SEMIBOLD).style(theme::text_faint).into()
 }
 
-/* Low-key helper sentence for empty states. */
 pub(crate) fn hint<'a>(label: impl Into<String>) -> Element<'a, Message> {
     text(label.into()).size(13).style(theme::text_faint).into()
 }
-
-/* ---- Run outcome ---- */
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Outcome {
@@ -168,7 +144,6 @@ pub(crate) fn outcome_chip<'a>(outcome: Outcome) -> Element<'a, Message> {
     }
 }
 
-/* Label/value pair shown in run status lines. */
 pub(crate) fn stat<'a>(label: impl Into<String>, value: impl Into<String>) -> Element<'a, Message> {
     row![
         text(label.into()).size(12).style(theme::text_faint).wrapping(Wrapping::None),
@@ -179,17 +154,12 @@ pub(crate) fn stat<'a>(label: impl Into<String>, value: impl Into<String>) -> El
     .into()
 }
 
-/* ---- Run controls ---- */
-
-/* Messages a family's run dock emits. */
 pub(crate) struct RunMessages {
     pub(crate) play: Message,
     pub(crate) step: Message,
     pub(crate) reset: Message,
 }
 
-/* Reset · Step · Play/Pause as one segmented group. Step and Play are
- * disabled until an input is loaded. */
 pub(crate) fn run_controls<'a>(playing: bool, loaded: bool, finished: bool, messages: RunMessages) -> Element<'a, Message> {
     let can_advance = loaded && !finished;
     let reset = tip(
@@ -219,8 +189,6 @@ pub(crate) fn run_controls<'a>(playing: bool, loaded: bool, finished: bool, mess
         .into()
 }
 
-/* Header row of a run dock: family badge + title, controls, a flexible
- * status area and the collapse chevron. */
 pub(crate) fn dock_header<'a>(
     family: Family,
     title: &'a str,
@@ -242,7 +210,6 @@ pub(crate) fn dock_header<'a>(
         .spacing(8)
         .align_y(Alignment::Center);
     if compact {
-        // Narrow windows: title and status on top, the controls below.
         return column![
             row![title, Space::with_width(12), status, horizontal_space(), chevron]
                 .spacing(8)
@@ -258,14 +225,10 @@ pub(crate) fn dock_header<'a>(
         .into()
 }
 
-/* ---- Dialogs ---- */
-
 pub(crate) const DIALOG_SM: f32 = 360.0;
 pub(crate) const DIALOG_MD: f32 = 460.0;
 pub(crate) const DIALOG_LG: f32 = 640.0;
 
-/* The standard dialog card: title, optional subtitle, body, and a row of
- * right-aligned actions. */
 pub(crate) fn dialog_card<'a>(
     title: impl Into<String>,
     subtitle: Option<String>,
@@ -281,7 +244,6 @@ pub(crate) fn dialog_card<'a>(
     for action in actions {
         footer = footer.push(action);
     }
-    // Fill up to the preferred width, so dialogs shrink with small windows.
     container(column![header, body, footer].spacing(16))
         .padding(22)
         .width(Length::Fill)
@@ -290,10 +252,6 @@ pub(crate) fn dialog_card<'a>(
         .into()
 }
 
-/* Wraps dialog content in the full-window modal layer. Two mouse_area
- * levels make clicks never reach the canvas below: the outer one captures
- * backdrop clicks and dismisses the dialog, the inner one swallows clicks
- * on the dialog box's empty areas so they don't dismiss it either. */
 pub(crate) fn modal_layer<'a>(content: Element<'a, Message>) -> Element<'a, Message> {
     iced::widget::mouse_area(
         container(iced::widget::mouse_area(content).on_press(Message::Noop))
@@ -305,8 +263,6 @@ pub(crate) fn modal_layer<'a>(content: Element<'a, Message>) -> Element<'a, Mess
     .into()
 }
 
-/* Modal layer without a dismissal path: the backdrop swallows clicks.
- * Used for the startup picker, where a choice is mandatory. */
 pub(crate) fn blocking_layer<'a>(content: Element<'a, Message>) -> Element<'a, Message> {
     iced::widget::mouse_area(
         container(iced::widget::mouse_area(content).on_press(Message::Noop))
@@ -318,9 +274,6 @@ pub(crate) fn blocking_layer<'a>(content: Element<'a, Message>) -> Element<'a, M
     .into()
 }
 
-/* ---- Run dock building blocks ---- */
-
-/* Input field plus its Load button, the entry point of every run dock. */
 pub(crate) fn run_input<'a>(
     value: &str,
     on_input: fn(String) -> Message,
@@ -347,7 +300,6 @@ pub(crate) fn run_input<'a>(
     .into()
 }
 
-/* Whole dock card: header row, then (unless collapsed) the body. */
 pub(crate) fn run_dock<'a>(
     family: Family,
     title: &'a str,
@@ -368,7 +320,6 @@ pub(crate) fn run_dock<'a>(
         .into()
 }
 
-/* Cell size presets: the main strip and the compact lane view. */
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum CellSize {
     Regular,
@@ -384,7 +335,6 @@ impl CellSize {
     }
 }
 
-/* One monospace cell of a tape, ribbon or stack. */
 pub(crate) fn cell<'a>(symbol: impl Into<String>, size: CellSize, focus: bool, spent: bool, min_width: Option<f32>) -> Element<'a, Message> {
     let (width, height, font_size) = size.metrics();
     container(text(symbol.into()).font(theme::MONO).size(font_size))
@@ -396,8 +346,6 @@ pub(crate) fn cell<'a>(symbol: impl Into<String>, size: CellSize, focus: bool, s
         .into()
 }
 
-/* Input ribbon shared by the finite and pushdown docks: the consumed
- * prefix dimmed, the next symbol highlighted, the rest plain. */
 pub(crate) fn ribbon<'a>(input: &str, consumed: usize, size: CellSize) -> Element<'a, Message> {
     if input.is_empty() {
         return cell("ε", size, consumed == 0, false, None);
@@ -409,7 +357,6 @@ pub(crate) fn ribbon<'a>(input: &str, consumed: usize, size: CellSize) -> Elemen
     cells.into()
 }
 
-/* One tape window with the head cell highlighted. */
 pub(crate) fn tape<'a>(window: &str, head_offset: usize, size: CellSize) -> Element<'a, Message> {
     let mut cells = row![].spacing(3).align_y(Alignment::Center);
     for (index, c) in window.chars().enumerate() {
@@ -418,14 +365,12 @@ pub(crate) fn tape<'a>(window: &str, head_offset: usize, size: CellSize) -> Elem
     cells.into()
 }
 
-/* Stack laid out sideways, bottom on the left and the top (highlighted) on
- * the right; only the topmost `visible` entries are drawn. */
 pub(crate) fn stack_strip<'a>(entries: &[String], visible: usize) -> Element<'a, Message> {
     let shown = entries.len().min(visible);
     let hidden = entries.len() - shown;
     let mut cells = row![].spacing(3).align_y(Alignment::Center);
     if hidden > 0 {
-        cells = cells.push(text(format!("+{} ", hidden)).size(12).style(theme::text_faint));
+        cells = cells.push(text(format!("+{hidden} ")).size(12).style(theme::text_faint));
     }
     if entries.is_empty() {
         cells = cells.push(text("empty").size(12).style(theme::text_faint));
@@ -438,8 +383,6 @@ pub(crate) fn stack_strip<'a>(entries: &[String], visible: usize) -> Element<'a,
     cells.into()
 }
 
-/* A horizontally scrollable strip so long tapes and words never squeeze
- * the dock. */
 pub(crate) fn strip<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
     iced::widget::scrollable(container(content).padding(iced::Padding { top: 0.0, right: 0.0, bottom: 8.0, left: 0.0 }))
         .direction(iced::widget::scrollable::Direction::Horizontal(
@@ -450,8 +393,6 @@ pub(crate) fn strip<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a,
         .into()
 }
 
-/* Branch rows of a nondeterministic frontier, capped to a scrollable
- * window so wide frontiers never swallow the canvas. */
 pub(crate) fn lanes<'a>(rows: Vec<Element<'a, Message>>, hidden: usize) -> Element<'a, Message> {
     const ROW_HEIGHT: f32 = 30.0;
     let visible_rows = rows.len();
@@ -460,7 +401,7 @@ pub(crate) fn lanes<'a>(rows: Vec<Element<'a, Message>>, hidden: usize) -> Eleme
         list = list.push(row);
     }
     if hidden > 0 {
-        list = list.push(hint(format!("… {} more branches", hidden)));
+        list = list.push(hint(format!("… {hidden} more branches")));
     }
     let height = ((visible_rows as f32 + if hidden > 0 { 1.0 } else { 0.0 }) * (ROW_HEIGHT + 6.0)).min(200.0);
     container(
@@ -477,7 +418,6 @@ pub(crate) fn lanes<'a>(rows: Vec<Element<'a, Message>>, hidden: usize) -> Eleme
     .into()
 }
 
-/* One branch: index, state chip, then the family's configuration view. */
 pub(crate) fn lane<'a>(index: usize, state: String, detail: Element<'a, Message>) -> Element<'a, Message> {
     row![
         container(text(format!("{:>2}", index + 1)).size(11).font(theme::MONO).style(theme::text_faint))

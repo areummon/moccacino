@@ -40,8 +40,8 @@ fn grammar_of(entity: &Entity) -> &Grammar {
 
 fn first_error_message(source: &str) -> String {
     let (entities, errors) = parse_entity_file(source);
-    assert!(entities.is_empty(), "expected no entities, got {:?}", entities);
-    assert_eq!(errors.len(), 1, "expected exactly one error: {:?}", errors);
+    assert!(entities.is_empty(), "expected no entities, got {entities:?}");
+    assert_eq!(errors.len(), 1, "expected exactly one error: {errors:?}");
     errors[0].message.clone()
 }
 
@@ -66,7 +66,7 @@ entity: grammar
 productions: S -> a S b | ε
 ";
     let (entities, errors) = parse_entity_file(source);
-    assert!(errors.is_empty(), "unexpected errors: {:?}", errors);
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
     assert_eq!(entities.len(), 3);
     assert_eq!(entities[0].name, "parity");
     assert!(finite_of(&entities[0].entity).accepts(""));
@@ -89,7 +89,7 @@ initial: q0
 final: q2
 ";
     let (entities, errors) = parse_entity_file(source);
-    assert!(errors.is_empty(), "unexpected errors: {:?}", errors);
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
     let pda = pda_of(&entities[0].entity);
     assert!(Machine::accepts(pda, "ab"));
     assert!(!Machine::accepts(pda, "ba"));
@@ -106,16 +106,15 @@ initial: q0
 final: q1
 ";
     let (entities, errors) = parse_entity_file(source);
-    assert!(errors.is_empty(), "unexpected errors: {:?}", errors);
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
     let pda = pda_of(&entities[0].entity);
-    // The assembled label must use the repo's `input;pop/push` convention.
     let labels: Vec<String> = pda
         .get_states_by_id_ref()
         .values()
         .flat_map(|state| state.iter_by_transition().flat_map(|(_, inputs)| inputs.iter().cloned()))
         .collect();
-    assert!(labels.contains(&"a;Z/aZ".to_string()), "labels: {:?}", labels);
-    assert!(labels.contains(&"ε;Z/Z".to_string()), "labels: {:?}", labels);
+    assert!(labels.contains(&"a;Z/aZ".to_string()), "labels: {labels:?}");
+    assert!(labels.contains(&"ε;Z/Z".to_string()), "labels: {labels:?}");
 }
 
 #[test]
@@ -128,7 +127,7 @@ initial: a
 final: b
 ";
     let (entities, errors) = parse_entity_file(source);
-    assert!(errors.is_empty(), "unexpected errors: {:?}", errors);
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
     assert_eq!(tm_of(&entities[0].entity).get_tape_count(), 2);
 }
 
@@ -143,12 +142,11 @@ initial: a
 final: b
 ",
     );
-    assert!(message.contains("inconsistent tape count"), "message: {}", message);
+    assert!(message.contains("inconsistent tape count"), "message: {message}");
 }
 
 #[test]
 fn entity_file_tm_direction_handling_test() {
-    // Lowercase directions are accepted and normalized.
     let source = "\
 entity: turing
 states: a, b
@@ -157,10 +155,9 @@ initial: a
 final: b
 ";
     let (entities, errors) = parse_entity_file(source);
-    assert!(errors.is_empty(), "unexpected errors: {:?}", errors);
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
     assert!(tm_of(&entities[0].entity).accepts("0"));
 
-    // Unknown directions are rejected.
     let message = first_error_message(
         "\
 entity: turing
@@ -170,7 +167,7 @@ initial: a
 final: b
 ",
     );
-    assert!(message.contains("invalid direction"), "message: {}", message);
+    assert!(message.contains("invalid direction"), "message: {message}");
 }
 
 #[test]
@@ -184,13 +181,11 @@ initial: a
 final: b
 ",
     );
-    assert!(message.contains("exactly 2 parts"), "message: {}", message);
+    assert!(message.contains("exactly 2 parts"), "message: {message}");
 }
 
 #[test]
 fn entity_file_auto_registration_test() {
-    // Labels only referenced in transitions, initial and finals become
-    // states automatically.
     let source = "\
 entity: nfa
 states: start
@@ -199,7 +194,7 @@ initial: start
 final: end
 ";
     let (entities, errors) = parse_entity_file(source);
-    assert!(errors.is_empty(), "unexpected errors: {:?}", errors);
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
     assert_eq!(entities[0].name, "NFA");
     let automaton = finite_of(&entities[0].entity);
     assert_eq!(automaton.get_states_by_id_ref().len(), 3);
@@ -214,7 +209,7 @@ name: abb detector
 regex: (a|b)*abb
 ";
     let (entities, errors) = parse_entity_file(source);
-    assert!(errors.is_empty(), "unexpected errors: {:?}", errors);
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
     assert_eq!(entities[0].name, "abb detector");
     let automaton = finite_of(&entities[0].entity);
     assert!(Machine::accepts(automaton, "ababb"));
@@ -229,13 +224,11 @@ entity: regex
 regex: (a|b
 ",
     );
-    assert!(message.contains("invalid regex"), "message: {}", message);
+    assert!(message.contains("invalid regex"), "message: {message}");
 }
 
 #[test]
 fn entity_file_grammar_invalid_test() {
-    // A line without `->` is a real parse error (note: an empty RHS like
-    // `S ->` is VALID here — it denotes an ε-production).
     let message = first_error_message(
         "\
 entity: grammar
@@ -243,7 +236,7 @@ productions: S -> a
 productions: S a
 ",
     );
-    assert!(message.contains("invalid grammar"), "message: {}", message);
+    assert!(message.contains("invalid grammar"), "message: {message}");
 }
 
 #[test]
@@ -257,7 +250,7 @@ transitions: (q0, a, Z, Z) -> q0
 initial: q0
 ",
     );
-    assert!(message.contains("'blank:' is only valid"), "message: {}", message);
+    assert!(message.contains("'blank:' is only valid"), "message: {message}");
 
     let (entities, errors) = parse_entity_file(
         "\
@@ -267,7 +260,7 @@ productions: S -> a
 ",
     );
     assert!(entities.is_empty());
-    assert!(errors[0].message.contains("'states:' is not valid"), "{:?}", errors);
+    assert!(errors[0].message.contains("'states:' is not valid"), "{errors:?}");
 }
 
 #[test]
@@ -292,7 +285,6 @@ regex: a*
     assert_eq!(entities.len(), 2, "expected the two healthy entities");
     assert_eq!(errors.len(), 1);
     assert_eq!(errors[0].entity_name, "DFA");
-    // The healthy DFA accepts exactly "a" (b has no outgoing edges).
     assert!(finite_of(&entities[0].entity).accepts("a"));
     assert!(!finite_of(&entities[0].entity).accepts("aa"));
     assert!(finite_of(&entities[1].entity).accepts("aaaa"));
@@ -326,7 +318,7 @@ transitions: (a, a) -> b
 final: b
 ",
     );
-    assert!(message.contains("missing 'initial:'"), "message: {}", message);
+    assert!(message.contains("missing 'initial:'"), "message: {message}");
 }
 
 #[test]
@@ -338,7 +330,7 @@ states: a
 ",
     );
     assert!(entities.is_empty());
-    assert!(errors[0].message.contains("unknown entity kind"), "{:?}", errors);
+    assert!(errors[0].message.contains("unknown entity kind"), "{errors:?}");
 }
 
 #[test]
@@ -357,16 +349,11 @@ initial: q0
 final: q1
 ";
     let (entities, errors) = parse_entity_file(source);
-    assert!(errors.is_empty(), "unexpected errors: {:?}", errors);
-    // Defaults apply: TM blank '_', PDA bottom marker 'Z'.
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
     assert!(tm_of(&entities[0].entity).accepts(""));
     assert!(Machine::accepts(pda_of(&entities[1].entity), "a"));
 }
 
-/* ---------- .ce serialization round-trips ---------- */
-
-/* All (from, to, label) triples of a machine keyed by state labels, so
- * saved/reloaded machines compare structurally regardless of state ids. */
 fn machine_triples(states: &HashMap<StateID, State>) -> BTreeSet<(String, String, String)> {
     let mut triples = BTreeSet::new();
     for (from_id, state) in states {
@@ -385,8 +372,6 @@ fn machine_triples(states: &HashMap<StateID, State>) -> BTreeSet<(String, String
 
 #[test]
 fn entity_file_save_load_finite_roundtrip_test() {
-    // `new()`, so the determinism flag starts true like the loader's
-    // machines do and the dfa/nfa alias comparison is meaningful.
     let mut fa = FiniteAutomata::new();
     fa.add_state_with_id_label(0, "q0");
     fa.add_state_with_id_label(1, "q1");
@@ -399,7 +384,7 @@ fn entity_file_save_load_finite_roundtrip_test() {
 
     let text = write_finite_entity("parity", &fa).expect("serializable");
     let (entities, errors) = parse_entity_file(&text);
-    assert!(errors.is_empty(), "unexpected errors: {:?}", errors);
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
     assert_eq!(entities.len(), 1);
     assert_eq!(entities[0].name, "parity");
     let loaded = finite_of(&entities[0].entity);
@@ -430,7 +415,7 @@ fn entity_file_save_load_pda_roundtrip_test() {
 
     let text = write_pushdown_entity("bal", &pda).expect("serializable");
     let (entities, errors) = parse_entity_file(&text);
-    assert!(errors.is_empty(), "unexpected errors: {:?}", errors);
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
     assert_eq!(entities.len(), 1);
     let loaded = pda_of(&entities[0].entity);
     assert_eq!(loaded.get_initial_stack_symbol(), "P0");
@@ -455,7 +440,7 @@ fn entity_file_save_load_tm_roundtrip_test() {
 
     let text = write_turing_entity("two-tape", &tm).expect("serializable");
     let (entities, errors) = parse_entity_file(&text);
-    assert!(errors.is_empty(), "unexpected errors: {:?}", errors);
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
     assert_eq!(entities.len(), 1);
     let loaded = tm_of(&entities[0].entity);
     assert_eq!(loaded.get_blank_symbol(), '□');
@@ -471,10 +456,10 @@ fn entity_file_save_load_grammar_roundtrip_test() {
     let grammar = crate::grammar::parse_grammar("S -> a S b | ε\nS -> b\nA -> c").expect("parses");
     let text = write_grammar_entity("demo", &grammar).expect("serializable");
     let (entities, errors) = parse_entity_file(&text);
-    assert!(errors.is_empty(), "unexpected errors: {:?}", errors);
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
     assert_eq!(entities.len(), 1);
     let loaded = grammar_of(&entities[0].entity);
-    assert_eq!(format!("{}", loaded), format!("{}", grammar));
+    assert_eq!(format!("{loaded}"), format!("{}", grammar));
     assert!(loaded.generate("aabb"));
     assert!(loaded.generate("b"));
     assert!(!loaded.generate("ba"));
@@ -490,7 +475,6 @@ fn entity_file_save_empty_entity_test() {
 
 #[test]
 fn entity_file_save_unrepresentable_label_test() {
-    // Finite: a comma inside the symbol breaks the tuple segmentation.
     let mut fa = FiniteAutomata::default();
     fa.add_state_with_id_label(0, "q0");
     fa.add_state_with_id_label(1, "q1");
@@ -498,15 +482,12 @@ fn entity_file_save_unrepresentable_label_test() {
     fa.add_transition(0, 1, "a,b".to_string());
     assert!(write_finite_entity("e", &fa).is_err());
 
-    // Pushdown: a label missing the push part (storable, but the engine
-    // skips it and the tuple format cannot express it).
     let mut pda = PushdownAutomata::new("Z".to_string());
     pda.add_state_with_id_label(0, "q0");
     pda.make_initial(0);
     pda.add_transition(0, 0, "a;Z".to_string());
     assert!(write_pushdown_entity("e", &pda).is_err());
 
-    // Turing: invalid direction, then a missing direction.
     let mut tm = TuringMachine::new('_');
     tm.add_state_with_id_label(0, "q0");
     tm.make_initial(0);
@@ -521,4 +502,51 @@ fn entity_file_save_missing_initial_test() {
     let mut fa = FiniteAutomata::default();
     fa.add_state_with_id_label(0, "q0");
     assert!(write_finite_entity("e", &fa).is_err());
+}
+
+#[test]
+fn demo_file_entities_match_their_names_test() {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../examples/demo.ce");
+    let source = std::fs::read_to_string(path).expect("examples/demo.ce is readable");
+    let (entities, errors) = parse_entity_file(&source);
+    assert!(errors.is_empty(), "demo.ce parses cleanly: {errors:?}");
+
+    let words = |alphabet: &[char]| {
+        let mut all = vec![String::new()];
+        let mut frontier = vec![String::new()];
+        for _ in 0..6 {
+            frontier = frontier
+                .iter()
+                .flat_map(|word| alphabet.iter().map(move |c| format!("{word}{c}")))
+                .collect();
+            all.extend(frontier.iter().cloned());
+        }
+        all
+    };
+    fn is_anbn(word: &str) -> bool {
+        let half = word.len() / 2;
+        word.len() % 2 == 0 && word[..half].chars().all(|c| c == 'a') && word[half..].chars().all(|c| c == 'b')
+    }
+    type Spec = (&'static str, &'static [char], fn(&str) -> bool);
+    let specs: [Spec; 6] = [
+        ("even-number-of-as", &['a', 'b'], |w| w.matches('a').count() % 2 == 0),
+        ("ends-with-b", &['a', 'b'], |w| w.ends_with('b')),
+        ("anbn", &['a', 'b'], is_anbn),
+        ("contains-a-zero", &['0', '1'], |w| w.contains('0')),
+        ("abb", &['a', 'b'], |w| w.ends_with("abb")),
+        ("anbn", &['a', 'b'], is_anbn),
+    ];
+    assert_eq!(entities.len(), specs.len());
+    for (named, (name, alphabet, expected)) in entities.iter().zip(specs) {
+        assert_eq!(named.name, name);
+        for word in words(alphabet) {
+            let accepted = match &named.entity {
+                Entity::Finite(machine) => machine.accepts(&word),
+                Entity::Pushdown(machine) => machine.accepts(&word),
+                Entity::Turing(machine) => machine.accepts(&word),
+                Entity::Grammar(grammar) => grammar.generate(&word),
+            };
+            assert_eq!(accepted, expected(&word), "{name} on {word:?}");
+        }
+    }
 }

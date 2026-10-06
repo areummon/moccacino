@@ -6,63 +6,41 @@ use super::message::Message;
 
 impl super::app::App {
     pub(crate) fn clear_active_tab(&mut self) -> Task<Message> {
-        self.get_active_tab_mut().state_machine.reset_id_counter();
-        self.get_active_tab_mut().state_machine.set_scroll(iced::Vector::new(0.0, 0.0));
-        self.get_active_tab_mut().state_machine.set_zoom(1.0);
-        self.get_active_tab_mut().state_machine.request_redraw();
-        self.get_active_tab_mut().transitions.clear();
-        self.get_active_tab_mut().states.clear();
-        self.get_active_tab_mut().state_id_to_index.clear();
-        self.get_active_tab_mut().initial_state = None;
-        self.get_active_tab_mut().final_states.clear();
-        // Clear the machine in place so the tab keeps its family: swapping in
-        // a default Finite machine made Turing/pushdown run panels vanish.
-        self.get_active_tab_mut().machine.clear();
-        self.get_active_tab_mut().check_input_dialog_open = false;
-        self.get_active_tab_mut().check_input_text.clear();
-        self.get_active_tab_mut().regex_dialog_open = false;
-        self.get_active_tab_mut().tm_run = None;
-        self.get_active_tab_mut().tm_frontier = None;
-        self.get_active_tab_mut().tm_playing = false;
-        self.get_active_tab_mut().pda_run = None;
-        self.get_active_tab_mut().pda_frontier = None;
-        self.get_active_tab_mut().pda_playing = false;
-        self.get_active_tab_mut().finite_run = None;
-        self.get_active_tab_mut().finite_frontier = None;
-        self.get_active_tab_mut().finite_playing = false;
-        self.get_active_tab_mut().set_active_tool(crate::state_machine::EditorTool::Arrow);
+        let tab = self.get_active_tab_mut();
+        tab.state_machine.reset_id_counter();
+        tab.state_machine.set_scroll(iced::Vector::new(0.0, 0.0));
+        tab.state_machine.set_zoom(1.0);
+        tab.transitions.clear();
+        tab.states.clear();
+        tab.state_id_to_index.clear();
+        tab.initial_state = None;
+        tab.final_states.clear();
+        tab.check_input_dialog_open = false;
+        tab.check_input_text.clear();
+        tab.regex_dialog_open = false;
+        tab.run = None;
+        tab.playing = false;
+        tab.set_active_tool(state_machine::EditorTool::Arrow);
         Task::none()
     }
 
     pub(crate) fn edit_text_changed(&mut self, text: String) -> Task<Message> {
-        let text_clone = text.clone();
-        self.get_active_tab_mut().edit_text = text_clone;
-        self.get_active_tab_mut().pending_transition_label = text;
+        let tab = self.get_active_tab_mut();
+        tab.edit_text = text.clone();
+        tab.pending_transition_label = text;
         Task::none()
     }
 
     pub(crate) fn finish_editing(&mut self) -> Task<Message> {
         let active_tab = self.get_active_tab_mut();
-        // Handle pending transition dialog
         if active_tab.pending_transition_dialog_open {
-            if let Some((from_state_id, to_state_id, from_point, to_point)) = active_tab.pending_transition.take() {
+            if let Some((from_state_id, to_state_id, _, _)) = active_tab.pending_transition.take() {
                 let label = if active_tab.pending_transition_label.trim().is_empty() {
                     "ε".to_string()
                 } else {
                     active_tab.pending_transition_label.clone()
                 };
-                let transition = state_machine::Transition {
-                    from_state_id,
-                    to_state_id,
-                    from_point,
-                    to_point,
-                    label,
-                };
-                let key = (transition.from_state_id, transition.to_state_id);
-                let entry = active_tab.transitions.entry(key).or_insert_with(indexmap::IndexSet::new);
-                if !entry.contains(&transition.label.to_string()) {
-                    entry.insert(transition.label.to_string());
-                }
+                active_tab.transitions.entry((from_state_id, to_state_id)).or_default().insert(label);
                 active_tab.pending_transition_dialog_open = false;
                 active_tab.pending_transition_label.clear();
                 active_tab.state_machine.request_redraw();
@@ -85,13 +63,13 @@ impl super::app::App {
     }
 
     pub(crate) fn cancel_editing(&mut self) -> Task<Message> {
-        // Cancel pending transition dialog
-        self.get_active_tab_mut().pending_transition = None;
-        self.get_active_tab_mut().pending_transition_label.clear();
-        self.get_active_tab_mut().pending_transition_dialog_open = false;
-        self.get_active_tab_mut().editing_state = None;
-        self.get_active_tab_mut().editing_transition = None;
-        self.get_active_tab_mut().edit_text.clear();
+        let tab = self.get_active_tab_mut();
+        tab.pending_transition = None;
+        tab.pending_transition_label.clear();
+        tab.pending_transition_dialog_open = false;
+        tab.editing_state = None;
+        tab.editing_transition = None;
+        tab.edit_text.clear();
         Task::none()
     }
 
@@ -117,22 +95,15 @@ impl super::app::App {
     pub(crate) fn save_edit_transition_labels(&mut self) -> Task<Message> {
         let active_tab = self.get_active_tab_mut();
         if let Some((from, to)) = active_tab.editing_transition_pair {
-            // Convert empty strings to "ε" and filter out completely empty labels
             let new_labels: Vec<String> = active_tab.editing_transition_label_inputs.iter()
                 .map(|s| if s.trim().is_empty() { "ε".to_string() } else { s.clone() })
-                .filter(|s| s != "ε" || active_tab.editing_transition_label_inputs.iter().any(|input| !input.trim().is_empty())) // Keep ε only if there are other non-empty labels
+                .filter(|s| s != "ε" || active_tab.editing_transition_label_inputs.iter().any(|input| !input.trim().is_empty()))
                 .collect();
 
             if new_labels.is_empty() {
-                // If no labels remain, remove the entire transition
                 active_tab.transitions.remove(&(from, to));
             } else {
-                // Otherwise, update with the new labels
-                let mut set = indexmap::IndexSet::new();
-                for label in new_labels {
-                    set.insert(label);
-                }
-                active_tab.transitions.insert((from, to), set);
+                active_tab.transitions.insert((from, to), new_labels.into_iter().collect());
             }
         }
         active_tab.editing_transition_pair = None;

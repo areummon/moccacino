@@ -8,7 +8,7 @@ final: s0
 entity: nfa
 name: ends-with-b
 states: q0, q1
-transitions: (q0, a) -> q0, (q0, b) -> q0, (q0, b) -> q1, (q1, a) -> q1, (q1, b) -> q1
+transitions: (q0, a) -> q0, (q0, b) -> q0, (q0, b) -> q1
 initial: q0
 final: q1
 

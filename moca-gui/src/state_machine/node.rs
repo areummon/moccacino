@@ -11,12 +11,10 @@ pub struct StateNode {
     pub label: String,
 }
 
-/* How a node is decorated on top of its base look. */
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct NodeLook {
     pub(crate) initial: bool,
     pub(crate) accepting: bool,
-    /* The running machine currently sits here. */
     pub(crate) active: bool,
 }
 
@@ -29,9 +27,6 @@ impl StateNode {
         StateNode { id: 0, position, radius, label }
     }
 
-    /* A soft disc with a faint drop shadow; accepting states get the
-     * classic inner ring, the initial state a filled pointer, and active
-     * states a warm glow. `tint` is the tab family's pastel. */
     pub(crate) fn draw(&self, frame: &mut Frame, p: &Palette, tint: Color, look: NodeLook) {
         let center = self.position;
         let r = self.radius;

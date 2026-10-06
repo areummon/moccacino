@@ -10,14 +10,12 @@ use super::tab::Tab;
 use super::toast::{Toast, TOAST_TICK};
 use crate::gui::theme::{self, Palette, ThemeMode};
 
-/* Interval between auto-play ticks of the machine run panels. */
 const RUN_TICK_MILLIS: u64 = 250;
-/* Fallback viewport until the canvas reports its real size. */
 const DEFAULT_VIEWPORT: Size = Size::new(1100.0, 560.0);
 
 #[derive(Default)]
 pub struct App {
-    pub(crate) tabs: Vec<Box<Tab>>,
+    pub(crate) tabs: Vec<Tab>,
     pub(crate) active_tab: usize,
     pub(crate) theme_mode: ThemeMode,
     pub(crate) startup_picker_open: bool,
@@ -30,11 +28,7 @@ pub struct App {
     pub(crate) save_dialog_open: bool,
     pub(crate) save_path_text: String,
     pub(crate) save_dialog_error: Option<String>,
-    // Serialized entity of the active tab, stashed while the save dialog
-    // is up so both the Browse and typed-path flows write the same bytes.
     pub(crate) pending_save: Option<String>,
-    // Which tab the stashed save belongs to and its content fingerprint at
-    // that moment; applied to the tab once the file is written.
     pub(crate) pending_save_fingerprint: Option<(usize, u64)>,
     pub(crate) error_message: Option<String>,
     pub(crate) latex_export_dialog_open: bool,
@@ -43,19 +37,14 @@ pub struct App {
     pub(crate) regex_export_code: Option<String>,
     pub(crate) toasts: Vec<Toast>,
     pub(crate) next_toast_id: u64,
-    // Size of the canvas on screen, as last reported by the canvas.
     pub(crate) canvas_viewport: Option<Size>,
-    // Tab rename: which tab is being renamed and the draft name.
     pub(crate) renaming_tab: Option<usize>,
     pub(crate) tab_rename_text: String,
     pub(crate) last_tab_click: Option<(usize, Instant)>,
-    // Logical window size, for the responsive header, dock and status bar.
     pub(crate) window_size: Option<Size>,
-    // A close waiting for the user to confirm discarding unsaved changes.
     pub(crate) pending_close: Option<CloseRequest>,
 }
 
-/* What the unsaved-changes dialog is about to close. */
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CloseRequest {
     App,
@@ -64,13 +53,14 @@ pub(crate) enum CloseRequest {
 
 impl App {
     pub fn new() -> (Self, Task<Message>) {
-        let mut app = Self::default();
-        app.theme_mode = Settings::load().theme;
-        app.tabs.push(Box::new(Tab::new()));
-        app.tabs[0].refresh_insight();
-        // The startup picker blocks the GUI until a module is chosen.
-        app.startup_picker_open = true;
-        // Learn the real window size right away; resize events follow.
+        let mut tab = Tab::new();
+        tab.refresh_insight();
+        let app = Self {
+            theme_mode: Settings::load().theme,
+            tabs: vec![tab],
+            startup_picker_open: true,
+            ..Self::default()
+        };
         let size = iced::window::get_oldest()
             .and_then(iced::window::get_size)
             .map(Message::WindowResized);
@@ -96,9 +86,6 @@ impl App {
             _ => None,
         });
 
-        // Timers only exist while they have work: auto-play ticks while a
-        // panel is playing (pauses, halts and tab switches stop the clock
-        // by themselves), toast ticks while a toast is alive.
         let resizes = iced::window::resize_events().map(|(_, size)| Message::WindowResized(size));
         let close_requests = iced::window::close_requests().map(|_| Message::WindowCloseRequested);
         let mut subscriptions = vec![keyboard, resizes, close_requests];
@@ -113,8 +100,6 @@ impl App {
         Subscription::batch(subscriptions)
     }
 
-    /* Milliseconds between auto-play ticks, when the active tab has a
-     * running panel that should keep stepping; None otherwise. */
     pub(crate) fn run_tick_interval(&self) -> Option<Duration> {
         let (loaded, finished, playing) = self.get_active_tab().run_state();
         (playing && loaded && !finished).then(|| Duration::from_millis(RUN_TICK_MILLIS))
@@ -128,15 +113,12 @@ impl App {
         &mut self.tabs[self.active_tab]
     }
 
-    /* Canvas size on screen: the canvas's own report, else an estimate
-     * from the window (header, dock and status bar take about 260px). */
     pub(crate) fn viewport(&self) -> Size {
         self.canvas_viewport
             .or_else(|| self.window_size.map(|size| Size::new(size.width, (size.height - 260.0).max(200.0))))
             .unwrap_or(DEFAULT_VIEWPORT)
     }
 
-    /* Scrolls the tab strip so the active tab is in view. */
     pub(crate) fn reveal_active_tab(&self) -> Task<Message> {
         let x = if self.tabs.len() > 1 { self.active_tab as f32 / (self.tabs.len() - 1) as f32 } else { 0.0 };
         iced::widget::scrollable::snap_to(
@@ -145,14 +127,10 @@ impl App {
         )
     }
 
-    /* Logical window width driving the responsive breakpoints. */
     pub(crate) fn layout_width(&self) -> f32 {
         self.window_size.map(|size| size.width).unwrap_or(1280.0)
     }
 
-    /* True while any modal dialog is up on the active tab or globally, or
-     * while the startup picker forces a choice. Used to block canvas input
-     * and canvas shortcuts behind popups. */
     pub(crate) fn any_modal_open(&self) -> bool {
         self.startup_picker_open
             || self.load_dialog_open
@@ -174,8 +152,6 @@ impl App {
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
-        // High-frequency messages never change the machine; everything
-        // else refreshes the status-bar insight of the (new) active tab.
         let structural = !matches!(
             message,
             Message::RunTick
@@ -210,8 +186,6 @@ impl App {
         if structural {
             tab.refresh_insight();
         }
-        // Steps, resets and loads move the run's current states; repaint
-        // the canvas glow only when they actually changed.
         let highlight = tab.active_run_states();
         if highlight != tab.run_highlight {
             tab.run_highlight = highlight;
@@ -304,21 +278,11 @@ impl App {
                 Task::none()
             }
             Message::TabRenameSubmit => self.commit_tab_rename(),
-            Message::TmInputChanged(text) => self.tm_input_changed(text),
-            Message::TmLoadInput => self.tm_load_input(),
-            Message::TmStep => self.tm_step(),
-            Message::TmReset => self.tm_reset(),
-            Message::TmTogglePlay => self.tm_toggle_play(),
-            Message::PdaInputChanged(text) => self.pda_input_changed(text),
-            Message::PdaLoadInput => self.pda_load_input(),
-            Message::PdaStep => self.pda_step(),
-            Message::PdaReset => self.pda_reset(),
-            Message::PdaTogglePlay => self.pda_toggle_play(),
-            Message::FiniteInputChanged(text) => self.finite_input_changed(text),
-            Message::FiniteLoadInput => self.finite_load_input(),
-            Message::FiniteStep => self.finite_step(),
-            Message::FiniteReset => self.finite_reset(),
-            Message::FiniteTogglePlay => self.finite_toggle_play(),
+            Message::RunInputChanged(text) => self.run_input_changed(text),
+            Message::RunLoad => self.run_load(),
+            Message::RunStep => self.run_step(),
+            Message::RunReset => self.run_reset(),
+            Message::RunTogglePlay => self.run_toggle_play(),
             Message::RunTick => self.run_tick(),
             Message::GrammarEditorAction(action) => self.grammar_editor_action(action),
             Message::GrammarWordChanged(text) => self.grammar_word_changed(text),
@@ -342,8 +306,6 @@ impl App {
         }
     }
 
-    /* Flips light/dark, remembers the choice, and drops every canvas
-     * cache so drawings repaint in the new palette. */
     fn toggle_theme(&mut self) -> Task<Message> {
         self.theme_mode = self.theme_mode.toggled();
         Settings { theme: self.theme_mode }.save();
@@ -394,9 +356,6 @@ impl App {
 
         let mut layers: Vec<Element<'_, Message>> = vec![content.into()];
 
-        // Dropdown menus float below the header; the click-away layer
-        // leaves the header itself interactive so another trigger can be
-        // clicked directly.
         if let Some(menu) = self.open_menu {
             layers.push(self.create_menu_layer(menu));
         }
@@ -404,7 +363,6 @@ impl App {
         if !self.toasts.is_empty() {
             layers.push(self.create_toast_layer());
         }
-        // The startup picker sits above everything and cannot be dismissed.
         if self.startup_picker_open {
             layers.push(self.create_startup_picker());
         }
@@ -416,8 +374,6 @@ impl App {
             .into()
     }
 
-    /* Modal dialogs in stacking order (later entries sit on top); the
-     * order mirrors `dismiss_modal`. */
     fn overlays(&self) -> Vec<Element<'_, Message>> {
         let tab = self.get_active_tab();
         let mut layers = Vec::new();
@@ -430,8 +386,6 @@ impl App {
         if tab.regex_dialog_open {
             layers.push(self.create_regex_dialog());
         }
-        // The .ce dialogs sit above the app but below the error popup so
-        // load failures remain visible.
         if self.load_dialog_open {
             layers.push(self.create_load_dialog());
         }

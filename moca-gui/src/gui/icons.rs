@@ -1,7 +1,3 @@
-/* Small vector icons drawn on a canvas. The bundled fonts lack most UI
- * symbols (play, pause, sun, moon...), so icons are drawn from simple
- * paths in a 24×24 design grid and scaled to the requested size. Colors
- * come from the active palette at draw time, so icons follow the theme. */
 
 use std::cell::Cell;
 
@@ -37,7 +33,6 @@ pub(crate) enum Icon {
     Family(Family),
 }
 
-/* Which palette color an icon is painted with. */
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Ink {
     Text,
@@ -75,10 +70,6 @@ pub(crate) fn icon<'a, Message: 'a>(icon: Icon, size: f32, ink: Ink) -> Element<
         .into()
 }
 
-/* Per-icon tessellation cache. Widget state is kept by tree position, so a
- * slot can switch icons (Play → Pause, Moon → Sun) or inks: the cache is
- * keyed on what it drew and rebuilt when that changes (size changes are
- * handled by the cache itself). */
 #[derive(Default)]
 pub(crate) struct IconCache {
     cache: canvas::Cache,
@@ -145,8 +136,6 @@ fn polygon(points: &[(f32, f32)]) -> Path {
     })
 }
 
-/* Arc approximated by a polyline, appended to an open builder. Angles are
- * in radians, y pointing down. */
 fn arc_into(b: &mut path::Builder, cx: f32, cy: f32, r: f32, start: f32, end: f32, first: bool) {
     const SEGMENTS: usize = 24;
     for i in 0..=SEGMENTS {
@@ -164,7 +153,6 @@ fn paint(frame: &mut Frame, icon: Icon, ink: Color, p: &Palette) {
     let stroke = pen(ink, 2.0);
     match icon {
         Icon::Logo => {
-            // Two states joined by a transition: the app's mark.
             frame.fill(&Path::circle(Point::new(6.5, 12.0), 4.5), p.family_finite);
             frame.fill(&Path::circle(Point::new(17.5, 12.0), 5.0), p.accent);
             frame.stroke(&Path::circle(Point::new(17.5, 12.0), 3.0), pen(p.accent_text, 1.3));
@@ -195,7 +183,6 @@ fn paint(frame: &mut Frame, icon: Icon, ink: Color, p: &Palette) {
         Icon::Reset => {
             let arc = Path::new(|b| arc_into(b, 12.0, 12.5, 6.5, -1.1, 4.0, true));
             frame.stroke(&arc, stroke);
-            // Arrow head at the arc start, pointing clockwise.
             let (sx, sy) = (12.0 + 6.5 * (-1.1f32).cos(), 12.5 + 6.5 * (-1.1f32).sin());
             let head = polygon(&[(sx + 3.6, sy - 1.6), (sx - 0.6, sy - 3.4), (sx + 0.6, sy + 1.4)]);
             frame.fill(&head, ink);
@@ -213,8 +200,6 @@ fn paint(frame: &mut Frame, icon: Icon, ink: Color, p: &Palette) {
             }
         }
         Icon::Moon => {
-            // Crescent: outer arc of the moon disc, inner arc of the
-            // shadow disc, meeting at their two intersection points.
             let moon = Path::new(|b| {
                 arc_into(b, 12.0, 12.0, 8.0, 0.2393, 4.4728, true);
                 arc_into(b, 16.0, 8.0, 7.0, 3.7104, 1.0027, false);
@@ -308,7 +293,6 @@ fn paint(frame: &mut Frame, icon: Icon, ink: Color, p: &Palette) {
     }
 }
 
-/* Family glyphs for the startup cards and dock headers. */
 fn paint_family(frame: &mut Frame, family: Family, ink: Color) {
     let stroke = pen(ink, 1.8);
     match family {

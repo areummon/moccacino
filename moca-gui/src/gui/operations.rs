@@ -13,8 +13,9 @@ use crate::gui::theme::Tone;
 impl super::app::App {
     pub(crate) fn open_check_input(&mut self) -> Task<Message> {
         self.open_menu = None;
-        self.get_active_tab_mut().check_input_dialog_open = true;
-        self.get_active_tab_mut().check_input_text = String::new();
+        let tab = self.get_active_tab_mut();
+        tab.check_input_dialog_open = true;
+        tab.check_input_text.clear();
         iced::widget::text_input::focus(CHECK_INPUT)
     }
 
@@ -27,23 +28,10 @@ impl super::app::App {
 
         self.get_active_tab_mut().sync_gui_to_machine();
 
-        let new_machine = match self.get_active_tab().machine.into_dfa() {
-            Some(machine) => machine,
-            None => {
-                let reason = match self.get_active_tab().machine.machine_kind() {
-                    Some(MachineKind::Turing) =>
-                        "Cannot convert: the tab holds a Turing machine, not a finite automaton.".to_string(),
-                    Some(MachineKind::Pushdown) =>
-                        "Cannot convert: the tab holds a pushdown automaton, not a finite automaton.".to_string(),
-                    _ =>
-                        "Cannot convert: The automaton is already deterministic.".to_string(),
-                };
-                self.error_message = Some(reason);
-                return Task::none();
-            }
-        };
-
-        self.open_machine_in_new_tab("DFA".to_string(), new_machine)
+        match self.get_active_tab().machine.to_dfa() {
+            Some(machine) => self.open_machine_in_new_tab("DFA".to_string(), machine),
+            None => self.reject_non_finite("convert", "The automaton is already deterministic."),
+        }
     }
 
     pub(crate) fn minimize(&mut self) -> Task<Message> {
@@ -55,23 +43,23 @@ impl super::app::App {
 
         self.get_active_tab_mut().sync_gui_to_machine();
 
-        let minimized_machine = match self.get_active_tab().machine.minimized() {
-            Some(machine) => machine,
-            None => {
-                let reason = match self.get_active_tab().machine.machine_kind() {
-                    Some(MachineKind::Turing) =>
-                        "Cannot minimize: the tab holds a Turing machine, not a finite automaton.".to_string(),
-                    Some(MachineKind::Pushdown) =>
-                        "Cannot minimize: the tab holds a pushdown automaton, not a finite automaton.".to_string(),
-                    _ =>
-                        "Cannot minimize: The automaton must be deterministic.".to_string(),
-                };
-                self.error_message = Some(reason);
-                return Task::none();
-            }
-        };
+        match self.get_active_tab().machine.minimized() {
+            Some(machine) => self.open_machine_in_new_tab("Minimized".to_string(), machine),
+            None => self.reject_non_finite("minimize", "The automaton must be deterministic."),
+        }
+    }
 
-        self.open_machine_in_new_tab("Minimized".to_string(), minimized_machine)
+    fn reject_non_finite(&mut self, verb: &str, finite_reason: &str) -> Task<Message> {
+        let holder = match self.get_active_tab().machine.machine_kind() {
+            Some(MachineKind::Turing) => Some("a Turing machine"),
+            Some(MachineKind::Pushdown) => Some("a pushdown automaton"),
+            _ => None,
+        };
+        self.error_message = Some(match holder {
+            Some(holder) => format!("Cannot {verb}: the tab holds {holder}, not a finite automaton."),
+            None => format!("Cannot {verb}: {finite_reason}"),
+        });
+        Task::none()
     }
 
     pub(crate) fn check_input_text_changed(&mut self, text: String) -> Task<Message> {
@@ -81,23 +69,16 @@ impl super::app::App {
 
     pub(crate) fn submit_check_input(&mut self) -> Task<Message> {
         let input = self.get_active_tab().check_input_text.clone();
-        // Allow blank inputs to be processed (don't convert to epsilon)
         self.get_active_tab_mut().sync_gui_to_machine();
-        // Surface structural/label problems before running the machine.
         if let Err(problem) = self.get_active_tab().machine.validate() {
             self.error_message = Some(problem);
             return Task::none();
         }
-        // Works for every machine family (Turing machines use their default
-        // step budget and dispatch on the determinism flag).
         let result = self.get_active_tab().machine.accepts(&input);
         self.get_active_tab_mut().check_input_dialog_open = false;
-        let shown = if input.is_empty() { "ε (empty word)".to_string() } else { format!("'{}'", input) };
-        if result {
-            self.toast(Tone::Success, format!("{} is accepted", shown), None);
-        } else {
-            self.toast(Tone::Danger, format!("{} is rejected", shown), None);
-        }
+        let shown = if input.is_empty() { "ε (empty word)".to_string() } else { format!("'{input}'") };
+        let (tone, verdict) = if result { (Tone::Success, "accepted") } else { (Tone::Danger, "rejected") };
+        self.toast(tone, format!("{shown} is {verdict}"), None);
         Task::none()
     }
 
@@ -108,8 +89,9 @@ impl super::app::App {
 
     pub(crate) fn open_regex_dialog(&mut self) -> Task<Message> {
         self.open_menu = None;
-        self.get_active_tab_mut().regex_dialog_open = true;
-        self.get_active_tab_mut().regex_text.clear();
+        let tab = self.get_active_tab_mut();
+        tab.regex_dialog_open = true;
+        tab.regex_text.clear();
         iced::widget::text_input::focus(REGEX_INPUT)
     }
 
@@ -123,15 +105,13 @@ impl super::app::App {
         Task::none()
     }
 
-    /* Compiles the typed regular expression and opens it as a new tab. The
-     * dialog stays open when the pattern is invalid so the user can fix it. */
     pub(crate) fn submit_regex(&mut self) -> Task<Message> {
         let pattern = self.get_active_tab().regex_text.trim().to_string();
 
         let machine = match moca_data::regex::compile_str(&pattern) {
             Ok(machine) => machine,
             Err(error) => {
-                self.error_message = Some(format!("Invalid regular expression: {}", error));
+                self.error_message = Some(format!("Invalid regular expression: {error}"));
                 return Task::none();
             }
         };
@@ -143,16 +123,13 @@ impl super::app::App {
         } else if pattern.is_empty() {
             "Regex: ε".to_string()
         } else {
-            format!("Regex: {}", pattern)
+            format!("Regex: {pattern}")
         };
         self.open_machine_in_new_tab(tab_name, TabMachine::Finite(machine))
     }
 
     pub(crate) fn open_latex_export(&mut self) -> Task<Message> {
         self.open_menu = None;
-        // Grammar tabs export their productions as a LaTeX listing
-        // instead of a TikZ drawing; the editor text is parsed fresh so
-        // unsaved edits are reflected, mirroring the other grammar ops.
         if matches!(self.get_active_tab().machine, TabMachine::Grammar(_)) {
             let source = self.get_active_tab().grammar_text.clone();
             return match moca_data::grammar::parse_grammar(&source) {
@@ -167,7 +144,7 @@ impl super::app::App {
                     Task::none()
                 }
                 Err(error) => {
-                    self.error_message = Some(format!("Cannot export the grammar: {}", error));
+                    self.error_message = Some(format!("Cannot export the grammar: {error}"));
                     Task::none()
                 }
             };
@@ -178,15 +155,14 @@ impl super::app::App {
             return Task::none();
         }
 
-        // Convert transitions HashMap to Vec<Transition> for export
         let mut export_transitions = Vec::new();
         for (&(from, to), labels) in &self.get_active_tab().transitions {
             for label in labels {
                 export_transitions.push(state_machine::Transition {
                     from_state_id: from,
                     to_state_id: to,
-                    from_point: iced::Point::ORIGIN, // dummy
-                    to_point: iced::Point::ORIGIN,   // dummy
+                    from_point: iced::Point::ORIGIN,
+                    to_point: iced::Point::ORIGIN,
                     label: label.clone(),
                 });
             }
@@ -208,8 +184,6 @@ impl super::app::App {
         Task::none()
     }
 
-    /* Converts the tab's finite automaton into an equivalent regular
-     * expression (state elimination) and shows it in an export dialog. */
     pub(crate) fn open_regex_export(&mut self) -> Task<Message> {
         self.open_menu = None;
 
