@@ -159,9 +159,7 @@ fn split_tuples(value: &str) -> Vec<String> {
                 current.push(c);
             }
             ')' => {
-                if depth > 0 {
-                    depth -= 1;
-                }
+                depth = depth.saturating_sub(1);
                 current.push(c);
             }
             ',' if depth == 0 => {
@@ -185,24 +183,23 @@ fn parse_transition_tuple(tuple: &str) -> Result<(String, Vec<String>, String), 
     let trimmed = tuple.trim();
     if !trimmed.starts_with('(') {
         return Err(format!(
-            "expected a '(state, ...) -> state' tuple, found '{}'",
-            trimmed
+            "expected a '(state, ...) -> state' tuple, found '{trimmed}'"
         ));
     }
     let close = trimmed
         .rfind(')')
-        .ok_or_else(|| format!("missing ')' in '{}'", trimmed))?;
+        .ok_or_else(|| format!("missing ')' in '{trimmed}'"))?;
     let inner = trimmed[1..close].trim();
     let rest = trimmed[close + 1..].trim();
     let target = rest
         .strip_prefix("->")
-        .ok_or_else(|| format!("missing '->' in '{}'", trimmed))?
+        .ok_or_else(|| format!("missing '->' in '{trimmed}'"))?
         .trim();
     if target.is_empty() {
-        return Err(format!("missing target state in '{}'", trimmed));
+        return Err(format!("missing target state in '{trimmed}'"));
     }
     if inner.is_empty() {
-        return Err(format!("missing states in '{}'", trimmed));
+        return Err(format!("missing states in '{trimmed}'"));
     }
     let parts: Vec<String> = inner.split(',').map(|part| part.trim().to_string()).collect();
     Ok((parts[0].clone(), parts, target.to_string()))
@@ -229,9 +226,9 @@ fn build_block(
     let (kind, fallback_name) =
         resolve_kind(&kind_text.to_ascii_lowercase()).ok_or_else(|| {
             (
-                format!("entity at line {}", header_line),
+                format!("entity at line {header_line}"),
                 header_line,
-                format!("unknown entity kind '{}'", kind_text),
+                format!("unknown entity kind '{kind_text}'"),
             )
         })?;
 
@@ -269,7 +266,7 @@ fn build_block(
             if matches!(kind, Kind::Regex | Kind::Grammar) {
                 return Err(err(
                     *line,
-                    format!("'states:' is not valid for {} entities", fallback_name),
+                    format!("'states:' is not valid for {fallback_name} entities"),
                 ));
             }
             states.extend(split_csv(value));
@@ -278,8 +275,7 @@ fn build_block(
                 return Err(err(
                     *line,
                     format!(
-                        "'transitions:' is not valid for {} entities",
-                        fallback_name
+                        "'transitions:' is not valid for {fallback_name} entities"
                     ),
                 ));
             }
@@ -289,8 +285,7 @@ fn build_block(
                 return Err(err(
                     *line,
                     format!(
-                        "'initial:' is not valid for {} entities",
-                        fallback_name
+                        "'initial:' is not valid for {fallback_name} entities"
                     ),
                 ));
             }
@@ -301,7 +296,7 @@ fn build_block(
             if matches!(kind, Kind::Regex | Kind::Grammar) {
                 return Err(err(
                     *line,
-                    format!("'{}:' is not valid for {} entities", key, fallback_name),
+                    format!("'{key}:' is not valid for {fallback_name} entities"),
                 ));
             }
             finals.extend(split_csv(value));
@@ -349,7 +344,7 @@ fn build_block(
                 "expected 'key: value' lines inside an entity block".to_string(),
             ));
         } else {
-            return Err(err(*line, format!("unknown key '{}:'", key)));
+            return Err(err(*line, format!("unknown key '{key}:'")));
         }
     }
 
@@ -363,7 +358,7 @@ fn build_block(
                 return Err(err(line, "empty 'regex:' value".to_string()));
             }
             let automaton = regex::compile_str(&pattern)
-                .map_err(|error| err(line, format!("invalid regex: {}", error)))?;
+                .map_err(|error| err(line, format!("invalid regex: {error}")))?;
             Entity::Finite(automaton)
         }
         Kind::Grammar => {
@@ -492,7 +487,7 @@ fn build_machine(
                     )
                 }
                 Kind::Turing => {
-                    if parts.len() < 4 || (parts.len() - 1) % 3 != 0 {
+                    if parts.len() < 4 || !(parts.len() - 1).is_multiple_of(3) {
                         return Err(err(
                             *line,
                             format!(
@@ -507,8 +502,7 @@ fn build_machine(
                             return Err(err(
                                 *line,
                                 format!(
-                                    "inconsistent tape count: this transition uses {}, earlier ones use {}",
-                                    tapes, existing
+                                    "inconsistent tape count: this transition uses {tapes}, earlier ones use {existing}"
                                 ),
                             ));
                         }
@@ -535,7 +529,7 @@ fn build_machine(
                                 ),
                             ));
                         }
-                        pieces.push(format!("{};{}/{}", read, write, direction));
+                        pieces.push(format!("{read};{write}/{direction}"));
                     }
                     pieces.join(",")
                 }
@@ -618,7 +612,7 @@ fn entity_header(kind_alias: &str, name: &str) -> String {
         .collect();
     let trimmed = sanitized.trim();
     let name = if trimmed.is_empty() { "entity" } else { trimmed };
-    format!("entity: {}\nname: {}", kind_alias, name)
+    format!("entity: {kind_alias}\nname: {name}")
 }
 
 fn check_tuple_component(component: &str, role: &str, allow_comma: bool) -> Result<String, String> {
@@ -631,8 +625,7 @@ fn check_tuple_component(component: &str, role: &str, allow_comma: bool) -> Resu
         };
         if reserved {
             return Err(format!(
-                "{} '{}' uses '{}' which the .ce format reserves for its structure",
-                role, trimmed, c
+                "{role} '{trimmed}' uses '{c}' which the .ce format reserves for its structure"
             ));
         }
     }
@@ -663,10 +656,10 @@ where
     for id in &ids {
         let label = check_tuple_component(&states[id].name, "state name", false)?;
         if label.is_empty() {
-            return Err(format!("state {} has an empty name", id));
+            return Err(format!("state {id} has an empty name"));
         }
         if !seen.insert(label.clone()) {
-            return Err(format!("state name '{}' is used more than once", label));
+            return Err(format!("state name '{label}' is used more than once"));
         }
         labels.push(label);
     }
@@ -674,7 +667,7 @@ where
         ids.iter().copied().zip(labels.iter()).collect();
     let initial_id = initial.ok_or_else(|| no_initial_message.to_string())?;
     if !states.contains_key(&initial_id) {
-        return Err(format!("initial state {} is missing", initial_id));
+        return Err(format!("initial state {initial_id} is missing"));
     }
 
     let mut text = entity_header(kind_alias, name);
@@ -693,10 +686,10 @@ where
     for (from_id, to_id, label) in triples {
         let parts = label_to_parts(&label)?;
         let from_label = name_of.get(&from_id).ok_or_else(|| {
-            format!("transition leaves state {}, which is missing", from_id)
+            format!("transition leaves state {from_id}, which is missing")
         })?;
         let to_label = name_of.get(&to_id).ok_or_else(|| {
-            format!("transition targets state {}, which is missing", to_id)
+            format!("transition targets state {to_id}, which is missing")
         })?;
         text.push_str(&format!(
             "\ntransitions: ({}, {}) -> {}",
@@ -753,7 +746,7 @@ pub fn write_pushdown_entity(name: &str, pda: &PushdownAutomata) -> Result<Strin
     let extra = if stack_symbol == "Z" {
         None
     } else {
-        Some(format!("stack: {}", stack_symbol))
+        Some(format!("stack: {stack_symbol}"))
     };
     write_machine_block(
         "pda",
@@ -773,7 +766,7 @@ pub fn write_pushdown_entity(name: &str, pda: &PushdownAutomata) -> Result<Strin
                 ]);
             }
             let malformed =
-                || format!("malformed pushdown label '{}' (expected 'input;pop/push')", label);
+                || format!("malformed pushdown label '{label}' (expected 'input;pop/push')");
             let (input, rest) = label.split_once(';').ok_or_else(malformed)?;
             let (pop, push) = rest.split_once('/').ok_or_else(malformed)?;
             let input = check_tuple_component(input, "pushdown input symbol", false)?;
@@ -796,7 +789,7 @@ pub fn write_turing_entity(name: &str, tm: &TuringMachine) -> Result<String, Str
     let extra = if blank == '_' {
         None
     } else {
-        Some(format!("blank: {}", blank))
+        Some(format!("blank: {blank}"))
     };
     write_machine_block(
         "tm",
@@ -812,8 +805,7 @@ pub fn write_turing_entity(name: &str, tm: &TuringMachine) -> Result<String, Str
             for group in label.split(',') {
                 let malformed = || {
                     format!(
-                        "malformed turing tape group '{}' in label '{}' (expected 'read;write/dir')",
-                        group, label
+                        "malformed turing tape group '{group}' in label '{label}' (expected 'read;write/dir')"
                     )
                 };
                 let (read, rest) = group.split_once(';').ok_or_else(malformed)?;
@@ -822,15 +814,13 @@ pub fn write_turing_entity(name: &str, tm: &TuringMachine) -> Result<String, Str
                 let write = check_tuple_component(write, "turing write symbol", false)?;
                 if read.is_empty() || write.is_empty() {
                     return Err(format!(
-                        "turing read/write symbols cannot be empty in label '{}' (use the blank symbol)",
-                        label
+                        "turing read/write symbols cannot be empty in label '{label}' (use the blank symbol)"
                     ));
                 }
                 let dir = dir.trim().to_ascii_uppercase();
                 if !matches!(dir.as_str(), "L" | "R" | "S") {
                     return Err(format!(
-                        "invalid direction '{}' in label '{}' (use L, R or S)",
-                        dir, label
+                        "invalid direction '{dir}' in label '{label}' (use L, R or S)"
                     ));
                 }
                 parts.push(read);

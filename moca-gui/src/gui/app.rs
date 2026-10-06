@@ -15,7 +15,7 @@ const DEFAULT_VIEWPORT: Size = Size::new(1100.0, 560.0);
 
 #[derive(Default)]
 pub struct App {
-    pub(crate) tabs: Vec<Box<Tab>>,
+    pub(crate) tabs: Vec<Tab>,
     pub(crate) active_tab: usize,
     pub(crate) theme_mode: ThemeMode,
     pub(crate) startup_picker_open: bool,
@@ -53,11 +53,14 @@ pub(crate) enum CloseRequest {
 
 impl App {
     pub fn new() -> (Self, Task<Message>) {
-        let mut app = Self::default();
-        app.theme_mode = Settings::load().theme;
-        app.tabs.push(Box::new(Tab::new()));
-        app.tabs[0].refresh_insight();
-        app.startup_picker_open = true;
+        let mut tab = Tab::new();
+        tab.refresh_insight();
+        let app = Self {
+            theme_mode: Settings::load().theme,
+            tabs: vec![tab],
+            startup_picker_open: true,
+            ..Self::default()
+        };
         let size = iced::window::get_oldest()
             .and_then(iced::window::get_size)
             .map(Message::WindowResized);

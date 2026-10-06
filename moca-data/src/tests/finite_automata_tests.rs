@@ -22,7 +22,7 @@ fn add_transition_test() {
             flag2 = true;
         }
     }
-    assert_eq!(true, flag1 && flag2);
+    assert!(flag1 && flag2);
 }
 
 fn count_transition(state: &State, in1: &str, in2: &str) -> u64 {
@@ -167,9 +167,9 @@ fn check_input_dfa_test() {
     automata.add_transition(1,1, "b".to_string());
     automata.make_final(1);
     automata.make_initial(0);
-    assert_eq!(automata.check_input("abbbaabaaba"),false);
-    assert_eq!(automata.check_input("bbbbbbabaaabba"),true);
-    assert_eq!(automata.check_input("aaaaaaaaaaaaa"),true);
+    assert!(!automata.check_input("abbbaabaaba"));
+    assert!(automata.check_input("bbbbbbabaaabba"));
+    assert!(automata.check_input("aaaaaaaaaaaaa"));
     let mut automata = FiniteAutomata::new();
     automata.add_n_states(7);
     automata.make_initial(0);
@@ -191,13 +191,13 @@ fn check_input_dfa_test() {
     automata.add_transition(5,6,"b".to_string());
     automata.add_transition(6,6,"a".to_string());
     automata.add_transition(6,6,"b".to_string());
-    assert_eq!(automata.check_input("adsf"), false);
-    assert_eq!(automata.check_input(""), false);
-    assert_eq!(automata.check_input("#1010201aabb"), false);
-    assert_eq!(automata.check_input("1010201abbb"), false);
-    assert_eq!(automata.check_input("#1010abbba"), true);
-    assert_eq!(automata.check_input("#1010bbbbb"), true);
-    assert_eq!(automata.check_input("#2222aaaaaaaaaaabbb"), true);
+    assert!(!automata.check_input("adsf"));
+    assert!(!automata.check_input(""));
+    assert!(!automata.check_input("#1010201aabb"));
+    assert!(!automata.check_input("1010201abbb"));
+    assert!(automata.check_input("#1010abbba"));
+    assert!(automata.check_input("#1010bbbbb"));
+    assert!(automata.check_input("#2222aaaaaaaaaaabbb"));
 }
 
 #[test]
@@ -216,15 +216,15 @@ fn check_input_nfa_test() {
     automata.add_transition(2,3, "0".to_string());
     automata.add_transition(3,3, "0".to_string());
     automata.add_transition(3,3, "1".to_string());
-    assert_eq!(automata.check_input(""),false);
-    assert_eq!(automata.check_input("0000000000"),false);
-    assert_eq!(automata.check_input("111111111"),false);
-    assert_eq!(automata.check_input("10x"),false);
-    assert_eq!(automata.check_input("10"),true);
-    assert_eq!(automata.check_input("01"),true);
-    assert_eq!(automata.check_input("01111111111110"),true);
-    assert_eq!(automata.check_input("00000000000001"),true);
-    assert_eq!(automata.check_input("010101010101010"),true);
+    assert!(!automata.check_input(""));
+    assert!(!automata.check_input("0000000000"));
+    assert!(!automata.check_input("111111111"));
+    assert!(!automata.check_input("10x"));
+    assert!(automata.check_input("10"));
+    assert!(automata.check_input("01"));
+    assert!(automata.check_input("01111111111110"));
+    assert!(automata.check_input("00000000000001"));
+    assert!(automata.check_input("010101010101010"));
     let mut automata = FiniteAutomata::new();
     automata.add_n_states(6);
     automata.make_initial(0);
@@ -238,14 +238,14 @@ fn check_input_nfa_test() {
     automata.add_transition(2,2, "b".to_string());
     automata.add_transition(4,5, "a".to_string());
     automata.add_transition(5,4, "b".to_string());
-    assert_eq!(automata.check_input("abbbbbbbbbb"),false);
-    assert_eq!(automata.check_input("b"),false);
-    assert_eq!(automata.check_input("aababababababa"),false);
-    assert_eq!(automata.check_input("a"),true);
-    assert_eq!(automata.check_input(""),true);
-    assert_eq!(automata.check_input("abababababababab"),true);
-    assert_eq!(automata.check_input("aaaaaabbbbbbbbba"),true);
-    assert_eq!(automata.check_input("abbbbbbbbbbba"),true);
+    assert!(!automata.check_input("abbbbbbbbbb"));
+    assert!(!automata.check_input("b"));
+    assert!(!automata.check_input("aababababababa"));
+    assert!(automata.check_input("a"));
+    assert!(automata.check_input(""));
+    assert!(automata.check_input("abababababababab"));
+    assert!(automata.check_input("aaaaaabbbbbbbbba"));
+    assert!(automata.check_input("abbbbbbbbbbba"));
 }
 
 #[test]
@@ -261,16 +261,16 @@ fn to_dfa_test() {
     automata.add_transition(3,3, "a".to_string());
     automata.add_transition(2,4, "b".to_string());
     automata.add_transition(4,4, "b".to_string());
-    assert_eq!(automata.is_deterministic(), false);
+    assert!(!automata.is_deterministic());
     let deterministic_automata = automata.to_dfa();
-    assert_eq!(deterministic_automata.is_deterministic(), true);
-    assert_eq!(deterministic_automata.check_input(""),false);
-    assert_eq!(deterministic_automata.check_input("ab"),false);
-    assert_eq!(deterministic_automata.check_input("abaaaa"),false);
-    assert_eq!(deterministic_automata.check_input("a"),true);
-    assert_eq!(deterministic_automata.check_input("b"),true);
-    assert_eq!(deterministic_automata.check_input("bbbbbbbb"),true);
-    assert_eq!(deterministic_automata.check_input("aaaaaaaa"),true);
+    assert!(deterministic_automata.is_deterministic());
+    assert!(!deterministic_automata.check_input(""));
+    assert!(!deterministic_automata.check_input("ab"));
+    assert!(!deterministic_automata.check_input("abaaaa"));
+    assert!(deterministic_automata.check_input("a"));
+    assert!(deterministic_automata.check_input("b"));
+    assert!(deterministic_automata.check_input("bbbbbbbb"));
+    assert!(deterministic_automata.check_input("aaaaaaaa"));
     let mut automata = FiniteAutomata::new();
     automata.add_n_states(6);
     automata.make_initial(0);
@@ -285,14 +285,14 @@ fn to_dfa_test() {
     automata.add_transition(4,5, "a".to_string());
     automata.add_transition(5,4, "b".to_string());
     let deterministic_automata = automata.to_dfa();
-    assert_eq!(deterministic_automata.check_input("abbbbbbbbbb"),false);
-    assert_eq!(deterministic_automata.check_input("b"),false);
-    assert_eq!(deterministic_automata.check_input("aababababababa"),false);
-    assert_eq!(deterministic_automata.check_input("a"),true);
-    assert_eq!(deterministic_automata.check_input(""),true);
-    assert_eq!(deterministic_automata.check_input("abababababababab"),true);
-    assert_eq!(deterministic_automata.check_input("aaaaaabbbbbbbbba"),true);
-    assert_eq!(deterministic_automata.check_input("abbbbbbbbbbba"),true);
+    assert!(!deterministic_automata.check_input("abbbbbbbbbb"));
+    assert!(!deterministic_automata.check_input("b"));
+    assert!(!deterministic_automata.check_input("aababababababa"));
+    assert!(deterministic_automata.check_input("a"));
+    assert!(deterministic_automata.check_input(""));
+    assert!(deterministic_automata.check_input("abababababababab"));
+    assert!(deterministic_automata.check_input("aaaaaabbbbbbbbba"));
+    assert!(deterministic_automata.check_input("abbbbbbbbbbba"));
     let mut automata = FiniteAutomata::new();
     automata.add_n_states(4);
     automata.make_initial(0);
@@ -308,15 +308,15 @@ fn to_dfa_test() {
     automata.add_transition(3,3, "0".to_string());
     automata.add_transition(3,3, "1".to_string());
     let deterministic_automata = automata.to_dfa();
-    assert_eq!(deterministic_automata.check_input(""),false);
-    assert_eq!(deterministic_automata.check_input("0000000000"),false);
-    assert_eq!(deterministic_automata.check_input("111111111"),false);
-    assert_eq!(deterministic_automata.check_input("10x"),false);
-    assert_eq!(deterministic_automata.check_input("10"),true);
-    assert_eq!(deterministic_automata.check_input("01"),true);
-    assert_eq!(deterministic_automata.check_input("01111111111110"),true);
-    assert_eq!(deterministic_automata.check_input("00000000000001"),true);
-    assert_eq!(deterministic_automata.check_input("010101010101010"),true);
+    assert!(!deterministic_automata.check_input(""));
+    assert!(!deterministic_automata.check_input("0000000000"));
+    assert!(!deterministic_automata.check_input("111111111"));
+    assert!(!deterministic_automata.check_input("10x"));
+    assert!(deterministic_automata.check_input("10"));
+    assert!(deterministic_automata.check_input("01"));
+    assert!(deterministic_automata.check_input("01111111111110"));
+    assert!(deterministic_automata.check_input("00000000000001"));
+    assert!(deterministic_automata.check_input("010101010101010"));
 }
 
 #[test]
@@ -352,14 +352,14 @@ fn minimize_test() {
             assert_eq!(state.label, [2,3,4].into_iter().collect());
         }
     }
-    assert_eq!(debloated_automata.check_input("0000000000000"),false);
-    assert_eq!(debloated_automata.check_input("1a0101010"),false);
-    assert_eq!(debloated_automata.check_input("a"),false);
-    assert_eq!(debloated_automata.check_input("11"),false);
-    assert_eq!(debloated_automata.check_input("00000000000001"),true);
-    assert_eq!(debloated_automata.check_input("1"),true);
-    assert_eq!(debloated_automata.check_input("00001"),true);
-    assert_eq!(debloated_automata.check_input("100000000000000000000000"),true);
+    assert!(!debloated_automata.check_input("0000000000000"));
+    assert!(!debloated_automata.check_input("1a0101010"));
+    assert!(!debloated_automata.check_input("a"));
+    assert!(!debloated_automata.check_input("11"));
+    assert!(debloated_automata.check_input("00000000000001"));
+    assert!(debloated_automata.check_input("1"));
+    assert!(debloated_automata.check_input("00001"));
+    assert!(debloated_automata.check_input("100000000000000000000000"));
     let mut bloated_automata = FiniteAutomata::new();
     bloated_automata.add_n_states(6);
     bloated_automata.make_initial(0);
@@ -379,11 +379,11 @@ fn minimize_test() {
     bloated_automata.add_transition(5,5, "0".to_string());
     let debloated_automata = bloated_automata.minimize();
     assert_eq!(debloated_automata.get_states_by_id_ref().len(), 2);
-    assert_eq!(debloated_automata.check_input(""),false);
-    assert_eq!(debloated_automata.check_input("0"),false);
-    assert_eq!(debloated_automata.check_input("000000000"),false);
-    assert_eq!(debloated_automata.check_input("1"),true);
-    assert_eq!(debloated_automata.check_input("01010101"),true);
+    assert!(!debloated_automata.check_input(""));
+    assert!(!debloated_automata.check_input("0"));
+    assert!(!debloated_automata.check_input("000000000"));
+    assert!(debloated_automata.check_input("1"));
+    assert!(debloated_automata.check_input("01010101"));
     let mut bloated_automata = FiniteAutomata::new();
     bloated_automata.add_n_states(5);
     bloated_automata.make_initial(0);
@@ -411,12 +411,12 @@ fn minimize_test() {
             assert_eq!(state.label, [4].into_iter().collect());
         }
     }
-    assert_eq!(debloated_automata.check_input("ab"),false);
-    assert_eq!(debloated_automata.check_input("abbaaaaa"),false);
-    assert_eq!(debloated_automata.check_input("abaaaaaa"),false);
-    assert_eq!(debloated_automata.check_input("abb"),true);
-    assert_eq!(debloated_automata.check_input("abbabb"),true);
-    assert_eq!(debloated_automata.check_input("abbbbaabb"),true);
+    assert!(!debloated_automata.check_input("ab"));
+    assert!(!debloated_automata.check_input("abbaaaaa"));
+    assert!(!debloated_automata.check_input("abaaaaaa"));
+    assert!(debloated_automata.check_input("abb"));
+    assert!(debloated_automata.check_input("abbabb"));
+    assert!(debloated_automata.check_input("abbbbaabb"));
 }
 
 struct XorShift(u64);
@@ -609,11 +609,11 @@ fn minimize_random_dfas_match_reference_test() {
         automata.add_n_states(n);
         automata.make_initial(0);
         for id in 0..n {
-            if rng.next() % 3 == 0 {
+            if rng.next().is_multiple_of(3) {
                 automata.make_final(id);
             }
             for symbol in ["a", "b"] {
-                if rng.next() % 8 != 0 {
+                if !rng.next().is_multiple_of(8) {
                     automata.add_transition(id, rng.next() % n, symbol.to_string());
                 }
             }
@@ -628,8 +628,7 @@ fn minimize_random_dfas_match_reference_test() {
             assert_eq!(
                 automata.check_input(&input),
                 minimized.check_input(&input),
-                "minimization changed the language on input {:?}",
-                input
+                "minimization changed the language on input {input:?}"
             );
         }
     }
@@ -670,12 +669,11 @@ fn minimize_language_equivalence_test() {    let fixtures = [
     for automata in fixtures.iter() {
         let minimized = automata.minimize();
         for input in &inputs {
-            let original_result = automata.check_input(&input);
-            let minimized_result = minimized.check_input(&input);
+            let original_result = automata.check_input(input);
+            let minimized_result = minimized.check_input(input);
             assert_eq!(
                 original_result, minimized_result,
-                "minimization changed the language on input {:?}",
-                input
+                "minimization changed the language on input {input:?}"
             );
         }
     }
@@ -706,9 +704,8 @@ fn machine_accepts_matches_check_input_test() {
     for input in ["", "a", "aa", "aaa", "b"] {
         assert_eq!(
             automata.accepts(input),
-            automata.check_input(&input),
-            "disagreement on input {:?}",
-            input
+            automata.check_input(input),
+            "disagreement on input {input:?}"
         );
     }
 }
@@ -890,9 +887,8 @@ fn frontier_stepping_matches_check_input_test() {
         for input in &inputs {
             assert_eq!(
                 frontier_accepts(automata, input),
-                automata.check_input(&input),
-                "frontier stepping disagrees with check_input on {:?}",
-                input
+                automata.check_input(input),
+                "frontier stepping disagrees with check_input on {input:?}"
             );
         }
     }
@@ -908,15 +904,11 @@ fn deterministic_run_matches_check_input_test() {
     let inputs = short_ab_inputs();
     for automata in fixtures.iter() {
         for input in &inputs {
-            match deterministic_run_outcome(automata, input) {
-                Ok(outcome) => assert_eq!(
-                    outcome,
-                    automata.check_input(&input),
-                    "deterministic run disagrees with check_input on {:?}",
-                    input
-                ),
-                Err(()) => {},
-            }
+            if let Ok(outcome) = deterministic_run_outcome(automata, input) { assert_eq!(
+                outcome,
+                automata.check_input(input),
+                "deterministic run disagrees with check_input on {input:?}"
+            ) }
         }
     }
 

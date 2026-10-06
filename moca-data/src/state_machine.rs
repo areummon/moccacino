@@ -36,7 +36,7 @@ pub trait StateMachine {
         while states_by_id.contains_key(&id) {
             id += 1;
         }
-        states_by_id.insert(id, State::new(format!("q{}", id)));
+        states_by_id.insert(id, State::new(format!("q{id}")));
         id
     }
 

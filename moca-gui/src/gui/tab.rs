@@ -179,7 +179,7 @@ impl TabMachine {
         }
     }
 
-    pub(crate) fn into_dfa(&self) -> Option<TabMachine> {
+    pub(crate) fn to_dfa(&self) -> Option<TabMachine> {
         match self {
             TabMachine::Finite(finite) if !finite.is_deterministic() => {
                 Some(TabMachine::Finite(finite.to_dfa()))
@@ -224,6 +224,8 @@ pub(crate) struct Tab {
     pub(crate) insight: TabInsight,
     pub(crate) run_highlight: HashSet<usize>,
     pub(crate) saved_fingerprint: Option<u64>,
+    synced_fingerprint: Option<u64>,
+    insight_fingerprint: Option<u64>,
     pub(crate) regex_dialog_open: bool,
     pub(crate) regex_text: String,
     pub(crate) run_input: String,
@@ -248,7 +250,6 @@ impl Tab {
         let mut tab = Self::default();
         tab.state_machine.reset_id_counter();
         tab.name = "Automaton".to_string();
-        tab.transitions = HashMap::new();
         tab
     }
 
@@ -278,7 +279,6 @@ impl Tab {
     pub(crate) fn new_with_name(name: String) -> Self {
         let mut tab = Self::new();
         tab.name = name;
-        tab.transitions = HashMap::new();
         tab
     }
 
@@ -303,9 +303,18 @@ impl Tab {
     }
 
     pub(crate) fn refresh_insight(&mut self) {
+        let fingerprint = self.content_fingerprint();
+        if self.insight_fingerprint != Some(fingerprint) {
+            self.insight_fingerprint = Some(fingerprint);
+            self.insight = self.compute_insight();
+        }
+        self.insight.unsaved = self.unsaved_given(fingerprint);
+    }
+
+    fn compute_insight(&mut self) -> TabInsight {
         if self.machine.is_grammar() {
             let parsed = moca_data::grammar::parse_grammar(self.grammar_text.trim());
-            self.insight = match parsed {
+            return match parsed {
                 Ok(grammar) => TabInsight {
                     deterministic: false,
                     problem: grammar.productions().is_empty().then(|| "No productions yet".to_string()),
@@ -313,7 +322,7 @@ impl Tab {
                     unsaved: false,
                 },
                 Err(error) if self.grammar_text.trim().is_empty() => TabInsight {
-                    problem: Some(format!("Empty grammar ({})", error)),
+                    problem: Some(format!("Empty grammar ({error})")),
                     ..TabInsight::default()
                 },
                 Err(error) => TabInsight {
@@ -321,11 +330,9 @@ impl Tab {
                     ..TabInsight::default()
                 },
             };
-            self.insight.unsaved = self.has_unsaved_changes();
-            return;
         }
         self.sync_gui_to_machine();
-        self.insight = TabInsight {
+        TabInsight {
             deterministic: self.machine.is_deterministic(),
             problem: if self.states.is_empty() {
                 None
@@ -333,8 +340,8 @@ impl Tab {
                 self.machine.validate().err()
             },
             production_count: 0,
-            unsaved: self.has_unsaved_changes(),
-        };
+            unsaved: false,
+        }
     }
 
     pub(crate) fn content_fingerprint(&self) -> u64 {
@@ -376,8 +383,12 @@ impl Tab {
     }
 
     pub(crate) fn has_unsaved_changes(&self) -> bool {
+        self.unsaved_given(self.content_fingerprint())
+    }
+
+    fn unsaved_given(&self, fingerprint: u64) -> bool {
         match self.saved_fingerprint {
-            Some(saved) => saved != self.content_fingerprint(),
+            Some(saved) => saved != fingerprint,
             None => !self.is_empty_content(),
         }
     }
@@ -415,6 +426,11 @@ impl Tab {
     }
 
     pub(crate) fn sync_gui_to_machine(&mut self) {
+        let fingerprint = self.content_fingerprint();
+        if self.synced_fingerprint == Some(fingerprint) {
+            return;
+        }
+        self.synced_fingerprint = Some(fingerprint);
         self.machine.clear();
 
         for state_node in &self.states {
@@ -469,7 +485,7 @@ impl Tab {
         for (from_id, state) in self.machine.states_ref() {
             for (to_id, inputs) in state.iter_by_transition() {
                 let key = (*from_id as usize, *to_id as usize);
-                let entry = self.transitions.entry(key).or_insert_with(indexmap::IndexSet::new);
+                let entry = self.transitions.entry(key).or_default();
                 for label in inputs {
                     let label = if label.trim().is_empty() || label == "ε" { "ε".to_string() } else { label.clone() };
                     entry.insert(label);
@@ -528,7 +544,7 @@ impl Tab {
 
         let neighbors: Vec<Vec<usize>> = {
             let mut adjacency: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); node_count];
-            for (&(from, to), _) in &active_tab.transitions {
+            for &(from, to) in active_tab.transitions.keys() {
                 if from != to {
                     if let (Some(&fi), Some(&ti)) = (index_of.get(&from), index_of.get(&to)) {
                         adjacency[fi].insert(ti);

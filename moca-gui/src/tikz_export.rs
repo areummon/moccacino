@@ -26,7 +26,7 @@ pub fn export_to_tikz(
 
     let mut id_to_name = std::collections::HashMap::new();
     for (i, s) in states.iter().enumerate() {
-        id_to_name.insert(s.id, format!("q{}", i));
+        id_to_name.insert(s.id, format!("q{i}"));
     }
 
     let mut tikz = String::new();
@@ -54,9 +54,9 @@ pub fn export_to_tikz(
             let (prefix, digits) = s.label.split_at(idx);
             if !digits.is_empty() {
                 if digits.len() == 1 {
-                    latex_label = format!("{}_{}", prefix, digits);
+                    latex_label = format!("{prefix}_{digits}");
                 } else {
-                    latex_label = format!("{}_{{{}}}", prefix, digits);
+                    latex_label = format!("{prefix}_{{{digits}}}");
                 }
             }
         }
@@ -78,7 +78,7 @@ pub fn export_to_tikz(
         if label.trim() == "ε" {
             label = String::from("$\\varepsilon$");
         }
-        transition_groups.entry(key).or_insert_with(Vec::new).push(label);
+        transition_groups.entry(key).or_default().push(label);
     }
 
     for ((from_id, to_id), labels) in &transition_groups {
@@ -112,18 +112,16 @@ pub fn export_to_tikz(
                         from, labels.join("\\\\"), to
                     ));
                 }
+            } else if labels.len() == 1 {
+                tikz.push_str(&format!(
+                    "  \\path[->] ({}) edge node{{{}}} ({}) ;\n",
+                    from, labels[0], to
+                ));
             } else {
-                if labels.len() == 1 {
-                    tikz.push_str(&format!(
-                        "  \\path[->] ({}) edge node{{{}}} ({}) ;\n",
-                        from, labels[0], to
-                    ));
-                } else {
-                    tikz.push_str(&format!(
-                        "  \\path[->] ({}) edge node[align=center]{{{}}} ({}) ;\n",
-                        from, labels.join("\\\\"), to
-                    ));
-                }
+                tikz.push_str(&format!(
+                    "  \\path[->] ({}) edge node[align=center]{{{}}} ({}) ;\n",
+                    from, labels.join("\\\\"), to
+                ));
             }
         }
     }

@@ -46,7 +46,7 @@ fn render(node: &RegexAst, context: Precedence) -> String {
         RegexAst::Epsilon => "ε".to_string(),
         RegexAst::Char(c) => {
             if is_operator_char(*c) {
-                format!("\\{}", c)
+                format!("\\{c}")
             } else {
                 c.to_string()
             }
@@ -58,7 +58,7 @@ fn render(node: &RegexAst, context: Precedence) -> String {
                 render(right, Precedence::Concat)
             );
             if precedence(node) < context {
-                format!("({})", body)
+                format!("({body})")
             } else {
                 body
             }
@@ -70,7 +70,7 @@ fn render(node: &RegexAst, context: Precedence) -> String {
                 render(right, Precedence::Union)
             );
             if precedence(node) < context {
-                format!("({})", body)
+                format!("({body})")
             } else {
                 body
             }
@@ -86,7 +86,7 @@ fn render(node: &RegexAst, context: Precedence) -> String {
             } else {
                 render(inner, Precedence::Postfix)
             };
-            format!("{}{}", body, operator)
+            format!("{body}{operator}")
         },
     }
 }

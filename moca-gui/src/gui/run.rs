@@ -380,7 +380,7 @@ impl super::app::App {
             .iter()
             .find(|node| node.id == state_id as usize)
             .map(|node| node.label.to_string())
-            .unwrap_or_else(|| format!("q{}", state_id))
+            .unwrap_or_else(|| format!("q{state_id}"))
     }
 }
 

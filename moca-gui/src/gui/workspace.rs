@@ -18,7 +18,7 @@ impl super::app::App {
     ) -> Task<Message> {
         let mut new_tab = Tab::new_with_name(name);
         new_tab.machine = machine;
-        self.tabs.push(Box::new(new_tab));
+        self.tabs.push(new_tab);
         self.active_tab = self.tabs.len() - 1;
         self.get_active_tab_mut().load_machine_to_gui();
         self.fit_view()
@@ -26,7 +26,7 @@ impl super::app::App {
 
     pub(crate) fn choose_startup_module(&mut self, index: usize) -> Task<Message> {
         let family = Family::ALL.get(index).copied().unwrap_or(Family::Finite);
-        self.tabs[0] = Box::new(Tab::new_of(family));
+        self.tabs[0] = Tab::new_of(family);
         self.active_tab = 0;
         self.startup_picker_open = false;
         Task::none()
@@ -42,7 +42,7 @@ impl super::app::App {
     pub(crate) fn new_tab(&mut self, family: Family) -> Task<Message> {
         self.open_menu = None;
         self.commit_pending_rename();
-        self.tabs.push(Box::new(Tab::new_of(family)));
+        self.tabs.push(Tab::new_of(family));
         self.active_tab = self.tabs.len() - 1;
         Task::none()
     }

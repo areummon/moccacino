@@ -74,7 +74,7 @@ fn exhaustive_inputs(alphabet: &[char], max_len: usize) -> Vec<String> {
                 next.push(longer);
             }
         }
-        inputs.extend(next.drain(..));
+        inputs.append(&mut next);
     }
     inputs.retain(|s| s.chars().count() <= max_len);
     inputs
@@ -87,7 +87,7 @@ fn regex_parse_valid_test() {
         "\\*", "\\\\", "\\(a\\)", "(a|)+", "|a", "()", "a**", "a*?", "abc",
         "((a))", "ε*", "\\ε",
     ] {
-        assert!(regex::parse(pattern).is_ok(), "pattern {:?} should parse", pattern);
+        assert!(regex::parse(pattern).is_ok(), "pattern {pattern:?} should parse");
     }
 }
 
@@ -97,8 +97,7 @@ fn regex_parse_errors_test() {
         let error = regex::parse(pattern).expect_err("pattern should fail");
         assert!(
             error.position <= pattern.chars().count(),
-            "error position out of range for {:?}",
-            pattern
+            "error position out of range for {pattern:?}"
         );
     }
     let error: regex::ParseError = regex::parse("(").unwrap_err();
@@ -151,16 +150,14 @@ fn regex_compile_agrees_with_naive_matcher_test() {
         let automata = regex::compile_str(pattern).unwrap();
         assert!(
             Machine::validate(&automata).is_ok(),
-            "compiled automaton for {:?} must be valid",
-            pattern
+            "compiled automaton for {pattern:?} must be valid"
         );
         for input in exhaustive_inputs(alphabet, 6) {
             let expected = naive_accepts(&ast, &input);
             let actual = automata.accepts(&input);
             assert_eq!(
                 actual, expected,
-                "mismatch on pattern {:?} with input {:?}",
-                pattern, input
+                "mismatch on pattern {pattern:?} with input {input:?}"
             );
         }
     }
@@ -169,9 +166,9 @@ fn regex_compile_agrees_with_naive_matcher_test() {
 #[test]
 fn regex_pipeline_minimize_test() {
     let automata = regex::compile_str("(a|b)*abb").unwrap();
-    assert_eq!(automata.is_deterministic(), false);
+    assert!(!automata.is_deterministic());
     let deterministic_automata = automata.to_dfa();
-    assert_eq!(deterministic_automata.is_deterministic(), true);
+    assert!(deterministic_automata.is_deterministic());
     let minimized = deterministic_automata.minimize();
     assert_eq!(minimized.get_states_by_id_ref().len(), 4);
 
@@ -182,8 +179,7 @@ fn regex_pipeline_minimize_test() {
         assert_eq!(
             minimized.accepts(input),
             expected,
-            "mismatch on minimized pipeline with input {:?}",
-            input
+            "mismatch on minimized pipeline with input {input:?}"
         );
     }
 
@@ -191,7 +187,7 @@ fn regex_pipeline_minimize_test() {
     let minimized = automata.to_dfa().minimize();
     assert_eq!(minimized.get_states_by_id_ref().len(), 2);
     for (input, expected) in [("", true), ("ab", true), ("abab", true), ("aba", false), ("b", false)] {
-        assert_eq!(minimized.accepts(input), expected, "input {:?}", input);
+        assert_eq!(minimized.accepts(input), expected, "input {input:?}");
     }
 }
 
@@ -265,7 +261,7 @@ fn regex_display_precedence_test() {
         ),
     ];
     for (ast, expected) in cases {
-        assert_eq!(format!("{}", ast), expected, "rendering {:?}", ast);
+        assert_eq!(format!("{ast}"), expected, "rendering {:?}", ast);
     }
 }
 
@@ -329,20 +325,19 @@ fn fa_to_regex_language_agreement_test() {
     let fixtures: Vec<&FiniteAutomata> = vec![&odd, &abb, &reject_all, &accept_all];
     for machine in &fixtures {
         let ast = machine.to_regex();
-        let rendered = format!("{}", ast);
+        let rendered = format!("{ast}");
         let compiled = regex::compile_str(&rendered)
-            .unwrap_or_else(|error| panic!("eliminated regex {:?} failed to parse: {}", rendered, error));
+            .unwrap_or_else(|error| panic!("eliminated regex {rendered:?} failed to parse: {error}"));
         for input in exhaustive_inputs(&['a', 'b'], 6) {
             assert_eq!(
                 compiled.accepts(&input),
                 machine.accepts(&input),
-                "state elimination changed the language on {:?} (regex {:?})",
-                input, rendered
+                "state elimination changed the language on {input:?} (regex {rendered:?})"
             );
         }
     }
 
-    assert_eq!(abb.to_regex().to_string().is_empty(), false);
+    assert!(!abb.to_regex().to_string().is_empty());
     let reject_text = reject_all.to_regex().to_string();
     assert!(!regex::compile_str(&reject_text).unwrap().accepts("a"));
 }

@@ -317,15 +317,13 @@ impl Machine for PushdownAutomata {
             for (target, labels) in state.iter_by_transition() {
                 if !states.contains_key(target) {
                     return Err(format!(
-                        "State {} has a transition to nonexistent state {}.",
-                        id, target
+                        "State {id} has a transition to nonexistent state {target}."
                     ));
                 }
                 for label in labels {
                     if let Err(problem) = PdaParsedOp::parse(label) {
                         return Err(format!(
-                            "State {} has malformed transition label {:?} ({}).",
-                            id, label, problem
+                            "State {id} has malformed transition label {label:?} ({problem})."
                         ));
                     }
                 }

@@ -121,8 +121,7 @@ impl<'a> Parser<'a> {
             },
             Some(c @ ('*' | '+' | '?')) => {
                 let message = format!(
-                    "repetition operator '{}' without an expression to repeat",
-                    c
+                    "repetition operator '{c}' without an expression to repeat"
                 );
                 Err(self.error(&message))
             },

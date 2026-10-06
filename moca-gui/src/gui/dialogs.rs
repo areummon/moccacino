@@ -242,7 +242,7 @@ impl super::app::App {
                 label_inputs = label_inputs.push(
                     row![
                         text_input("Label", label)
-                            .id(format!("{}-{}", EDIT_LABEL_INPUT, i))
+                            .id(format!("{EDIT_LABEL_INPUT}-{i}"))
                             .on_input(move |text| Message::EditTransitionLabelChanged(i, text))
                             .on_submit(Message::SaveEditTransitionLabels)
                             .padding([8, 12])

@@ -237,13 +237,12 @@ impl Grammar {
 
         let productions = isolate_terminals(productions, &mut names_in_use, &mut counter);
 
-        let mut cnf = Grammar::default();
-        cnf.productions = dedup_bodies(productions);
-        cnf.start_symbol = start;
-        for variable in cnf.productions.keys() {
-            cnf.nonterminals.insert(variable.clone());
+        let productions = dedup_bodies(productions);
+        Grammar {
+            nonterminals: productions.keys().cloned().collect(),
+            productions,
+            start_symbol: start,
         }
-        cnf
     }
 
     pub fn generate(&self, input: &str) -> bool {
@@ -272,7 +271,7 @@ pub fn parse_grammar(source: &str) -> Result<Grammar, ParseError> {
             None => {
                 return Err(ParseError {
                     line: line_number,
-                    message: format!("missing '->' in {:?}", line),
+                    message: format!("missing '->' in {line:?}"),
                 })
             },
         };
@@ -363,7 +362,7 @@ fn all_symbol_names(productions: &ProductionTable, declared: &BTreeSet<String>) 
 
 fn fresh_name(prefix: &str, taken: &BTreeSet<String>, counter: &mut usize) -> String {
     loop {
-        let candidate = format!("{}{}", prefix, counter);
+        let candidate = format!("{prefix}{counter}");
         *counter += 1;
         if !taken.contains(&candidate) {
             return candidate;
@@ -637,8 +636,7 @@ impl Grammar {
                 };
                 if !well_shaped {
                     return Err(format!(
-                        "production {:?} -> {:?} is not right-linear (expected \"a\" or \"a B\" after unit elimination)",
-                        variable, body
+                        "production {variable:?} -> {body:?} is not right-linear (expected \"a\" or \"a B\" after unit elimination)"
                     ));
                 }
             }
@@ -710,7 +708,7 @@ impl Grammar {
             let name = match candidate {
                 Some(found) => found,
                 None => loop {
-                    let proposal = format!("V{}", fallback_counter);
+                    let proposal = format!("V{fallback_counter}");
                     fallback_counter += 1;
                     if !labels_in_use.contains(&proposal) && !taken.contains(&proposal) {
                         break proposal;
@@ -767,7 +765,7 @@ impl Grammar {
                 .nonterminals
                 .iter()
                 .filter(|variable| {
-                    self.productions.get(*variable).map_or(true, |bodies| bodies.is_empty())
+                    self.productions.get(*variable).is_none_or(|bodies| bodies.is_empty())
                 })
                 .cloned()
                 .collect();
@@ -796,8 +794,7 @@ impl Grammar {
                 || symbol == "ε"
             {
                 return Err(format!(
-                    "symbol {:?} cannot be converted: ',', ';' and '/' are reserved by the pushdown label format",
-                    symbol
+                    "symbol {symbol:?} cannot be converted: ',', ';' and '/' are reserved by the pushdown label format"
                 ));
             }
         }
@@ -810,7 +807,7 @@ impl Grammar {
         let mut marker = "Z".to_string();
         let mut marker_counter = 0usize;
         while symbols.contains(&marker) {
-            marker = format!("Z{}", marker_counter);
+            marker = format!("Z{marker_counter}");
             marker_counter += 1;
         }
 
@@ -832,15 +829,15 @@ impl Grammar {
                 } else {
                     format!("{},ε", body.join(","))
                 };
-                pda.add_transition(1, 1, format!("ε;{}/{}", variable, pushed));
+                pda.add_transition(1, 1, format!("ε;{variable}/{pushed}"));
             }
         }
 
         for terminal in &terminals {
-            pda.add_transition(1, 1, format!("{};{}/ε", terminal, terminal));
+            pda.add_transition(1, 1, format!("{terminal};{terminal}/ε"));
         }
 
-        pda.add_transition(1, 2, format!("ε;{}/{}", marker, marker));
+        pda.add_transition(1, 2, format!("ε;{marker}/{marker}"));
 
         Ok(pda)
     }
@@ -855,7 +852,7 @@ impl fmt::Display for Grammar {
                 Some(bodies) => bodies,
                 None => continue,
             };
-            write!(f, "{} ->", variable)?;
+            write!(f, "{variable} ->")?;
             for (index, body) in bodies.iter().enumerate() {
                 if index > 0 {
                     write!(f, " |")?;

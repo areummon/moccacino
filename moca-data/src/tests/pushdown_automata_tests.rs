@@ -12,14 +12,14 @@ fn check_input_dpa_test() {
     pushdown_automata.add_transition(0, 1, "ε".to_string());
     pushdown_automata.add_transition(1, 1, "1;A/ε".to_string());
     pushdown_automata.add_transition(1, 2, "ε;Z/Z".to_string());
-    assert_eq!(pushdown_automata.check_input("0"), false);
-    assert_eq!(pushdown_automata.check_input("001"), false);
-    assert_eq!(pushdown_automata.check_input("001111"), false);
-    assert_eq!(pushdown_automata.check_input("0001111"), false);
-    assert_eq!(pushdown_automata.check_input("sy"), false);
-    assert_eq!(pushdown_automata.check_input("01"), true);
-    assert_eq!(pushdown_automata.check_input("00001111"), true);
-    assert_eq!(pushdown_automata.check_input(""), true);
+    assert!(!pushdown_automata.check_input("0"));
+    assert!(!pushdown_automata.check_input("001"));
+    assert!(!pushdown_automata.check_input("001111"));
+    assert!(!pushdown_automata.check_input("0001111"));
+    assert!(!pushdown_automata.check_input("sy"));
+    assert!(pushdown_automata.check_input("01"));
+    assert!(pushdown_automata.check_input("00001111"));
+    assert!(pushdown_automata.check_input(""));
     let mut pushdown_automaton = PushdownAutomata::new("Z".to_string());
     pushdown_automaton.add_n_states(3);
     pushdown_automaton.make_initial(0);
@@ -29,14 +29,14 @@ fn check_input_dpa_test() {
     pushdown_automaton.add_transition(0, 1, "ε".to_string());
     pushdown_automaton.add_transition(1, 1, "b;A/ε".to_string());
     pushdown_automaton.add_transition(1, 2, "ε;Z/Z".to_string());
-    assert_eq!(pushdown_automaton.check_input("ab"), true);
-    assert_eq!(pushdown_automaton.check_input(""), true);
-    assert_eq!(pushdown_automaton.check_input("aabb"), true);
-    assert_eq!(pushdown_automaton.check_input("aaabbb"), true);
-    assert_eq!(pushdown_automaton.check_input("aab"), false);
-    assert_eq!(pushdown_automaton.check_input("ba"), false);
-    assert_eq!(pushdown_automaton.check_input("abb"), false);
-    assert_eq!(pushdown_automaton.check_input("sy"), false);
+    assert!(pushdown_automaton.check_input("ab"));
+    assert!(pushdown_automaton.check_input(""));
+    assert!(pushdown_automaton.check_input("aabb"));
+    assert!(pushdown_automaton.check_input("aaabbb"));
+    assert!(!pushdown_automaton.check_input("aab"));
+    assert!(!pushdown_automaton.check_input("ba"));
+    assert!(!pushdown_automaton.check_input("abb"));
+    assert!(!pushdown_automaton.check_input("sy"));
 }
 
 #[test]
@@ -168,7 +168,7 @@ fn pda_step_check_input_parity_test() {
     branching.add_transition(2, 2, "c;Q/ε".to_string());
     branching.add_transition(1, 3, "ε;Z/Z".to_string());
     branching.add_transition(2, 3, "ε;Z/Z".to_string());
-    assert_eq!(branching.is_deterministic(), false);
+    assert!(!branching.is_deterministic());
 
     for pda in [&anbn, &branching] {
         for input in [
@@ -179,8 +179,7 @@ fn pda_step_check_input_parity_test() {
             assert_eq!(
                 accepts_by_stepping(pda, input, 150_000, 4096),
                 expected,
-                "stepping parity broken on {:?}",
-                input
+                "stepping parity broken on {input:?}"
             );
         }
     }

@@ -40,8 +40,8 @@ fn grammar_of(entity: &Entity) -> &Grammar {
 
 fn first_error_message(source: &str) -> String {
     let (entities, errors) = parse_entity_file(source);
-    assert!(entities.is_empty(), "expected no entities, got {:?}", entities);
-    assert_eq!(errors.len(), 1, "expected exactly one error: {:?}", errors);
+    assert!(entities.is_empty(), "expected no entities, got {entities:?}");
+    assert_eq!(errors.len(), 1, "expected exactly one error: {errors:?}");
     errors[0].message.clone()
 }
 
@@ -66,7 +66,7 @@ entity: grammar
 productions: S -> a S b | ε
 ";
     let (entities, errors) = parse_entity_file(source);
-    assert!(errors.is_empty(), "unexpected errors: {:?}", errors);
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
     assert_eq!(entities.len(), 3);
     assert_eq!(entities[0].name, "parity");
     assert!(finite_of(&entities[0].entity).accepts(""));
@@ -89,7 +89,7 @@ initial: q0
 final: q2
 ";
     let (entities, errors) = parse_entity_file(source);
-    assert!(errors.is_empty(), "unexpected errors: {:?}", errors);
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
     let pda = pda_of(&entities[0].entity);
     assert!(Machine::accepts(pda, "ab"));
     assert!(!Machine::accepts(pda, "ba"));
@@ -106,15 +106,15 @@ initial: q0
 final: q1
 ";
     let (entities, errors) = parse_entity_file(source);
-    assert!(errors.is_empty(), "unexpected errors: {:?}", errors);
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
     let pda = pda_of(&entities[0].entity);
     let labels: Vec<String> = pda
         .get_states_by_id_ref()
         .values()
         .flat_map(|state| state.iter_by_transition().flat_map(|(_, inputs)| inputs.iter().cloned()))
         .collect();
-    assert!(labels.contains(&"a;Z/aZ".to_string()), "labels: {:?}", labels);
-    assert!(labels.contains(&"ε;Z/Z".to_string()), "labels: {:?}", labels);
+    assert!(labels.contains(&"a;Z/aZ".to_string()), "labels: {labels:?}");
+    assert!(labels.contains(&"ε;Z/Z".to_string()), "labels: {labels:?}");
 }
 
 #[test]
@@ -127,7 +127,7 @@ initial: a
 final: b
 ";
     let (entities, errors) = parse_entity_file(source);
-    assert!(errors.is_empty(), "unexpected errors: {:?}", errors);
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
     assert_eq!(tm_of(&entities[0].entity).get_tape_count(), 2);
 }
 
@@ -142,7 +142,7 @@ initial: a
 final: b
 ",
     );
-    assert!(message.contains("inconsistent tape count"), "message: {}", message);
+    assert!(message.contains("inconsistent tape count"), "message: {message}");
 }
 
 #[test]
@@ -155,7 +155,7 @@ initial: a
 final: b
 ";
     let (entities, errors) = parse_entity_file(source);
-    assert!(errors.is_empty(), "unexpected errors: {:?}", errors);
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
     assert!(tm_of(&entities[0].entity).accepts("0"));
 
     let message = first_error_message(
@@ -167,7 +167,7 @@ initial: a
 final: b
 ",
     );
-    assert!(message.contains("invalid direction"), "message: {}", message);
+    assert!(message.contains("invalid direction"), "message: {message}");
 }
 
 #[test]
@@ -181,7 +181,7 @@ initial: a
 final: b
 ",
     );
-    assert!(message.contains("exactly 2 parts"), "message: {}", message);
+    assert!(message.contains("exactly 2 parts"), "message: {message}");
 }
 
 #[test]
@@ -194,7 +194,7 @@ initial: start
 final: end
 ";
     let (entities, errors) = parse_entity_file(source);
-    assert!(errors.is_empty(), "unexpected errors: {:?}", errors);
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
     assert_eq!(entities[0].name, "NFA");
     let automaton = finite_of(&entities[0].entity);
     assert_eq!(automaton.get_states_by_id_ref().len(), 3);
@@ -209,7 +209,7 @@ name: abb detector
 regex: (a|b)*abb
 ";
     let (entities, errors) = parse_entity_file(source);
-    assert!(errors.is_empty(), "unexpected errors: {:?}", errors);
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
     assert_eq!(entities[0].name, "abb detector");
     let automaton = finite_of(&entities[0].entity);
     assert!(Machine::accepts(automaton, "ababb"));
@@ -224,7 +224,7 @@ entity: regex
 regex: (a|b
 ",
     );
-    assert!(message.contains("invalid regex"), "message: {}", message);
+    assert!(message.contains("invalid regex"), "message: {message}");
 }
 
 #[test]
@@ -236,7 +236,7 @@ productions: S -> a
 productions: S a
 ",
     );
-    assert!(message.contains("invalid grammar"), "message: {}", message);
+    assert!(message.contains("invalid grammar"), "message: {message}");
 }
 
 #[test]
@@ -250,7 +250,7 @@ transitions: (q0, a, Z, Z) -> q0
 initial: q0
 ",
     );
-    assert!(message.contains("'blank:' is only valid"), "message: {}", message);
+    assert!(message.contains("'blank:' is only valid"), "message: {message}");
 
     let (entities, errors) = parse_entity_file(
         "\
@@ -260,7 +260,7 @@ productions: S -> a
 ",
     );
     assert!(entities.is_empty());
-    assert!(errors[0].message.contains("'states:' is not valid"), "{:?}", errors);
+    assert!(errors[0].message.contains("'states:' is not valid"), "{errors:?}");
 }
 
 #[test]
@@ -318,7 +318,7 @@ transitions: (a, a) -> b
 final: b
 ",
     );
-    assert!(message.contains("missing 'initial:'"), "message: {}", message);
+    assert!(message.contains("missing 'initial:'"), "message: {message}");
 }
 
 #[test]
@@ -330,7 +330,7 @@ states: a
 ",
     );
     assert!(entities.is_empty());
-    assert!(errors[0].message.contains("unknown entity kind"), "{:?}", errors);
+    assert!(errors[0].message.contains("unknown entity kind"), "{errors:?}");
 }
 
 #[test]
@@ -349,7 +349,7 @@ initial: q0
 final: q1
 ";
     let (entities, errors) = parse_entity_file(source);
-    assert!(errors.is_empty(), "unexpected errors: {:?}", errors);
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
     assert!(tm_of(&entities[0].entity).accepts(""));
     assert!(Machine::accepts(pda_of(&entities[1].entity), "a"));
 }
@@ -384,7 +384,7 @@ fn entity_file_save_load_finite_roundtrip_test() {
 
     let text = write_finite_entity("parity", &fa).expect("serializable");
     let (entities, errors) = parse_entity_file(&text);
-    assert!(errors.is_empty(), "unexpected errors: {:?}", errors);
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
     assert_eq!(entities.len(), 1);
     assert_eq!(entities[0].name, "parity");
     let loaded = finite_of(&entities[0].entity);
@@ -415,7 +415,7 @@ fn entity_file_save_load_pda_roundtrip_test() {
 
     let text = write_pushdown_entity("bal", &pda).expect("serializable");
     let (entities, errors) = parse_entity_file(&text);
-    assert!(errors.is_empty(), "unexpected errors: {:?}", errors);
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
     assert_eq!(entities.len(), 1);
     let loaded = pda_of(&entities[0].entity);
     assert_eq!(loaded.get_initial_stack_symbol(), "P0");
@@ -440,7 +440,7 @@ fn entity_file_save_load_tm_roundtrip_test() {
 
     let text = write_turing_entity("two-tape", &tm).expect("serializable");
     let (entities, errors) = parse_entity_file(&text);
-    assert!(errors.is_empty(), "unexpected errors: {:?}", errors);
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
     assert_eq!(entities.len(), 1);
     let loaded = tm_of(&entities[0].entity);
     assert_eq!(loaded.get_blank_symbol(), '□');
@@ -456,10 +456,10 @@ fn entity_file_save_load_grammar_roundtrip_test() {
     let grammar = crate::grammar::parse_grammar("S -> a S b | ε\nS -> b\nA -> c").expect("parses");
     let text = write_grammar_entity("demo", &grammar).expect("serializable");
     let (entities, errors) = parse_entity_file(&text);
-    assert!(errors.is_empty(), "unexpected errors: {:?}", errors);
+    assert!(errors.is_empty(), "unexpected errors: {errors:?}");
     assert_eq!(entities.len(), 1);
     let loaded = grammar_of(&entities[0].entity);
-    assert_eq!(format!("{}", loaded), format!("{}", grammar));
+    assert_eq!(format!("{loaded}"), format!("{}", grammar));
     assert!(loaded.generate("aabb"));
     assert!(loaded.generate("b"));
     assert!(!loaded.generate("ba"));

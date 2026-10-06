@@ -43,6 +43,6 @@ impl Settings {
             ThemeMode::Light => "light",
             ThemeMode::Dark => "dark",
         };
-        let _ = std::fs::write(path, format!("theme={}\n", theme));
+        let _ = std::fs::write(path, format!("theme={theme}\n"));
     }
 }

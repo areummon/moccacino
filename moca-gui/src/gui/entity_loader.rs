@@ -6,11 +6,10 @@ use moca_data::entity_file::{
     parse_entity_file, write_finite_entity, write_grammar_entity, write_pushdown_entity,
     write_turing_entity, Entity,
 };
-use moca_data::grammar::Grammar;
 
 use super::dialogs::{LOAD_INPUT, SAVE_INPUT};
 use super::message::Message;
-use super::tab::{Tab, TabMachine};
+use super::tab::TabMachine;
 use crate::gui::theme::Tone;
 
 pub(crate) const LLM_PROMPT: &str = r#"You are given an image of one or more computational models (a state diagram of an automaton, a Turing machine, a pushdown automaton, a regular expression, or a context-free grammar).
@@ -92,7 +91,7 @@ impl super::app::App {
                             result: Ok((file_name, text)),
                         },
                         Err(_) => Message::LoadBrowseResult {
-                            result: Err(format!("{} is not valid UTF-8 text", file_name)),
+                            result: Err(format!("{file_name} is not valid UTF-8 text")),
                         },
                     }
                 }
@@ -142,7 +141,7 @@ impl super::app::App {
             }
             Err(error) => {
                 self.load_dialog_error =
-                    Some(format!("Cannot read {}: {}", path, error));
+                    Some(format!("Cannot read {path}: {error}"));
                 Task::none()
             }
         }
@@ -165,15 +164,13 @@ impl super::app::App {
                 );
                 return Task::none();
             }
-            let parsed = self.ensure_parsed_grammar();
-            let (grammar, problem) = match parsed {
-                Some(pair) => pair,
-                None => return Task::none(),
+            let grammar = match self.parsed_grammar() {
+                Ok(grammar) => grammar,
+                Err(problem) => {
+                    self.error_message = Some(problem);
+                    return Task::none();
+                }
             };
-            if let Some(problem) = problem {
-                self.error_message = Some(problem);
-                return Task::none();
-            }
             if grammar.productions().is_empty() {
                 self.error_message = Some(
                     "The grammar is empty — add at least one production before saving."
@@ -267,7 +264,7 @@ impl super::app::App {
             Ok(file_name) => {
                 self.mark_pending_save_done();
                 self.close_save_dialog();
-                self.toast(Tone::Success, format!("Saved {}", file_name), None);
+                self.toast(Tone::Success, format!("Saved {file_name}"), None);
                 Task::none()
             }
             Err(message) => {
@@ -295,11 +292,11 @@ impl super::app::App {
             Ok(()) => {
                 self.mark_pending_save_done();
                 self.close_save_dialog();
-                self.toast(Tone::Success, format!("Saved {}", path), None);
+                self.toast(Tone::Success, format!("Saved {path}"), None);
                 Task::none()
             }
             Err(error) => {
-                self.save_dialog_error = Some(format!("Cannot write {}: {}", path, error));
+                self.save_dialog_error = Some(format!("Cannot write {path}: {error}"));
                 Task::none()
             }
         }
@@ -334,7 +331,7 @@ impl super::app::App {
         let text = match contents {
             Ok(text) => text,
             Err(error) => {
-                self.error_message = Some(format!("Cannot read {}: {}", file_name, error));
+                self.error_message = Some(format!("Cannot read {file_name}: {error}"));
                 return Task::none();
             }
         };
@@ -361,28 +358,20 @@ impl super::app::App {
                 format!("{} {}", named.name, count)
             };
             match named.entity {
-                Entity::Finite(finite) => {
-                    tasks.push(self.open_machine_in_new_tab(tab_name, TabMachine::Finite(finite)));
-                    self.get_active_tab_mut().mark_saved();
-                }
-                Entity::Pushdown(pda) => {
-                    tasks.push(self.open_machine_in_new_tab(tab_name, TabMachine::Pushdown(pda)));
-                    self.get_active_tab_mut().mark_saved();
-                }
-                Entity::Turing(turing) => {
-                    tasks.push(self.open_machine_in_new_tab(tab_name, TabMachine::Turing(turing)));
-                    self.get_active_tab_mut().mark_saved();
-                }
                 Entity::Grammar(grammar) => {
-                    self.open_grammar_in_new_tab(tab_name, grammar);
-                    self.get_active_tab_mut().mark_saved();
+                    let output = format!("Loaded from .ce file. Start symbol: {}.", grammar.start_symbol());
+                    self.open_grammar_in_new_tab(tab_name, grammar, output);
                 }
+                Entity::Finite(finite) => tasks.push(self.open_machine_in_new_tab(tab_name, TabMachine::Finite(finite))),
+                Entity::Pushdown(pda) => tasks.push(self.open_machine_in_new_tab(tab_name, TabMachine::Pushdown(pda))),
+                Entity::Turing(turing) => tasks.push(self.open_machine_in_new_tab(tab_name, TabMachine::Turing(turing))),
             }
+            self.get_active_tab_mut().mark_saved();
         }
 
         let plural = if entity_count == 1 { "y" } else { "ies" };
         if errors.is_empty() {
-            self.toast(Tone::Success, format!("Loaded {} entit{} from {}", entity_count, plural, file_name), None);
+            self.toast(Tone::Success, format!("Loaded {entity_count} entit{plural} from {file_name}"), None);
         } else {
             self.toast(
                 Tone::Warning,
@@ -391,21 +380,6 @@ impl super::app::App {
             );
         }
         Task::batch(tasks)
-    }
-
-    pub(crate) fn open_grammar_in_new_tab(&mut self, name: String, grammar: Grammar) {
-        let mut tab = Tab::new_grammar();
-        tab.name = name;
-        tab.machine = TabMachine::Grammar(grammar.clone());
-        tab.grammar_text = format!("{}", grammar);
-        tab.grammar_content =
-            iced::widget::text_editor::Content::with_text(&tab.grammar_text);
-        tab.grammar_output = Some(format!(
-            "Loaded from .ce file. Start symbol: {}.",
-            grammar.start_symbol()
-        ));
-        self.tabs.push(Box::new(tab));
-        self.active_tab = self.tabs.len() - 1;
     }
 
     pub(crate) fn copy_llm_prompt(&mut self) -> Task<Message> {

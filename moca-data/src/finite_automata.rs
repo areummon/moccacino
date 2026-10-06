@@ -209,7 +209,7 @@ impl FiniteAutomata {
         let mut new_initial_id = 0;
         let mut final_states: HashSet<StateID> = HashSet::new();
         for (id, subset) in (0..).zip(subsets_and_transitions.keys()) {
-            let mut state = State::new(format!("q{}", id));
+            let mut state = State::new(format!("q{id}"));
             if initial_closure.as_ref() == Some(subset) {
                 new_initial_id = id;
                 state.initial_flag = true;
@@ -432,8 +432,7 @@ impl Machine for FiniteAutomata {
             for (target, _) in state.iter_by_transition() {
                 if !states.contains_key(target) {
                     return Err(format!(
-                        "State {} has a transition to nonexistent state {}.",
-                        id, target
+                        "State {id} has a transition to nonexistent state {target}."
                     ));
                 }
             }

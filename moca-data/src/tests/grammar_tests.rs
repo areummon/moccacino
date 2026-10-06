@@ -71,7 +71,7 @@ fn alphabet_inputs(alphabet: &[char], max_len: usize) -> Vec<String> {
                 next.push(longer);
             }
         }
-        inputs.extend(next.drain(..));
+        inputs.append(&mut next);
     }
     inputs.retain(|input| input.chars().count() <= max_len);
     inputs.sort();
@@ -190,8 +190,7 @@ fn validate_chain(
                 }
                 if !valid_replacement {
                     return Err(format!(
-                        "step {:?} -> {:?} is not a valid expansion of {}",
-                        before, after, variable
+                        "step {before:?} -> {after:?} is not a valid expansion of {variable}"
                     ));
                 }
                 replaced_any = true;
@@ -200,8 +199,7 @@ fn validate_chain(
         }
         if !replaced_any {
             return Err(format!(
-                "step {:?} -> {:?} expands no extreme variable",
-                before, after
+                "step {before:?} -> {after:?} expands no extreme variable"
             ));
         }
     }
@@ -220,13 +218,12 @@ fn concatenate(symbols: &[String]) -> String {
 
 fn assert_cnf_shape(grammar: &Grammar) {
     for (variable, body) in grammar.productions() {
-        let ok = (body.len() == 1 && grammar.nonterminals().contains(&body[0]) == false)
+        let ok = (body.len() == 1 && !grammar.nonterminals().contains(&body[0]))
             || (body.len() == 2 && body.iter().all(|s| grammar.nonterminals().contains(s)))
             || (body.is_empty() && variable == grammar.start_symbol());
         assert!(
             ok,
-            "body {:?} of {} violates Chomsky normal form",
-            body, variable
+            "body {body:?} of {variable} violates Chomsky normal form"
         );
     }
 }
@@ -259,7 +256,7 @@ fn grammar_parse_errors_test() {
     ] {
         let error: ParseError =
             grammar::parse_grammar(source).expect_err("should fail to parse");
-        assert_eq!(error.line, expected_line, "case {:?}", source);
+        assert_eq!(error.line, expected_line, "case {source:?}");
         assert!(!error.message.is_empty());
     }
 
@@ -299,7 +296,7 @@ fn grammar_lenient_empty_alternatives_test() {
 
     let explicit = grammar::parse_grammar("S -> a | ε").unwrap();
     let lenient = grammar::parse_grammar("S -> a | ").unwrap();
-    assert_eq!(format!("{}", explicit), format!("{}", lenient));
+    assert_eq!(format!("{explicit}"), format!("{}", lenient));
 }
 
 #[test]
@@ -308,15 +305,15 @@ fn grammar_derivation_chain_validity_test() {
     for input in ["", "ab", "aabb", "abab", "aaabbb"] {
         let chain = grammar
             .derive_leftmost(input, 200_000)
-            .unwrap_or_else(|| panic!("no leftmost derivation for {:?}", input));
+            .unwrap_or_else(|| panic!("no leftmost derivation for {input:?}"));
         validate_chain(&grammar, &chain, input, true)
-            .unwrap_or_else(|reason| panic!("bad leftmost chain for {:?}: {}", input, reason));
+            .unwrap_or_else(|reason| panic!("bad leftmost chain for {input:?}: {reason}"));
 
         let chain = grammar
             .derive_rightmost(input, 200_000)
-            .unwrap_or_else(|| panic!("no rightmost derivation for {:?}", input));
+            .unwrap_or_else(|| panic!("no rightmost derivation for {input:?}"));
         validate_chain(&grammar, &chain, input, false)
-            .unwrap_or_else(|reason| panic!("bad rightmost chain for {:?}: {}", input, reason));
+            .unwrap_or_else(|reason| panic!("bad rightmost chain for {input:?}: {reason}"));
     }
 }
 
@@ -351,8 +348,7 @@ fn grammar_membership_agreement_test() {
             let cyk_result = grammar.generate(&input);
             assert_eq!(
                 cyk_result, expected,
-                "CYK and the reference enumeration disagree on {:?} for grammar:\n{}",
-                input, source
+                "CYK and the reference enumeration disagree on {input:?} for grammar:\n{source}"
             );
         }
     }
@@ -368,8 +364,7 @@ fn grammar_derivation_membership_agreement_test() {
             assert_eq!(
                 grammar.derive_leftmost(&input, 50_000).is_some(),
                 accepted_short.contains(&input),
-                "derivation search disagrees on {:?} for:\n{}",
-                input, source
+                "derivation search disagrees on {input:?} for:\n{source}"
             );
         }
     }
@@ -408,8 +403,7 @@ fn grammar_cnf_language_preservation_test() {
             assert_eq!(
                 cnf.generate(&input),
                 accepted.contains(&input),
-                "CNF changed the language on {:?} for:\n{}",
-                input, source
+                "CNF changed the language on {input:?} for:\n{source}"
             );
         }
         assert_eq!(cnf.generate(""), grammar.contains_epsilon());
@@ -459,8 +453,7 @@ fn grammar_right_linear_to_finite_automata_test() {
         assert_eq!(
             automata.accepts(&input),
             accepted.contains(&input),
-            "right-linear -> FA disagrees on {:?}",
-            input
+            "right-linear -> FA disagrees on {input:?}"
         );
     }
 
@@ -475,9 +468,8 @@ fn grammar_right_linear_to_finite_automata_test() {
         let count = input.chars().filter(|c| *c == 'a').count();
         assert_eq!(
             automata.accepts(&input),
-            only_a && count % 2 == 0,
-            "even-a grammar converted wrong on {:?}",
-            input
+            only_a && count.is_multiple_of(2),
+            "even-a grammar converted wrong on {input:?}"
         );
     }
 }
@@ -522,20 +514,17 @@ fn grammar_fa_to_right_linear_roundtrip_test() {
         assert_eq!(
             automata.accepts(&input),
             odd_count,
-            "original DFA broke on {:?}",
-            input
+            "original DFA broke on {input:?}"
         );
         assert_eq!(
             rebuilt.accepts(&input),
             odd_count,
-            "roundtripped NFA disagrees on {:?}",
-            input
+            "roundtripped NFA disagrees on {input:?}"
         );
         assert_eq!(
             grammar.generate(&input),
             odd_count,
-            "roundtripped grammar disagrees on {:?}",
-            input
+            "roundtripped grammar disagrees on {input:?}"
         );
     }
 
@@ -581,7 +570,7 @@ fn grammar_cnf_free_to_pda_membership_test() {
     let units = grammar::parse_grammar(UNIT_CHAINS).unwrap();
     pda_matches_enumeration(&units, 3);
 
-    assert_eq!(anbn.contains_epsilon(), true);
+    assert!(anbn.contains_epsilon());
     assert!(anbn.to_pushdown_automata().unwrap().check_input(""));
     let non_epsilon = grammar::parse_grammar("S -> a S | b").unwrap();
     assert!(!non_epsilon.contains_epsilon());
@@ -647,8 +636,7 @@ fn grammar_to_pda_multichar_language_agreement_test() {
         assert_eq!(
             pda.check_input(&input),
             expected,
-            "multichar CFG->PDA disagrees on {:?}",
-            input
+            "multichar CFG->PDA disagrees on {input:?}"
         );
     }
 
@@ -665,9 +653,9 @@ fn grammar_to_pda_multichar_language_agreement_test() {
 fn grammar_display_reparses_equivalently_test() {
     for source in [BALANCED_PARENS, ANBN, UNIT_CHAINS] {
         let grammar = grammar::parse_grammar(source).unwrap();
-        let rendered = format!("{}", grammar);
+        let rendered = format!("{grammar}");
         let reparsed = grammar::parse_grammar(&rendered)
-            .unwrap_or_else(|e| panic!("rendered grammar failed to parse: {} for\n{}", e, rendered));
+            .unwrap_or_else(|e| panic!("rendered grammar failed to parse: {e} for\n{rendered}"));
         assert_eq!(
             reparsed.productions(),
             grammar.productions(),
@@ -676,9 +664,9 @@ fn grammar_display_reparses_equivalently_test() {
         assert_eq!(reparsed.start_symbol(), grammar.start_symbol());
 
         let cnf = grammar.to_chomsky_normal_form();
-        let rendered = format!("{}", cnf);
+        let rendered = format!("{cnf}");
         grammar::parse_grammar(&rendered)
-            .unwrap_or_else(|e| panic!("CNF rendering failed to parse: {} for\n{}", e, rendered));
+            .unwrap_or_else(|e| panic!("CNF rendering failed to parse: {e} for\n{rendered}"));
     }
 }
 
@@ -721,8 +709,8 @@ fn grammar_from_finite_automata_epsilon_test() {
     let reparsed = grammar::parse_grammar(&grammar.to_string()).expect("round-trips");
     for word in ["", "a", "ab", "abb", "b", "ba", "aa"] {
         let expected = automata.check_input(word);
-        assert_eq!(grammar.generate(word), expected, "grammar on {:?}", word);
-        assert_eq!(reparsed.generate(word), expected, "reparsed grammar on {:?}", word);
+        assert_eq!(grammar.generate(word), expected, "grammar on {word:?}");
+        assert_eq!(reparsed.generate(word), expected, "reparsed grammar on {word:?}");
     }
 }
 

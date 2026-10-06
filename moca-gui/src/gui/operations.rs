@@ -13,8 +13,9 @@ use crate::gui::theme::Tone;
 impl super::app::App {
     pub(crate) fn open_check_input(&mut self) -> Task<Message> {
         self.open_menu = None;
-        self.get_active_tab_mut().check_input_dialog_open = true;
-        self.get_active_tab_mut().check_input_text = String::new();
+        let tab = self.get_active_tab_mut();
+        tab.check_input_dialog_open = true;
+        tab.check_input_text.clear();
         iced::widget::text_input::focus(CHECK_INPUT)
     }
 
@@ -27,23 +28,10 @@ impl super::app::App {
 
         self.get_active_tab_mut().sync_gui_to_machine();
 
-        let new_machine = match self.get_active_tab().machine.into_dfa() {
-            Some(machine) => machine,
-            None => {
-                let reason = match self.get_active_tab().machine.machine_kind() {
-                    Some(MachineKind::Turing) =>
-                        "Cannot convert: the tab holds a Turing machine, not a finite automaton.".to_string(),
-                    Some(MachineKind::Pushdown) =>
-                        "Cannot convert: the tab holds a pushdown automaton, not a finite automaton.".to_string(),
-                    _ =>
-                        "Cannot convert: The automaton is already deterministic.".to_string(),
-                };
-                self.error_message = Some(reason);
-                return Task::none();
-            }
-        };
-
-        self.open_machine_in_new_tab("DFA".to_string(), new_machine)
+        match self.get_active_tab().machine.to_dfa() {
+            Some(machine) => self.open_machine_in_new_tab("DFA".to_string(), machine),
+            None => self.reject_non_finite("convert", "The automaton is already deterministic."),
+        }
     }
 
     pub(crate) fn minimize(&mut self) -> Task<Message> {
@@ -55,23 +43,23 @@ impl super::app::App {
 
         self.get_active_tab_mut().sync_gui_to_machine();
 
-        let minimized_machine = match self.get_active_tab().machine.minimized() {
-            Some(machine) => machine,
-            None => {
-                let reason = match self.get_active_tab().machine.machine_kind() {
-                    Some(MachineKind::Turing) =>
-                        "Cannot minimize: the tab holds a Turing machine, not a finite automaton.".to_string(),
-                    Some(MachineKind::Pushdown) =>
-                        "Cannot minimize: the tab holds a pushdown automaton, not a finite automaton.".to_string(),
-                    _ =>
-                        "Cannot minimize: The automaton must be deterministic.".to_string(),
-                };
-                self.error_message = Some(reason);
-                return Task::none();
-            }
-        };
+        match self.get_active_tab().machine.minimized() {
+            Some(machine) => self.open_machine_in_new_tab("Minimized".to_string(), machine),
+            None => self.reject_non_finite("minimize", "The automaton must be deterministic."),
+        }
+    }
 
-        self.open_machine_in_new_tab("Minimized".to_string(), minimized_machine)
+    fn reject_non_finite(&mut self, verb: &str, finite_reason: &str) -> Task<Message> {
+        let holder = match self.get_active_tab().machine.machine_kind() {
+            Some(MachineKind::Turing) => Some("a Turing machine"),
+            Some(MachineKind::Pushdown) => Some("a pushdown automaton"),
+            _ => None,
+        };
+        self.error_message = Some(match holder {
+            Some(holder) => format!("Cannot {verb}: the tab holds {holder}, not a finite automaton."),
+            None => format!("Cannot {verb}: {finite_reason}"),
+        });
+        Task::none()
     }
 
     pub(crate) fn check_input_text_changed(&mut self, text: String) -> Task<Message> {
@@ -88,12 +76,9 @@ impl super::app::App {
         }
         let result = self.get_active_tab().machine.accepts(&input);
         self.get_active_tab_mut().check_input_dialog_open = false;
-        let shown = if input.is_empty() { "ε (empty word)".to_string() } else { format!("'{}'", input) };
-        if result {
-            self.toast(Tone::Success, format!("{} is accepted", shown), None);
-        } else {
-            self.toast(Tone::Danger, format!("{} is rejected", shown), None);
-        }
+        let shown = if input.is_empty() { "ε (empty word)".to_string() } else { format!("'{input}'") };
+        let (tone, verdict) = if result { (Tone::Success, "accepted") } else { (Tone::Danger, "rejected") };
+        self.toast(tone, format!("{shown} is {verdict}"), None);
         Task::none()
     }
 
@@ -104,8 +89,9 @@ impl super::app::App {
 
     pub(crate) fn open_regex_dialog(&mut self) -> Task<Message> {
         self.open_menu = None;
-        self.get_active_tab_mut().regex_dialog_open = true;
-        self.get_active_tab_mut().regex_text.clear();
+        let tab = self.get_active_tab_mut();
+        tab.regex_dialog_open = true;
+        tab.regex_text.clear();
         iced::widget::text_input::focus(REGEX_INPUT)
     }
 
@@ -125,7 +111,7 @@ impl super::app::App {
         let machine = match moca_data::regex::compile_str(&pattern) {
             Ok(machine) => machine,
             Err(error) => {
-                self.error_message = Some(format!("Invalid regular expression: {}", error));
+                self.error_message = Some(format!("Invalid regular expression: {error}"));
                 return Task::none();
             }
         };
@@ -137,7 +123,7 @@ impl super::app::App {
         } else if pattern.is_empty() {
             "Regex: ε".to_string()
         } else {
-            format!("Regex: {}", pattern)
+            format!("Regex: {pattern}")
         };
         self.open_machine_in_new_tab(tab_name, TabMachine::Finite(machine))
     }
@@ -158,7 +144,7 @@ impl super::app::App {
                     Task::none()
                 }
                 Err(error) => {
-                    self.error_message = Some(format!("Cannot export the grammar: {}", error));
+                    self.error_message = Some(format!("Cannot export the grammar: {error}"));
                     Task::none()
                 }
             };

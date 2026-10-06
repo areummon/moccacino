@@ -370,7 +370,7 @@ pub(crate) fn stack_strip<'a>(entries: &[String], visible: usize) -> Element<'a,
     let hidden = entries.len() - shown;
     let mut cells = row![].spacing(3).align_y(Alignment::Center);
     if hidden > 0 {
-        cells = cells.push(text(format!("+{} ", hidden)).size(12).style(theme::text_faint));
+        cells = cells.push(text(format!("+{hidden} ")).size(12).style(theme::text_faint));
     }
     if entries.is_empty() {
         cells = cells.push(text("empty").size(12).style(theme::text_faint));
@@ -401,7 +401,7 @@ pub(crate) fn lanes<'a>(rows: Vec<Element<'a, Message>>, hidden: usize) -> Eleme
         list = list.push(row);
     }
     if hidden > 0 {
-        list = list.push(hint(format!("… {} more branches", hidden)));
+        list = list.push(hint(format!("… {hidden} more branches")));
     }
     let height = ((visible_rows as f32 + if hidden > 0 { 1.0 } else { 0.0 }) * (ROW_HEIGHT + 6.0)).min(200.0);
     container(

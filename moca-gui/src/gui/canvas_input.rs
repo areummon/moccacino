@@ -64,7 +64,7 @@ impl super::app::App {
         let active_tab = self.get_active_tab_mut();
         let key = (transition.from_state_id, transition.to_state_id);
         let label = transition.label.to_string();
-        let entry = active_tab.transitions.entry(key).or_insert_with(indexmap::IndexSet::new);
+        let entry = active_tab.transitions.entry(key).or_default();
         if !entry.contains(&label) {
             entry.insert(label);
             active_tab.state_machine.request_redraw();
@@ -120,7 +120,7 @@ impl super::app::App {
             active_tab.editing_transition_label_inputs = active_tab.editing_transition_labels.clone();
             active_tab.editing_transition_dialog_open = true;
             active_tab.state_machine.request_redraw();
-            iced::widget::text_input::focus(format!("{}-0", EDIT_LABEL_INPUT))
+            iced::widget::text_input::focus(format!("{EDIT_LABEL_INPUT}-0"))
         }
     }
 

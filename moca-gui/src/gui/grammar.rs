@@ -45,25 +45,23 @@ impl super::app::App {
                 let start = grammar.start_symbol().to_string();
                 self.get_active_tab_mut().machine = TabMachine::Grammar(grammar);
                 self.get_active_tab_mut().grammar_output =
-                    Some(format!("Parsed OK. Start symbol: {}. Terminals are derived from the bodies.", start));
+                    Some(format!("Parsed OK. Start symbol: {start}. Terminals are derived from the bodies."));
             },
             Err(error) => {
-                self.error_message = Some(format!("Invalid grammar: {}", error));
+                self.error_message = Some(format!("Invalid grammar: {error}"));
             },
         }
         Task::none()
     }
 
     pub(crate) fn grammar_check_word(&mut self) -> Task<Message> {
-        let parsed = self.ensure_parsed_grammar();
-        let (grammar, problem) = match parsed {
-            Some(pair) => pair,
-            None => return Task::none(),
+        let grammar = match self.parsed_grammar() {
+            Ok(grammar) => grammar,
+            Err(problem) => {
+                self.error_message = Some(problem);
+                return Task::none();
+            }
         };
-        if let Some(problem) = problem {
-            self.error_message = Some(problem);
-            return Task::none();
-        }
         let input = self.get_active_tab().grammar_word.trim().to_string();
         let answer = grammar.generate(&input);
         self.get_active_tab_mut().grammar_output = Some(format!(
@@ -76,21 +74,19 @@ impl super::app::App {
     }
 
     pub(crate) fn grammar_derive(&mut self) -> Task<Message> {
-        let parsed = self.ensure_parsed_grammar();
-        let (grammar, problem) = match parsed {
-            Some(pair) => pair,
-            None => return Task::none(),
+        let grammar = match self.parsed_grammar() {
+            Ok(grammar) => grammar,
+            Err(problem) => {
+                self.error_message = Some(problem);
+                return Task::none();
+            }
         };
-        if let Some(problem) = problem {
-            self.error_message = Some(problem);
-            return Task::none();
-        }
         let input = self.get_active_tab().grammar_word.trim().to_string();
         let max_derive_steps: usize = 50_000;
         match grammar.derive_leftmost(&input, max_derive_steps) {
             None => {
                 self.get_active_tab_mut().grammar_output =
-                    Some(format!("No leftmost derivation of {:?} within {} steps.", input, max_derive_steps));
+                    Some(format!("No leftmost derivation of {input:?} within {max_derive_steps} steps."));
             },
             Some(chain) => {
                 let rendered: Vec<String> = chain
@@ -109,49 +105,43 @@ impl super::app::App {
     }
 
     pub(crate) fn grammar_to_cnf(&mut self) -> Task<Message> {
-        let parsed = self.ensure_parsed_grammar();
-        let (grammar, problem) = match parsed {
-            Some(pair) => pair,
-            None => return Task::none(),
+        let grammar = match self.parsed_grammar() {
+            Ok(grammar) => grammar,
+            Err(problem) => {
+                self.error_message = Some(problem);
+                return Task::none();
+            }
         };
-        if let Some(problem) = problem {
-            self.error_message = Some(problem);
-            return Task::none();
-        }
         let cnf = grammar.to_chomsky_normal_form();
-        let mut new_tab = super::tab::Tab::new_with_name("CNF".to_string());
-        new_tab.machine = TabMachine::Grammar(cnf.clone());
-        new_tab.grammar_text = format!("{}", cnf);
-        new_tab.grammar_content = iced::widget::text_editor::Content::with_text(&new_tab.grammar_text);
-        new_tab.grammar_output = Some(format!(
-            "Chomsky normal form ready. Start symbol: {}.",
-            cnf.start_symbol()
-        ));
-        self.tabs.push(Box::new(new_tab));
-        self.active_tab = self.tabs.len() - 1;
+        let output = format!("Chomsky normal form ready. Start symbol: {}.", cnf.start_symbol());
+        self.open_grammar_in_new_tab("CNF".to_string(), cnf, output);
         Task::none()
     }
 
     pub(crate) fn reject_operation_for_grammar(&mut self, operation: &str) -> Task<Message> {
         self.error_message = Some(format!(
-            "Cannot {}: the tab holds a grammar, not a state machine.",
-            operation
+            "Cannot {operation}: the tab holds a grammar, not a state machine."
         ));
         Task::none()
     }
 
-    pub(crate) fn ensure_parsed_grammar(&mut self) -> Option<(Grammar, Option<String>)> {
+    pub(crate) fn parsed_grammar(&mut self) -> Result<Grammar, String> {
         let source = self.get_active_tab().grammar_text.trim().to_string();
-        match moca_data::grammar::parse_grammar(&source) {
-            Ok(grammar) => {
-                self.get_active_tab_mut().machine = TabMachine::Grammar(grammar.clone());
-                Some((grammar, None))
-            },
-            Err(error) => Some((
-                Grammar::default(),
-                Some(format!("Invalid grammar: {}", error)),
-            )),
-        }
+        let grammar = moca_data::grammar::parse_grammar(&source)
+            .map_err(|error| format!("Invalid grammar: {error}"))?;
+        self.get_active_tab_mut().machine = TabMachine::Grammar(grammar.clone());
+        Ok(grammar)
+    }
+
+    pub(crate) fn open_grammar_in_new_tab(&mut self, name: String, grammar: Grammar, output: String) {
+        let mut tab = super::tab::Tab::new_grammar();
+        tab.name = name;
+        tab.grammar_text = grammar.to_string();
+        tab.grammar_content = iced::widget::text_editor::Content::with_text(&tab.grammar_text);
+        tab.grammar_output = Some(output);
+        tab.machine = TabMachine::Grammar(grammar);
+        self.tabs.push(tab);
+        self.active_tab = self.tabs.len() - 1;
     }
 }
 

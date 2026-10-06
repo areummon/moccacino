@@ -47,12 +47,11 @@ fn turing_anbn_decider_test() {
         assert_eq!(
             tm.accepts(input),
             expected,
-            "wrong answer for input {:?}",
-            input
+            "wrong answer for input {input:?}"
         );
         let outcome = tm.run(input, DEFAULT_MAX_STEPS).unwrap();
         let expected_outcome = if expected { RunOutcome::Accepted } else { RunOutcome::Rejected };
-        assert_eq!(outcome, expected_outcome, "run outcome differs for {:?}", input);
+        assert_eq!(outcome, expected_outcome, "run outcome differs for {input:?}");
     }
 }
 
@@ -151,7 +150,7 @@ fn turing_run_max_steps_exceeded_test() {
         tm.run("", 1000),
         Some(RunOutcome::MaxStepsExceeded)
     );
-    assert_eq!(tm.accepts(""), false);
+    assert!(!tm.accepts(""));
 }
 
 #[test]
@@ -180,8 +179,7 @@ fn turing_validate_test() {
         tm.add_transition(0, 1, bad_label.to_string());
         assert!(
             Machine::validate(&tm).is_err(),
-            "label {:?} must not validate",
-            bad_label
+            "label {bad_label:?} must not validate"
         );
         let outcome = tm.run("anything", 100);
         assert_eq!(outcome, Some(RunOutcome::Rejected));
@@ -201,10 +199,10 @@ fn turing_nondeterminism_flag_test() {
     tm.add_n_states(2);
     tm.make_initial(0);
     tm.add_transition(0, 1, "a;a/R".to_string());
-    assert_eq!(tm.is_deterministic(), true);
+    assert!(tm.is_deterministic());
 
     tm.add_transition(0, 0, "a;b/S".to_string());
-    assert_eq!(tm.is_deterministic(), false);
+    assert!(!tm.is_deterministic());
 
     let config = tm.initial_configuration("a").unwrap();
     assert_eq!(tm.step(&config), None);
@@ -215,7 +213,7 @@ fn turing_nondeterminism_flag_test() {
     tm.make_final(1);
     tm.add_transition(0, 1, "a;a/R".to_string());
     tm.add_transition(0, 1, "a;a/R".to_string());
-    assert_eq!(tm.is_deterministic(), true);
+    assert!(tm.is_deterministic());
     assert_eq!(tm.run("a", 10), Some(RunOutcome::Accepted));
 
     let mut tm = TuringMachine::new('_');
@@ -270,7 +268,7 @@ fn build_union_machine() -> TuringMachine {
 #[test]
 fn turing_nondeterministic_union_language_test() {
     let tm = build_union_machine();
-    assert_eq!(tm.is_deterministic(), false);
+    assert!(!tm.is_deterministic());
     assert!(tm.validate().is_ok());
 
     for (input, expected) in [
@@ -288,14 +286,12 @@ fn turing_nondeterministic_union_language_test() {
         assert_eq!(
             tm.run_nondeterministic(input, DEFAULT_MAX_STEPS).unwrap(),
             if expected { RunOutcome::Accepted } else { RunOutcome::Rejected },
-            "wrong outcome for {:?}",
-            input
+            "wrong outcome for {input:?}"
         );
         assert_eq!(
             tm.accepts(input),
             expected,
-            "accepts() must dispatch to the nondeterministic run for {:?}",
-            input
+            "accepts() must dispatch to the nondeterministic run for {input:?}"
         );
     }
 }
@@ -356,7 +352,7 @@ fn turing_nondeterministic_looping_branch_test() {
     tm.add_transition(1, 1, "_;_/R".to_string());
     tm.add_transition(2, 2, "a;a/R".to_string());
     tm.add_transition(0, 3, "z;z/S".to_string());
-    assert_eq!(tm.is_deterministic(), false);
+    assert!(!tm.is_deterministic());
     assert_eq!(
         tm.run_nondeterministic("aaaa", 500),
         Some(RunOutcome::MaxStepsExceeded)
@@ -446,7 +442,7 @@ fn turing_multitape_nondeterministic_test() {
     tm.make_final(1);
     tm.add_transition(0, 1, "a;a/S,_;_/S".to_string());
     tm.add_transition(0, 2, "a;a/S,_;_/S".to_string());
-    assert_eq!(tm.is_deterministic(), false);
+    assert!(!tm.is_deterministic());
 
     let config = tm.initial_configuration("ab").unwrap();
     assert_eq!(tm.step_all(&config).len(), 2);

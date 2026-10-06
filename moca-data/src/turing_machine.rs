@@ -402,16 +402,14 @@ impl Machine for TuringMachine {
             for (target, labels) in state.iter_by_transition() {
                 if !states.contains_key(target) {
                     return Err(format!(
-                        "State {} has a transition to nonexistent state {}.",
-                        id, target
+                        "State {id} has a transition to nonexistent state {target}."
                     ));
                 }
                 for label in labels {
                     match parse_transition(label) {
                         None => {
                             return Err(format!(
-                                "State {} has malformed transition label {:?} (expected \"read;write/dir\" per tape, joined by commas).",
-                                id, label
+                                "State {id} has malformed transition label {label:?} (expected \"read;write/dir\" per tape, joined by commas)."
                             ));
                         },
                         Some(ops) => {
