@@ -503,3 +503,50 @@ fn entity_file_save_missing_initial_test() {
     fa.add_state_with_id_label(0, "q0");
     assert!(write_finite_entity("e", &fa).is_err());
 }
+
+#[test]
+fn demo_file_entities_match_their_names_test() {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../examples/demo.ce");
+    let source = std::fs::read_to_string(path).expect("examples/demo.ce is readable");
+    let (entities, errors) = parse_entity_file(&source);
+    assert!(errors.is_empty(), "demo.ce parses cleanly: {errors:?}");
+
+    let words = |alphabet: &[char]| {
+        let mut all = vec![String::new()];
+        let mut frontier = vec![String::new()];
+        for _ in 0..6 {
+            frontier = frontier
+                .iter()
+                .flat_map(|word| alphabet.iter().map(move |c| format!("{word}{c}")))
+                .collect();
+            all.extend(frontier.iter().cloned());
+        }
+        all
+    };
+    fn is_anbn(word: &str) -> bool {
+        let half = word.len() / 2;
+        word.len() % 2 == 0 && word[..half].chars().all(|c| c == 'a') && word[half..].chars().all(|c| c == 'b')
+    }
+    type Spec = (&'static str, &'static [char], fn(&str) -> bool);
+    let specs: [Spec; 6] = [
+        ("even-number-of-as", &['a', 'b'], |w| w.matches('a').count() % 2 == 0),
+        ("ends-with-b", &['a', 'b'], |w| w.ends_with('b')),
+        ("anbn", &['a', 'b'], is_anbn),
+        ("contains-a-zero", &['0', '1'], |w| w.contains('0')),
+        ("abb", &['a', 'b'], |w| w.ends_with("abb")),
+        ("anbn", &['a', 'b'], is_anbn),
+    ];
+    assert_eq!(entities.len(), specs.len());
+    for (named, (name, alphabet, expected)) in entities.iter().zip(specs) {
+        assert_eq!(named.name, name);
+        for word in words(alphabet) {
+            let accepted = match &named.entity {
+                Entity::Finite(machine) => machine.accepts(&word),
+                Entity::Pushdown(machine) => machine.accepts(&word),
+                Entity::Turing(machine) => machine.accepts(&word),
+                Entity::Grammar(grammar) => grammar.generate(&word),
+            };
+            assert_eq!(accepted, expected(&word), "{name} on {word:?}");
+        }
+    }
+}
