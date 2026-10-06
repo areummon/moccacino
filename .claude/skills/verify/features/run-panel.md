@@ -37,3 +37,4 @@ Preconditions:
 - `Running…` is not a verdict. A finite run needs one more step after it consumes the last symbol.
 - An auto-play halt returns the control to ▶ (Play, disabled), and Load or Reload always starts the new run paused. A lit Pause icon next to a verdict badge, or a reloaded run that advances without `space`, is a regression.
 - The PDA in `demo.ce` uses the `input;pop/push` labels. Its verdict for `aabb` should be `Accepted`.
+- Every family remembers the configurations a run has visited. A deterministic run that returns to one it has already seen (an ε-cycle in a DFA, a looping PDA or TM) halts with `Rejected` instead of stepping forever.
