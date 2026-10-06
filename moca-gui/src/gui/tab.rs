@@ -441,9 +441,10 @@ impl Tab {
         active
     }
 
-    /* Whether a run is loaded, is still going, and should auto-play. */
+    /* Whether a run is loaded, has finished, and is auto-playing. A finished
+     * run never plays, whatever its play flag still says. */
     pub(crate) fn run_state(&self) -> (bool, bool, bool) {
-        match &self.machine {
+        let (loaded, finished, playing) = match &self.machine {
             TabMachine::Turing(_) => (
                 self.tm_run.is_some() || self.tm_frontier.is_some(),
                 self.tm_run.as_ref().is_some_and(|run| run.finished.is_some())
@@ -463,7 +464,8 @@ impl Tab {
                 self.finite_playing,
             ),
             TabMachine::Grammar(_) => (false, false, false),
-        }
+        };
+        (loaded, finished, playing && !finished)
     }
 
     /* Syncs the drawing into the machine and caches what the status bar

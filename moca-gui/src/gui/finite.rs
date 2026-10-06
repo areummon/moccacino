@@ -46,6 +46,7 @@ impl super::app::App {
                 match finite.initial_configuration(&input) {
                     Some(config) => {
                         let tab = self.get_active_tab_mut();
+                        tab.finite_playing = false;
                         if tab.machine.is_deterministic() {
                             tab.finite_frontier = None;
                             tab.finite_run = Some(FiniteRun {

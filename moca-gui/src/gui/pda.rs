@@ -50,6 +50,7 @@ impl super::app::App {
         match machine.initial_configuration(&input) {
             Some(config) => {
                 let tab = self.get_active_tab_mut();
+                tab.pda_playing = false;
                 if tab.machine.is_deterministic() {
                     tab.pda_frontier = None;
                     tab.pda_run = Some(PdaRun {
