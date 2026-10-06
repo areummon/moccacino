@@ -46,6 +46,7 @@ impl super::app::App {
                 match turing.initial_configuration(&input) {
                     Some(config) => {
                         let tab = self.get_active_tab_mut();
+                        tab.tm_playing = false;
                         if tab.machine.is_deterministic() {
                             tab.tm_frontier = None;
                             tab.tm_run = Some(TmRun {
