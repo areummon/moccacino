@@ -19,15 +19,8 @@ impl super::app::App {
         self.get_active_tab_mut().check_input_dialog_open = false;
         self.get_active_tab_mut().check_input_text.clear();
         self.get_active_tab_mut().regex_dialog_open = false;
-        self.get_active_tab_mut().tm_run = None;
-        self.get_active_tab_mut().tm_frontier = None;
-        self.get_active_tab_mut().tm_playing = false;
-        self.get_active_tab_mut().pda_run = None;
-        self.get_active_tab_mut().pda_frontier = None;
-        self.get_active_tab_mut().pda_playing = false;
-        self.get_active_tab_mut().finite_run = None;
-        self.get_active_tab_mut().finite_frontier = None;
-        self.get_active_tab_mut().finite_playing = false;
+        self.get_active_tab_mut().run = None;
+        self.get_active_tab_mut().playing = false;
         self.get_active_tab_mut().set_active_tool(crate::state_machine::EditorTool::Arrow);
         Task::none()
     }

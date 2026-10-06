@@ -1,15 +1,16 @@
 use std::collections::{HashMap, HashSet};
 use indexmap::IndexSet;
 
+use crate::gui::run::Run;
 use crate::gui::theme::Family;
 use crate::state_machine;
 
-use moca_data::finite_automata::{FiniteAutomata, FiniteConfiguration};
+use moca_data::finite_automata::FiniteAutomata;
 use moca_data::grammar::Grammar;
-use moca_data::pushdown_automata::{PdaConfiguration, PushdownAutomata};
+use moca_data::pushdown_automata::PushdownAutomata;
 use moca_data::state::{State, StateID};
 use moca_data::state_machine::{Machine, MachineKind, StateMachine};
-use moca_data::turing_machine::{Configuration, RunOutcome, TuringMachine};
+use moca_data::turing_machine::TuringMachine;
 
 static EMPTY_STATES: std::sync::OnceLock<HashMap<StateID, State>> = std::sync::OnceLock::new();
 static EMPTY_FINALS: std::sync::OnceLock<HashSet<u64>> = std::sync::OnceLock::new();
@@ -20,54 +21,6 @@ fn empty_states() -> &'static HashMap<StateID, State> {
 
 fn empty_finals() -> &'static HashSet<u64> {
     EMPTY_FINALS.get_or_init(HashSet::new)
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct TmRun {
-    pub(crate) config: Configuration,
-    pub(crate) steps: u64,
-    pub(crate) finished: Option<RunOutcome>,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct NdFrontier {
-    pub(crate) level: u64,
-    pub(crate) alive: Vec<Configuration>,
-    pub(crate) visited: HashSet<Configuration>,
-    pub(crate) finished: Option<RunOutcome>,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct PdaRun {
-    pub(crate) config: PdaConfiguration,
-    pub(crate) input: String,
-    pub(crate) steps: u64,
-    pub(crate) finished: Option<bool>,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct FiniteRun {
-    pub(crate) config: FiniteConfiguration,
-    pub(crate) input: String,
-    pub(crate) steps: u64,
-    pub(crate) visited: HashSet<FiniteConfiguration>,
-    pub(crate) finished: Option<bool>,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct FiniteNdFrontier {
-    pub(crate) level: u64,
-    pub(crate) alive: Vec<FiniteConfiguration>,
-    pub(crate) visited: HashSet<FiniteConfiguration>,
-    pub(crate) finished: Option<bool>,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct PdaNdFrontier {
-    pub(crate) level: u64,
-    pub(crate) alive: Vec<PdaConfiguration>,
-    pub(crate) visited: HashSet<PdaConfiguration>,
-    pub(crate) finished: Option<bool>,
 }
 
 #[derive(Debug, Clone)]
@@ -273,22 +226,13 @@ pub(crate) struct Tab {
     pub(crate) saved_fingerprint: Option<u64>,
     pub(crate) regex_dialog_open: bool,
     pub(crate) regex_text: String,
-    pub(crate) tm_input_text: String,
-    pub(crate) tm_playing: bool,
-    pub(crate) pda_input_text: String,
-    pub(crate) pda_run: Option<PdaRun>,
-    pub(crate) pda_playing: bool,
-    pub(crate) pda_frontier: Option<PdaNdFrontier>,
-    pub(crate) finite_input_text: String,
-    pub(crate) finite_playing: bool,
-    pub(crate) finite_run: Option<FiniteRun>,
-    pub(crate) finite_frontier: Option<FiniteNdFrontier>,
+    pub(crate) run_input: String,
+    pub(crate) run: Option<Run>,
+    pub(crate) playing: bool,
     pub(crate) grammar_content: iced::widget::text_editor::Content,
     pub(crate) grammar_text: String,
     pub(crate) grammar_word: String,
     pub(crate) grammar_output: Option<String>,
-    pub(crate) tm_run: Option<TmRun>,
-    pub(crate) tm_frontier: Option<NdFrontier>,
     pub(crate) name: String,
     pub(crate) pending_transition: Option<(usize, usize, iced::Point, iced::Point)>,
     pub(crate) pending_transition_label: String,
@@ -350,60 +294,12 @@ impl Tab {
     }
 
     pub(crate) fn active_run_states(&self) -> HashSet<usize> {
-        let mut active = HashSet::new();
-        match &self.machine {
-            TabMachine::Finite(_) => {
-                if let Some(run) = &self.finite_run {
-                    active.insert(run.config.state_id() as usize);
-                }
-                if let Some(frontier) = &self.finite_frontier {
-                    active.extend(frontier.alive.iter().map(|config| config.state_id() as usize));
-                }
-            }
-            TabMachine::Pushdown(_) => {
-                if let Some(run) = &self.pda_run {
-                    active.insert(run.config.state_id() as usize);
-                }
-                if let Some(frontier) = &self.pda_frontier {
-                    active.extend(frontier.alive.iter().map(|config| config.state_id() as usize));
-                }
-            }
-            TabMachine::Turing(_) => {
-                if let Some(run) = &self.tm_run {
-                    active.insert(run.config.state_id() as usize);
-                }
-                if let Some(frontier) = &self.tm_frontier {
-                    active.extend(frontier.alive.iter().map(|config| config.state_id() as usize));
-                }
-            }
-            TabMachine::Grammar(_) => {}
-        }
-        active
+        self.run.as_ref().map(Run::active_states).unwrap_or_default()
     }
 
     pub(crate) fn run_state(&self) -> (bool, bool, bool) {
-        let (loaded, finished, playing) = match &self.machine {
-            TabMachine::Turing(_) => (
-                self.tm_run.is_some() || self.tm_frontier.is_some(),
-                self.tm_run.as_ref().is_some_and(|run| run.finished.is_some())
-                    || self.tm_frontier.as_ref().is_some_and(|frontier| frontier.finished.is_some()),
-                self.tm_playing,
-            ),
-            TabMachine::Pushdown(_) => (
-                self.pda_run.is_some() || self.pda_frontier.is_some(),
-                self.pda_run.as_ref().is_some_and(|run| run.finished.is_some())
-                    || self.pda_frontier.as_ref().is_some_and(|frontier| frontier.finished.is_some()),
-                self.pda_playing,
-            ),
-            TabMachine::Finite(_) => (
-                self.finite_run.is_some() || self.finite_frontier.is_some(),
-                self.finite_run.as_ref().is_some_and(|run| run.finished.is_some())
-                    || self.finite_frontier.as_ref().is_some_and(|frontier| frontier.finished.is_some()),
-                self.finite_playing,
-            ),
-            TabMachine::Grammar(_) => (false, false, false),
-        };
-        (loaded, finished, playing && !finished)
+        let finished = self.run.as_ref().is_some_and(|run| run.finished().is_some());
+        (self.run.is_some(), finished, self.playing && !finished)
     }
 
     pub(crate) fn refresh_insight(&mut self) {

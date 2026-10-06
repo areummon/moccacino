@@ -471,12 +471,10 @@ impl super::app::App {
     }
 
     pub(crate) fn create_run_dock(&self) -> Element<'_, Message> {
-        let dock = match self.get_active_tab().machine {
-            TabMachine::Finite(_) => self.create_finite_panel(),
-            TabMachine::Pushdown(_) => self.create_pda_panel(),
-            TabMachine::Turing(_) => self.create_tm_panel(),
-            TabMachine::Grammar(_) => return Space::new(0, 0).into(),
-        };
+        if self.get_active_tab().machine.is_grammar() {
+            return Space::new(0, 0).into();
+        }
+        let dock = self.create_run_panel();
         container(dock).padding(Padding { top: 0.0, right: 12.0, bottom: 8.0, left: 12.0 }).into()
     }
 

@@ -5,7 +5,6 @@ use crate::state_machine::{self, EditorTool};
 
 use super::dialogs::{EDIT_LABEL_INPUT, EDIT_TEXT_INPUT};
 use super::message::{Menu, Message};
-use super::tab::TabMachine;
 
 impl super::app::App {
     pub(crate) fn handle_canvas_message(&mut self, canvas_message: state_machine::CanvasMessage) -> Task<Message> {
@@ -240,7 +239,7 @@ impl super::app::App {
                 Task::none()
             }
             Key::Named(Named::Space) if on_canvas => self.toggle_active_play(),
-            Key::Named(Named::ArrowRight) if on_canvas => self.step_active_run(),
+            Key::Named(Named::ArrowRight) if on_canvas => self.run_step(),
             Key::Character("f") if on_canvas => self.fit_view(),
             Key::Character(digit) if on_canvas => {
                 let tool = EditorTool::ALL.into_iter().find(|tool| tool.shortcut() == digit);
@@ -285,20 +284,7 @@ impl super::app::App {
         if !loaded {
             return Task::none();
         }
-        match self.get_active_tab().machine {
-            TabMachine::Finite(_) => self.finite_toggle_play(),
-            TabMachine::Pushdown(_) => self.pda_toggle_play(),
-            TabMachine::Turing(_) => self.tm_toggle_play(),
-            TabMachine::Grammar(_) => Task::none(),
-        }
+        self.run_toggle_play()
     }
 
-    fn step_active_run(&mut self) -> Task<Message> {
-        match self.get_active_tab().machine {
-            TabMachine::Finite(_) => self.finite_step(),
-            TabMachine::Pushdown(_) => self.pda_step(),
-            TabMachine::Turing(_) => self.tm_step(),
-            TabMachine::Grammar(_) => Task::none(),
-        }
-    }
 }
