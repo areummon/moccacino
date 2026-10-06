@@ -1,0 +1,250 @@
+#!/usr/bin/env bash
+# Drives the moccacino GUI on a private Xvfb display with xdotool.
+# Never touches the user's own desktop: own X display, own config dir, no
+# D-Bus session (so rfd file portals cannot pop up on the real screen).
+#
+#   moca up                      build, start Xvfb + app, wait for the window
+#   moca doctor                  read-only health check of the instance
+#   moca shot <name>             window screenshot -> evidence dir
+#   moca click X Y [shift|alt|ctrl|double]...   window-relative click
+#   moca drag X1 Y1 X2 Y2        left-button drag
+#   moca move X Y                hover only
+#   moca size W H                resize the window (responsive layouts)
+#   moca key <keysym>...         e.g. Escape, ctrl+s, 2, Return, Right, space
+#   moca type <text>             types into the focused widget (ε works)
+#   moca clip [name]             print clipboard (and save it as evidence)
+#   moca note <text>             append a line to the evidence log
+#   moca log                     app stdout/stderr
+#   moca env                     print DISPLAY/WID/paths for ad-hoc xdotool use
+#   moca down                    kill what `up` started; evidence is kept
+#
+# MOCA_ID (default "default") names the instance, so several can run side by
+# side. Evidence: $MOCA_VERIFY_ROOT/evidence/$MOCA_ID (default root
+# ${TMPDIR:-/tmp}/moca-verify). MOCA_SETTLE (seconds, default 0.35) is the
+# pause after each input so the next frame is drawn.
+set -euo pipefail
+
+REPO="$(git -C "$(dirname "$(readlink -f "$0")")" rev-parse --show-toplevel)"
+ROOT="${MOCA_VERIFY_ROOT:-${TMPDIR:-/tmp}/moca-verify}"
+ID="${MOCA_ID:-default}"
+RUN="$ROOT/runs/$ID"
+EVID="$ROOT/evidence/$ID"
+SETTLE="${MOCA_SETTLE:-0.35}"
+BIN="$REPO/target/debug/moccacino"
+
+die() { echo "moca: $*" >&2; exit 1; }
+
+# Xvfb/xdotool/imagemagick/xclip come from nixpkgs; their PATH is cached once.
+# They must not see the devshell's LD_LIBRARY_PATH (it breaks nix binaries).
+tools() {
+    local cache="$ROOT/tools.path"
+    if [[ ! -s "$cache" ]]; then
+        mkdir -p "$ROOT"
+        env -u LD_LIBRARY_PATH nix shell nixpkgs#xorg.xvfb nixpkgs#xdotool \
+            nixpkgs#imagemagick nixpkgs#xclip -c sh -c 'printf %s "$PATH"' >"$cache.tmp"
+        mv "$cache.tmp" "$cache"
+    fi
+    export PATH="$(cat "$cache"):$PATH"
+    unset LD_LIBRARY_PATH
+}
+
+# Runs a command inside the flake devshell (direnv if allowed, else nix develop).
+devshell() {
+    if command -v direnv >/dev/null && direnv exec "$REPO" true >/dev/null 2>&1; then
+        direnv exec "$REPO" "$@"
+    else
+        nix develop "$REPO" -c "$@"
+    fi
+}
+
+alive() { [[ -n "${1:-}" ]] && kill -0 "$1" 2>/dev/null; }
+
+load() {
+    [[ -f "$RUN/state" ]] || die "no instance '$ID' (run: moca up)"
+    # shellcheck disable=SC1091
+    source "$RUN/state"
+    export DISPLAY
+}
+
+settle() { sleep "$SETTLE"; }
+
+cmd_up() {
+    tools
+    if [[ -f "$RUN/state" ]]; then
+        # shellcheck disable=SC1091
+        source "$RUN/state"
+        alive "${APP_PID:-}" && die "instance '$ID' is already up (moca down, or set MOCA_ID)"
+        rm -rf "$RUN"
+    fi
+    mkdir -p "$RUN/config" "$EVID"
+
+    echo "building..."
+    (cd "$REPO" && devshell cargo build --quiet 2>&1 | grep -v "ignoring invalid dependency" || true)
+    [[ -x "$BIN" ]] || die "build failed: $BIN missing"
+
+    local n
+    for n in $(seq 90 199); do
+        [[ -e "/tmp/.X11-unix/X$n" || -e "/tmp/.X$n-lock" ]] || break
+    done
+    DISPLAY=":$n"
+    Xvfb "$DISPLAY" -screen 0 1600x1000x24 -nolisten tcp >"$RUN/xvfb.log" 2>&1 &
+    local xvfb_pid=$!
+    for _ in $(seq 50); do [[ -e "/tmp/.X11-unix/X$n" ]] && break; sleep 0.1; done
+    [[ -e "/tmp/.X11-unix/X$n" ]] || die "Xvfb did not start (see $RUN/xvfb.log)"
+
+    # X11 backend (no WAYLAND_DISPLAY), lavapipe only: Xvfb has no DRI3, so
+    # hardware Vulkan ICDs are skipped for a deterministic software renderer.
+    # cwd = evidence dir: the save dialog's default path is relative
+    # ("Automaton.ce"), so a plain Enter must not write into the repo.
+    (cd "$EVID" && devshell env -u WAYLAND_DISPLAY \
+        DISPLAY="$DISPLAY" XDG_CONFIG_HOME="$RUN/config" \
+        DBUS_SESSION_BUS_ADDRESS="disabled:" RUST_BACKTRACE=1 \
+        sh -c 'export VK_DRIVER_FILES="$(printf %s "$VK_DRIVER_FILES" | tr : "\n" | grep lvp_icd)"; exec "$0"' "$BIN" \
+        >"$RUN/app.log" 2>&1) &
+    local app_pid=$!
+
+    cat >"$RUN/state" <<EOF
+DISPLAY=$DISPLAY
+XVFB_PID=$xvfb_pid
+APP_PID=$app_pid
+EOF
+    export DISPLAY
+    local wid=""
+    for _ in $(seq 150); do
+        wid="$(xdotool search --name '^Moccacino$' 2>/dev/null | head -1 || true)"
+        [[ -n "$wid" ]] && break
+        alive "$app_pid" || { cat "$RUN/app.log" >&2; die "app exited during startup"; }
+        sleep 0.2
+    done
+    [[ -n "$wid" ]] || die "no Moccacino window after 30s (see $RUN/app.log)"
+    echo "WID=$wid" >>"$RUN/state"
+    xdotool windowmove "$wid" 0 0 windowfocus "$wid" 2>/dev/null || true
+    sleep 1.5  # first frame (lavapipe compiles shaders on start)
+    echo "up: instance=$ID display=$DISPLAY window=$wid"
+    echo "evidence: $EVID"
+}
+
+cmd_doctor() {
+    tools; load
+    local ok=1
+    alive "$XVFB_PID" && echo "ok   Xvfb $DISPLAY (pid $XVFB_PID)" || { echo "FAIL Xvfb not running"; ok=0; }
+    alive "$APP_PID" && echo "ok   app pid $APP_PID" || { echo "FAIL app not running (moca log)"; ok=0; }
+    if xdotool getwindowname "$WID" >/dev/null 2>&1; then
+        echo "ok   window $WID '$(xdotool getwindowname "$WID")' $(xdotool getwindowgeometry "$WID" | sed -n 's/.*Geometry: //p')"
+    else
+        echo "FAIL window $WID gone"; ok=0
+    fi
+    local newest
+    newest="$(find "$REPO/moca-gui/src" "$REPO/moca-data/src" -name '*.rs' -newer "$BIN" | head -1)"
+    [[ -z "$newest" ]] && echo "ok   binary is newer than every source file" \
+        || echo "WARN binary older than $newest (moca down && moca up rebuilds)"
+    grep -q "panicked" "$RUN/app.log" && { echo "FAIL panic in app.log:"; grep -A3 panicked "$RUN/app.log"; ok=0; }
+    if ((ok)); then
+        local sd
+        sd="$(import -window "$WID" png:- 2>/dev/null | magick png:- -format '%[fx:standard_deviation]' info:)"
+        awk "BEGIN{exit !($sd > 0.01)}" && echo "ok   window is rendering (stddev $sd)" \
+            || { echo "FAIL window looks blank (stddev $sd)"; ok=0; }
+    fi
+    ((ok)) && echo "healthy" || { echo "unhealthy"; return 1; }
+}
+
+cmd_shot() {
+    tools; load
+    local name="${1:?usage: moca shot <name>}"
+    mkdir -p "$EVID"
+    local count; count="$(find "$EVID" -name '[0-9][0-9][0-9]-*.png' | wc -l)"
+    local out; out="$(printf '%s/%03d-%s.png' "$EVID" "$((count + 1))" "$name")"
+    import -window "$WID" "$out"
+    echo "$out"
+}
+
+mods_down() { local m; for m in "$@"; do [[ $m == double ]] || xdotool keydown "$m"; done; }
+mods_up() { local m; for m in "$@"; do [[ $m == double ]] || xdotool keyup "$m"; done; }
+
+cmd_click() {
+    tools; load
+    local x="${1:?usage: moca click X Y [mods]}" y="${2:?}"; shift 2
+    local repeat=1 m
+    for m in "$@"; do
+        case "$m" in
+            shift|alt|ctrl) ;;
+            double) repeat=2 ;;
+            *) die "unknown click modifier '$m' (shift|alt|ctrl|double)" ;;
+        esac
+    done
+    xdotool mousemove --window "$WID" "$x" "$y"
+    sleep 0.05
+    mods_down "$@"
+    # The app learns modifiers from its key subscription, which iced delivers
+    # after the canvas has already handled a same-batch click: hold first.
+    (($#)) && sleep 0.2
+    xdotool click --repeat "$repeat" --delay 80 1
+    mods_up "$@"
+    settle
+}
+
+cmd_move() { tools; load; xdotool mousemove --window "$WID" "${1:?}" "${2:?}"; settle; }
+
+cmd_drag() {
+    tools; load
+    local x1="${1:?usage: moca drag X1 Y1 X2 Y2}" y1="${2:?}" x2="${3:?}" y2="${4:?}" i
+    xdotool mousemove --window "$WID" "$x1" "$y1" mousedown 1
+    for i in 1 2 3 4 5 6 7 8; do
+        xdotool mousemove --window "$WID" $((x1 + (x2 - x1) * i / 8)) $((y1 + (y2 - y1) * i / 8))
+        sleep 0.03
+    done
+    xdotool mouseup 1
+    settle
+}
+
+cmd_size() { tools; load; xdotool windowsize "$WID" "${1:?usage: moca size W H}" "${2:?}"; sleep 0.8; }
+
+cmd_key() { tools; load; xdotool windowfocus "$WID" 2>/dev/null || true; xdotool key --delay 60 "$@"; settle; }
+
+cmd_type() {
+    tools; load
+    xdotool windowfocus "$WID" 2>/dev/null || true
+    xdotool type --delay 40 -- "${1:?usage: moca type <text>}"
+    settle
+}
+
+cmd_clip() {
+    tools; load
+    local text; text="$(xclip -o -selection clipboard 2>/dev/null || true)"
+    printf '%s\n' "$text"
+    if [[ -n "${1:-}" ]]; then mkdir -p "$EVID"; printf '%s\n' "$text" >"$EVID/$1.txt"; echo "saved $EVID/$1.txt" >&2; fi
+}
+
+cmd_note() { mkdir -p "$EVID"; printf '%s %s\n' "$(date +%T)" "$*" >>"$EVID/notes.txt"; }
+
+cmd_log() { load; cat "$RUN/app.log"; }
+
+cmd_env() { load; echo "DISPLAY=$DISPLAY WID=$WID RUN=$RUN EVID=$EVID TOOLS_PATH=$(cat "$ROOT/tools.path" 2>/dev/null)"; }
+
+cmd_down() {
+    if [[ -f "$RUN/state" ]]; then
+        # shellcheck disable=SC1091
+        source "$RUN/state"
+        [[ -f "$RUN/app.log" ]] && mkdir -p "$EVID" && cp "$RUN/app.log" "$EVID/app.log"
+        local pid
+        for pid in "${APP_PID:-}" "${XVFB_PID:-}"; do
+            alive "$pid" || continue
+            pkill -TERM -P "$pid" 2>/dev/null || true
+            kill -TERM "$pid" 2>/dev/null || true
+        done
+        for _ in $(seq 20); do alive "${APP_PID:-}" || alive "${XVFB_PID:-}" || break; sleep 0.1; done
+        for pid in "${APP_PID:-}" "${XVFB_PID:-}"; do alive "$pid" && kill -KILL "$pid" 2>/dev/null || true; done
+        rm -rf "$RUN"
+        echo "down: instance=$ID"
+    else
+        echo "down: no instance '$ID'"
+    fi
+    [[ -d "$EVID" ]] && echo "evidence kept: $EVID"
+    return 0
+}
+
+sub="${1:-}"; shift || true
+case "$sub" in
+    up|doctor|shot|click|move|drag|size|key|type|clip|note|log|env|down) "cmd_$sub" "$@" ;;
+    *) sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+esac
