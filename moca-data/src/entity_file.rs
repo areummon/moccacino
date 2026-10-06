@@ -1,4 +1,3 @@
-
 use crate::finite_automata::FiniteAutomata;
 use crate::grammar::{parse_grammar, Grammar};
 use crate::pushdown_automata::PushdownAutomata;
@@ -19,7 +18,6 @@ pub enum Entity {
 #[derive(Debug)]
 pub struct NamedEntity {
     pub name: String,
-    pub kind_label: String,
     pub entity: Entity,
 }
 
@@ -396,7 +394,6 @@ fn build_block(
 
     Ok(NamedEntity {
         name,
-        kind_label: kind_text.to_string(),
         entity,
     })
 }
@@ -578,49 +575,34 @@ fn build_machine(
         err(line, machine_problem)
     };
 
+    let populate = |machine: &mut dyn StateMachine| {
+        for (label, &id) in &interner.ids {
+            machine.add_state_with_id_label(id, label);
+        }
+        for (from, to, label) in assembled {
+            machine.add_transition(from, to, label);
+        }
+        machine.make_initial(initial_id);
+        for id in final_ids {
+            machine.make_final(id);
+        }
+    };
     let entity = match kind {
         Kind::Finite => {
             let mut machine = FiniteAutomata::new();
-            for (label, &id) in &interner.ids {
-                machine.add_state_with_id_label(id, label);
-            }
-            for (from, to, label) in assembled {
-                machine.add_transition(from, to, label);
-            }
-            machine.make_initial(initial_id);
-            for id in final_ids {
-                machine.make_final(id);
-            }
+            populate(&mut machine);
             Machine::validate(&machine).map_err(report_validation)?;
             Entity::Finite(machine)
         }
         Kind::Pushdown => {
             let mut machine = PushdownAutomata::new(stack_symbol);
-            for (label, &id) in &interner.ids {
-                machine.add_state_with_id_label(id, label);
-            }
-            for (from, to, label) in assembled {
-                machine.add_transition(from, to, label);
-            }
-            machine.make_initial(initial_id);
-            for id in final_ids {
-                machine.make_final(id);
-            }
+            populate(&mut machine);
             Machine::validate(&machine).map_err(report_validation)?;
             Entity::Pushdown(machine)
         }
         Kind::Turing => {
             let mut machine = TuringMachine::new(blank_symbol);
-            for (label, &id) in &interner.ids {
-                machine.add_state_with_id_label(id, label);
-            }
-            for (from, to, label) in assembled {
-                machine.add_transition(from, to, label);
-            }
-            machine.make_initial(initial_id);
-            for id in final_ids {
-                machine.make_final(id);
-            }
+            populate(&mut machine);
             Machine::validate(&machine).map_err(report_validation)?;
             Entity::Turing(machine)
         }
@@ -861,43 +843,21 @@ pub fn write_turing_entity(name: &str, tm: &TuringMachine) -> Result<String, Str
 }
 
 pub fn write_grammar_entity(name: &str, grammar: &Grammar) -> Result<String, String> {
-    let productions = grammar.productions();
-    if productions.is_empty() {
+    if grammar.productions().is_empty() {
         return Err("the grammar has no productions".to_string());
     }
     let mut text = entity_header("grammar", name);
-    let start = grammar.start_symbol().to_string();
-    let (start_pairs, other_pairs): (Vec<_>, Vec<_>) =
-        productions.into_iter().partition(|(variable, _)| *variable == start);
-    let mut current: Option<(String, Vec<String>)> = None;
-    for (variable, body) in start_pairs.into_iter().chain(other_pairs) {
-        let alternative = if body.is_empty() {
-            "ε".to_string()
-        } else {
-            body.join(" ")
+    let start = grammar.start_symbol();
+    let others = grammar.nonterminals().iter().filter(|variable| *variable != start);
+    for variable in std::iter::once(start).chain(others.map(String::as_str)) {
+        let Some(bodies) = grammar.productions_of(variable).filter(|bodies| !bodies.is_empty()) else {
+            continue;
         };
-        match &mut current {
-            Some((var, alternatives)) if *var == variable => {
-                alternatives.push(alternative);
-            }
-            _ => {
-                if let Some((var, alternatives)) = current.take() {
-                    text.push_str(&format!(
-                        "\nproductions: {} -> {}",
-                        var,
-                        alternatives.join(" | ")
-                    ));
-                }
-                current = Some((variable, vec![alternative]));
-            }
-        }
-    }
-    if let Some((var, alternatives)) = current {
-        text.push_str(&format!(
-            "\nproductions: {} -> {}",
-            var,
-            alternatives.join(" | ")
-        ));
+        let alternatives: Vec<String> = bodies
+            .iter()
+            .map(|body| if body.is_empty() { "ε".to_string() } else { body.join(" ") })
+            .collect();
+        text.push_str(&format!("\nproductions: {} -> {}", variable, alternatives.join(" | ")));
     }
     Ok(text)
 }

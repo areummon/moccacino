@@ -1,11 +1,10 @@
-use std::collections::{HashMap, HashSet, BTreeSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use crate::state::{Input, State, StateID};
 use crate::state_machine::{Machine, MachineKind, StateMachine};
 
 #[derive(Debug, Clone)]
 pub struct PushdownAutomata {
     states_by_id: HashMap<StateID, State>,
-    string_transitions: HashMap<(StateID, String), (StateID, String)>,
     initial_state_id: Option<StateID>,
     final_states: HashSet<StateID>,
     initial_stack_symbol: String,
@@ -20,6 +19,47 @@ struct PdaParsedOp {
     pops: bool,
     pop: String,
     push_entries: Vec<String>,
+}
+
+impl PdaParsedOp {
+    fn parse(label: &str) -> Result<Self, &'static str> {
+        const SHAPE: &str = "expected \"input;pop/push\"";
+        if label == "ε" {
+            return Ok(PdaParsedOp {
+                is_bare_epsilon: true,
+                read: String::new(),
+                pops: false,
+                pop: String::new(),
+                push_entries: Vec::new(),
+            });
+        }
+        let (read, stack_part) = label.split_once(';').ok_or(SHAPE)?;
+        let (pop, push) = stack_part.split_once('/').ok_or(SHAPE)?;
+        if stack_part.contains(';') || push.contains('/') {
+            return Err(SHAPE);
+        }
+        let push_entries: Vec<String> = if is_epsilon(push) {
+            Vec::new()
+        } else if push.contains(',') {
+            if push.split(',').any(str::is_empty) {
+                return Err("empty push segment");
+            }
+            push.split(',')
+                .rev()
+                .filter(|part| *part != "ε")
+                .map(str::to_string)
+                .collect()
+        } else {
+            push.chars().rev().map(|symbol| symbol.to_string()).collect()
+        };
+        Ok(PdaParsedOp {
+            is_bare_epsilon: false,
+            read: read.to_string(),
+            pops: !is_epsilon(pop),
+            pop: pop.to_string(),
+            push_entries,
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -44,10 +84,13 @@ impl PdaConfiguration {
 }
 
 impl PushdownAutomata {
+    pub const MAX_VISITED_CONFIGURATIONS: usize = 150_000;
+    pub const STACK_DEPTH_PER_CHAR: usize = 2;
+    pub const STACK_DEPTH_BASE: usize = 16;
+
     pub fn new(initial_stack_symbol: String) -> Self {
         PushdownAutomata {
             states_by_id: HashMap::new(),
-            string_transitions: HashMap::new(),
             initial_state_id: None,
             final_states: HashSet::new(),
             initial_stack_symbol,
@@ -57,83 +100,23 @@ impl PushdownAutomata {
     }
 
     fn rebuild_parsed_state(&mut self, state_id: StateID) {
-        self.string_transitions.retain(|(from, _), _| *from != state_id);
-        let Some(state) = self.states_by_id.get(&state_id) else {
-            self.parsed.remove(&state_id);
-            self.refresh_determinism();
-            return;
-        };
-        for (target, labels) in state.iter_by_transition() {
-            for label in labels {
-                let spelled = if label == "ε" { "ε;ε/ε" } else { label.as_str() };
-                if let Some((read, rest)) = spelled.split_once(';') {
-                    if !rest.contains(';') {
-                        self.string_transitions
-                            .insert((state_id, read.to_string()), (*target, rest.to_string()));
-                    }
-                }
-            }
+        match self.states_by_id.get(&state_id) {
+            Some(state) => {
+                let list = state
+                    .iter_by_transition()
+                    .flat_map(|(target, labels)| {
+                        labels
+                            .iter()
+                            .filter_map(|label| PdaParsedOp::parse(label).ok())
+                            .map(|op| (*target, op))
+                    })
+                    .collect();
+                self.parsed.insert(state_id, list);
+            },
+            None => {
+                self.parsed.remove(&state_id);
+            },
         }
-        let mut list: Vec<(StateID, PdaParsedOp)> = Vec::new();
-        for (target, labels) in state.iter_by_transition() {
-            for string in labels {
-                if string == "ε" {
-                    list.push((
-                        *target,
-                        PdaParsedOp {
-                            is_bare_epsilon: true,
-                            read: String::new(),
-                            pops: false,
-                            pop: String::new(),
-                            push_entries: Vec::new(),
-                        },
-                    ));
-                    continue;
-                }
-                let string_transitions: Vec<&str> = string.split(';').collect();
-                if string_transitions.len() != 2 {
-                    continue;
-                }
-                let stack_transition: Vec<&str> = string_transitions[1].split('/').collect();
-                if stack_transition.len() != 2 {
-                    continue;
-                }
-                let push_symbols = stack_transition[1];
-                if push_symbols.contains(',')
-                    && push_symbols.split(',').any(|part| part.is_empty())
-                {
-                    continue;
-                }
-                let push_entries: Vec<String> = if push_symbols == "ε" || push_symbols.is_empty()
-                {
-                    Vec::new()
-                } else if push_symbols.contains(',') {
-                    push_symbols
-                        .split(',')
-                        .rev()
-                        .filter(|part| !part.is_empty() && *part != "ε")
-                        .map(|part| part.to_string())
-                        .collect()
-                } else {
-                    push_symbols
-                        .chars()
-                        .rev()
-                        .map(|symbol| symbol.to_string())
-                        .collect()
-                };
-                list.push((
-                    *target,
-                    PdaParsedOp {
-                        is_bare_epsilon: false,
-                        read: string_transitions[0].to_string(),
-                        pops: !is_epsilon(stack_transition[0]),
-                        pop: stack_transition[0].to_string(),
-                        push_entries,
-                    },
-                ));
-            }
-        }
-        self.parsed.insert(state_id, list);
         self.refresh_determinism();
     }
 
@@ -143,10 +126,6 @@ impl PushdownAutomata {
                 ops[index + 1..].iter().all(|second| !ops_conflict(first, second))
             })
         });
-    }
-
-    pub fn get_string_transitions(&self) -> &HashMap<(StateID, String), (StateID, String)> {
-        &self.string_transitions
     }
 
     pub fn get_initial_stack_symbol(&self) -> &str {
@@ -170,7 +149,7 @@ impl PushdownAutomata {
         self.successors(config, usize::MAX)
     }
 
-    pub fn check_input(&self, input: &mut Input) -> bool {
+    pub fn check_input(&self, input: &str) -> bool {
         let stack_depth = Self::STACK_DEPTH_BASE
             + Self::STACK_DEPTH_PER_CHAR * input.chars().count();
         self.check_input_with_limit(input, Self::MAX_VISITED_CONFIGURATIONS, stack_depth)
@@ -178,59 +157,33 @@ impl PushdownAutomata {
 
     pub fn check_input_with_limit(
         &self,
-        input: &mut Input,
+        input: &str,
         max_visited: usize,
         max_stack_depth: usize,
     ) -> bool {
-        match self.initial_configuration(input) {
-            Some(initial_config) => {
-                let mut visited = HashSet::new();
-                self.traverse(initial_config, &mut visited, max_visited, max_stack_depth)
-            },
-            None => false,
-        }
-    }
-
-    pub fn add_label(&mut self, state_id: StateID, label: BTreeSet<StateID>) {
-        if let Some(state) = self.states_by_id.get_mut(&state_id) {
-            state.label = label;
-        }
-    }
-
-    pub const MAX_VISITED_CONFIGURATIONS: usize = 150_000;
-    pub const STACK_DEPTH_PER_CHAR: usize = 2;
-    pub const STACK_DEPTH_BASE: usize = 16;
-
-    fn traverse(
-        &self,
-        initial: PdaConfiguration,
-        visited: &mut HashSet<PdaConfiguration>,
-        max_visited: usize,
-        max_stack_depth: usize,
-    ) -> bool {
-        let mut worklist: std::collections::VecDeque<PdaConfiguration> =
-            std::collections::VecDeque::from([initial]);
-
+        let Some(initial) = self.initial_configuration(input) else {
+            return false;
+        };
+        let mut visited: HashSet<PdaConfiguration> = HashSet::new();
+        let mut worklist = VecDeque::from([initial]);
         while let Some(current) = worklist.pop_front() {
-            if !visited.insert(current.clone()) {
+            if visited.contains(&current) {
                 continue;
             }
-            if visited.len() > max_visited {
+            if visited.len() >= max_visited {
                 return false;
             }
             if self.is_accepting(&current) {
                 return true;
             }
-            for successor in self.successors(&current, max_stack_depth) {
-                worklist.push_back(successor);
-            }
+            worklist.extend(self.successors(&current, max_stack_depth));
+            visited.insert(current);
         }
         false
     }
 
     fn successors(&self, config: &PdaConfiguration, max_stack_depth: usize) -> Vec<PdaConfiguration> {
         let mut successors: Vec<PdaConfiguration> = Vec::new();
-        let current_input = &config.remaining_input;
         let current_stack = &config.stack;
 
         for (id, op) in self
@@ -242,7 +195,7 @@ impl PushdownAutomata {
             if op.is_bare_epsilon {
                 successors.push(PdaConfiguration {
                     state_id: *id,
-                    remaining_input: current_input.clone(),
+                    remaining_input: config.remaining_input.clone(),
                     stack: current_stack.clone(),
                 });
                 continue;
@@ -250,43 +203,26 @@ impl PushdownAutomata {
             if op.pops && current_stack.last() != Some(&op.pop) {
                 continue;
             }
-            let mut next_stack_len = current_stack.len();
-            if op.pops {
-                next_stack_len -= 1;
-            }
-            next_stack_len += op.push_entries.len();
+            let next_stack_len = current_stack.len() - usize::from(op.pops) + op.push_entries.len();
             if next_stack_len > max_stack_depth {
                 continue;
             }
-            let apply_stack = |stack: &mut Vec<String>| {
-                if op.pops {
-                    stack.pop();
-                }
-                for entry in &op.push_entries {
-                    stack.push(entry.clone());
-                }
+            let consumed = if is_epsilon(&op.read) {
+                0
+            } else if config.remaining_input.starts_with(&op.read) {
+                op.read.len()
+            } else {
+                continue;
             };
-            if is_epsilon(&op.read) {
-                let mut branch_stack = current_stack.clone();
-                apply_stack(&mut branch_stack);
-                successors.push(PdaConfiguration {
-                    state_id: *id,
-                    remaining_input: current_input.clone(),
-                    stack: branch_stack,
-                });
-                continue;
+            let mut stack = current_stack.clone();
+            if op.pops {
+                stack.pop();
             }
-            if !current_input.starts_with(&op.read) {
-                continue;
-            }
-            let mut rest = current_input.clone();
-            rest.replace_range(0..op.read.len(), "");
-            let mut branch_stack = current_stack.clone();
-            apply_stack(&mut branch_stack);
+            stack.extend(op.push_entries.iter().cloned());
             successors.push(PdaConfiguration {
                 state_id: *id,
-                remaining_input: rest,
-                stack: branch_stack,
+                remaining_input: config.remaining_input[consumed..].to_string(),
+                stack,
             });
         }
         successors
@@ -300,6 +236,10 @@ impl StateMachine for PushdownAutomata {
 
     fn get_states_by_id_ref(&self) -> &HashMap<StateID, State> {
         &self.states_by_id
+    }
+
+    fn markers_mut(&mut self) -> (&mut HashMap<StateID, State>, &mut Option<StateID>, &mut HashSet<StateID>) {
+        (&mut self.states_by_id, &mut self.initial_state_id, &mut self.final_states)
     }
 
     fn is_deterministic(&self) -> bool {
@@ -350,40 +290,7 @@ impl StateMachine for PushdownAutomata {
         self.rebuild_parsed_state(state_id);
     }
 
-    fn make_initial(&mut self, state_id: StateID) {
-        match self.states_by_id.get(&state_id) {
-            Some(_) => (),
-            None => return,
-        }
-        match self.initial_state_id {
-            Some(old_id) => {
-                if let Some(old_initial_state) = self.states_by_id.get_mut(&old_id) {
-                    old_initial_state.initial_flag = false;
-                }
-            }
-            None => (),
-        }
-        if let Some(state) = self.states_by_id.get_mut(&state_id) {
-            state.initial_flag = true;
-            self.initial_state_id = Some(state_id);
-        }
-    }
-
-    fn make_final(&mut self, state_id: StateID) {
-        if let Some(state) = self.states_by_id.get_mut(&state_id) {
-            state.final_flag = true;
-            self.final_states.insert(state_id);
-        }
-    }
-
     fn forget_state(&mut self, state_id: StateID) {
-        self.final_states.remove(&state_id);
-        if self.initial_state_id == Some(state_id) {
-            self.initial_state_id = None;
-        }
-        self.string_transitions.retain(|(from, _), (to, _)| {
-            *from != state_id && *to != state_id
-        });
         self.parsed.remove(&state_id);
         for list in self.parsed.values_mut() {
             list.retain(|(target, _)| *target != state_id);
@@ -398,7 +305,7 @@ impl Machine for PushdownAutomata {
     }
 
     fn accepts(&self, input: &str) -> bool {
-        self.check_input(&mut input.to_string())
+        self.check_input(input)
     }
 
     fn validate(&self) -> Result<(), String> {
@@ -415,38 +322,13 @@ impl Machine for PushdownAutomata {
                     ));
                 }
                 for label in labels {
-                    if label == "ε" {
-                        continue;
-                    }
-                    let fields: Vec<&str> = label.split(';').collect();
-                    if fields.len() != 2 {
+                    if let Err(problem) = PdaParsedOp::parse(label) {
                         return Err(format!(
-                            "State {} has malformed transition label {:?} (expected \"input;pop/push\").",
-                            id, label
-                        ));
-                    }
-                    let halves: Vec<&str> = fields[1].split('/').collect();
-                    if halves.len() != 2 {
-                        return Err(format!(
-                            "State {} has malformed transition label {:?} (expected \"input;pop/push\").",
-                            id, label
-                        ));
-                    }
-                    if halves[1].contains(',') && halves[1].split(',').any(|part| part.is_empty()) {
-                        return Err(format!(
-                            "State {} has malformed transition label {:?} (empty push segment).",
-                            id, label
+                            "State {} has malformed transition label {:?} ({}).",
+                            id, label, problem
                         ));
                     }
                 }
-            }
-        }
-        for ((from, _), (to, _)) in self.string_transitions.iter() {
-            if !states.contains_key(from) || !states.contains_key(to) {
-                return Err(format!(
-                    "The transition table references a nonexistent state ({} -> {}).",
-                    from, to
-                ));
             }
         }
         Ok(())

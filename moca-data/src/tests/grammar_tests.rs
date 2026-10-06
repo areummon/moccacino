@@ -559,9 +559,8 @@ fn pda_matches_enumeration(grammar: &Grammar, max_len: usize) {
     let pda = grammar.to_pushdown_automata().expect("PDA construction");
     let accepted = enumerate_accepted(grammar, max_len, 200_000);
     for input in alphabet_inputs(&['a', 'b'], max_len) {
-        let mut owned = input.clone();
         assert_eq!(
-            pda.check_input(&mut owned),
+            pda.check_input(&input),
             accepted.contains(&input),
             "CFG->PDA disagrees on {:?} (expected {}, got {})",
             input,
@@ -583,11 +582,11 @@ fn grammar_cnf_free_to_pda_membership_test() {
     pda_matches_enumeration(&units, 3);
 
     assert_eq!(anbn.contains_epsilon(), true);
-    assert!(anbn.to_pushdown_automata().unwrap().check_input(&mut String::new()));
+    assert!(anbn.to_pushdown_automata().unwrap().check_input(""));
     let non_epsilon = grammar::parse_grammar("S -> a S | b").unwrap();
     assert!(!non_epsilon.contains_epsilon());
-    assert!(!non_epsilon.to_pushdown_automata().unwrap().check_input(&mut String::new()));
-    assert!(non_epsilon.to_pushdown_automata().unwrap().check_input(&mut "ab".to_string()));
+    assert!(!non_epsilon.to_pushdown_automata().unwrap().check_input(""));
+    assert!(non_epsilon.to_pushdown_automata().unwrap().check_input("ab"));
 }
 
 #[test]
@@ -595,9 +594,9 @@ fn grammar_to_pda_multichar_terminal_test() {
     let mut multi = Grammar::new("S");
     multi.add_production("S", &["aa"]);
     let pda = multi.to_pushdown_automata().unwrap();
-    assert!(pda.check_input(&mut "aa".to_string()));
-    assert!(!pda.check_input(&mut "a".to_string()));
-    assert!(!pda.check_input(&mut "aaa".to_string()));
+    assert!(pda.check_input("aa"));
+    assert!(!pda.check_input("a"));
+    assert!(!pda.check_input("aaa"));
     assert!(pda.validate().is_ok());
 }
 
@@ -646,7 +645,7 @@ fn grammar_to_pda_multichar_language_agreement_test() {
     for input in alphabet_inputs(&['a', 'b', 'c'], 7) {
         let expected = accepted.contains(&input);
         assert_eq!(
-            pda.check_input(&mut input.clone()),
+            pda.check_input(&input),
             expected,
             "multichar CFG->PDA disagrees on {:?}",
             input
@@ -721,7 +720,7 @@ fn grammar_from_finite_automata_epsilon_test() {
     assert!(!grammar.terminals().contains("ε"));
     let reparsed = grammar::parse_grammar(&grammar.to_string()).expect("round-trips");
     for word in ["", "a", "ab", "abb", "b", "ba", "aa"] {
-        let expected = automata.check_input(&mut word.to_string());
+        let expected = automata.check_input(word);
         assert_eq!(grammar.generate(word), expected, "grammar on {:?}", word);
         assert_eq!(reparsed.generate(word), expected, "reparsed grammar on {:?}", word);
     }

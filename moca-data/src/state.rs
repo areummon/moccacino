@@ -33,7 +33,7 @@ impl State {
             .is_some_and(|labels| labels.contains(&input));
         let deterministic_flag = already_to_target || !self.input_transitions.contains(&input);
         self.input_transitions.replace(input.clone());
-        self.transitions_by_id.entry(state_id).or_insert(HashSet::new()).replace(input);
+        self.transitions_by_id.entry(state_id).or_default().replace(input);
         deterministic_flag
     }
 

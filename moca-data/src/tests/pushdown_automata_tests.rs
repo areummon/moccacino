@@ -12,14 +12,14 @@ fn check_input_dpa_test() {
     pushdown_automata.add_transition(0, 1, "ε".to_string());
     pushdown_automata.add_transition(1, 1, "1;A/ε".to_string());
     pushdown_automata.add_transition(1, 2, "ε;Z/Z".to_string());
-    assert_eq!(pushdown_automata.check_input(&mut "0".to_string()), false);
-    assert_eq!(pushdown_automata.check_input(&mut "001".to_string()), false);
-    assert_eq!(pushdown_automata.check_input(&mut "001111".to_string()), false);
-    assert_eq!(pushdown_automata.check_input(&mut "0001111".to_string()), false);
-    assert_eq!(pushdown_automata.check_input(&mut "sy".to_string()), false);
-    assert_eq!(pushdown_automata.check_input(&mut "01".to_string()), true);
-    assert_eq!(pushdown_automata.check_input(&mut "00001111".to_string()), true);
-    assert_eq!(pushdown_automata.check_input(&mut "".to_string()), true);
+    assert_eq!(pushdown_automata.check_input("0"), false);
+    assert_eq!(pushdown_automata.check_input("001"), false);
+    assert_eq!(pushdown_automata.check_input("001111"), false);
+    assert_eq!(pushdown_automata.check_input("0001111"), false);
+    assert_eq!(pushdown_automata.check_input("sy"), false);
+    assert_eq!(pushdown_automata.check_input("01"), true);
+    assert_eq!(pushdown_automata.check_input("00001111"), true);
+    assert_eq!(pushdown_automata.check_input(""), true);
     let mut pushdown_automaton = PushdownAutomata::new("Z".to_string());
     pushdown_automaton.add_n_states(3);
     pushdown_automaton.make_initial(0);
@@ -29,14 +29,14 @@ fn check_input_dpa_test() {
     pushdown_automaton.add_transition(0, 1, "ε".to_string());
     pushdown_automaton.add_transition(1, 1, "b;A/ε".to_string());
     pushdown_automaton.add_transition(1, 2, "ε;Z/Z".to_string());
-    assert_eq!(pushdown_automaton.check_input(&mut "ab".to_string()), true);
-    assert_eq!(pushdown_automaton.check_input(&mut "".to_string()), true);
-    assert_eq!(pushdown_automaton.check_input(&mut "aabb".to_string()), true);
-    assert_eq!(pushdown_automaton.check_input(&mut "aaabbb".to_string()), true);
-    assert_eq!(pushdown_automaton.check_input(&mut "aab".to_string()), false);
-    assert_eq!(pushdown_automaton.check_input(&mut "ba".to_string()), false);
-    assert_eq!(pushdown_automaton.check_input(&mut "abb".to_string()), false);
-    assert_eq!(pushdown_automaton.check_input(&mut "sy".to_string()), false);
+    assert_eq!(pushdown_automaton.check_input("ab"), true);
+    assert_eq!(pushdown_automaton.check_input(""), true);
+    assert_eq!(pushdown_automaton.check_input("aabb"), true);
+    assert_eq!(pushdown_automaton.check_input("aaabbb"), true);
+    assert_eq!(pushdown_automaton.check_input("aab"), false);
+    assert_eq!(pushdown_automaton.check_input("ba"), false);
+    assert_eq!(pushdown_automaton.check_input("abb"), false);
+    assert_eq!(pushdown_automaton.check_input("sy"), false);
 }
 
 #[test]
@@ -49,14 +49,8 @@ fn remove_state_cleans_bookkeeping_test() {
     pushdown_automata.add_transition(1, 2, "b;a/Z".to_string());
     pushdown_automata.remove_state(1);
     assert!(pushdown_automata.get_final_states().is_empty());
-    assert!(pushdown_automata
-        .get_string_transitions()
-        .keys()
-        .all(|(from, _)| *from != 1));
-    assert!(pushdown_automata
-        .get_string_transitions()
-        .values()
-        .all(|(to, _)| *to != 1));
+    let start = pushdown_automata.initial_configuration("a").unwrap();
+    assert!(pushdown_automata.step_all(&start).is_empty());
 }
 
 #[test]
@@ -181,7 +175,7 @@ fn pda_step_check_input_parity_test() {
             "", "a", "ab", "abb", "ac", "acc", "aa", "aba", "b", "c", "abc",
             "aab", "abbc", "aabb",
         ] {
-            let expected = pda.check_input(&mut input.to_string());
+            let expected = pda.check_input(input);
             assert_eq!(
                 accepts_by_stepping(pda, input, 150_000, 4096),
                 expected,
@@ -208,10 +202,10 @@ fn pda_multisymbol_push_test() {
     assert_eq!(stepped[0].remaining_input(), "");
     assert_eq!(stepped[0].stack(), ["Z".to_string(), "A".to_string()]);
 
-    assert!(pda.check_input(&mut "ab".to_string()));
-    assert!(!pda.check_input(&mut "a".to_string()));
-    assert!(!pda.check_input(&mut "ba".to_string()));
-    assert!(!pda.check_input(&mut "aba".to_string()));
+    assert!(pda.check_input("ab"));
+    assert!(!pda.check_input("a"));
+    assert!(!pda.check_input("ba"));
+    assert!(!pda.check_input("aba"));
     assert!(pda.validate().is_ok());
 }
 
@@ -239,7 +233,7 @@ fn pda_malformed_comma_push_test() {
     let error = Machine::validate(&pda).expect_err("empty push segment must not validate");
     assert!(error.contains("empty push segment"), "{}", error);
 
-    assert!(!pda.check_input(&mut "a".to_string()));
+    assert!(!pda.check_input("a"));
 }
 
 #[test]
@@ -288,9 +282,9 @@ fn pda_epsilon_pop_fires_on_nonempty_stack_test() {
     pda.make_final(1);
     pda.add_transition(0, 1, "a;ε/A".to_string());
     pda.add_transition(1, 1, "a;ε/A".to_string());
-    assert!(pda.check_input(&mut "a".to_string()));
-    assert!(pda.check_input(&mut "aaa".to_string()));
-    assert!(!pda.check_input(&mut "".to_string()));
+    assert!(pda.check_input("a"));
+    assert!(pda.check_input("aaa"));
+    assert!(!pda.check_input(""));
 }
 
 #[test]
@@ -301,7 +295,7 @@ fn pda_malformed_label_does_not_panic_test() {
     pda.make_initial(0);
     pda.make_final(1);
     pda.add_transition(0, 1, "a".to_string());
-    assert!(!pda.check_input(&mut "a".to_string()));
+    assert!(!pda.check_input("a"));
     assert!(pda.validate().is_err());
 }
 

@@ -1,5 +1,5 @@
 use crate::finite_automata::FiniteAutomata;
-use crate::state::{StateID, Input};
+use crate::state::StateID;
 use crate::state_machine::StateMachine;
 
 use super::ast::RegexAst;
@@ -46,31 +46,26 @@ fn contains_literal_epsilon(node: &RegexAst) -> bool {
     }
 }
 
-fn add_state(automata: &mut FiniteAutomata) -> StateID {
-    automata.add_state()
-}
-
 fn add_epsilon(automata: &mut FiniteAutomata, from: StateID, to: StateID) {
-    let epsilon: Input = "ε".to_string();
-    automata.add_transition(from, to, epsilon);
+    automata.add_transition(from, to, "ε".to_string());
 }
 
 fn build(node: &RegexAst, automata: &mut FiniteAutomata) -> Fragment {
     match node {
         RegexAst::Empty => {
-            let start = add_state(automata);
-            let end = add_state(automata);
+            let start = automata.add_state();
+            let end = automata.add_state();
             Fragment { start, end }
         },
         RegexAst::Epsilon => {
-            let start = add_state(automata);
-            let end = add_state(automata);
+            let start = automata.add_state();
+            let end = automata.add_state();
             add_epsilon(automata, start, end);
             Fragment { start, end }
         },
         RegexAst::Char(c) => {
-            let start = add_state(automata);
-            let end = add_state(automata);
+            let start = automata.add_state();
+            let end = automata.add_state();
             automata.add_transition(start, end, c.to_string());
             Fragment { start, end }
         },
@@ -84,10 +79,10 @@ fn build(node: &RegexAst, automata: &mut FiniteAutomata) -> Fragment {
             }
         },
         RegexAst::Union(left, right) => {
-            let start = add_state(automata);
+            let start = automata.add_state();
             let left_fragment = build(left, automata);
             let right_fragment = build(right, automata);
-            let end = add_state(automata);
+            let end = automata.add_state();
             add_epsilon(automata, start, left_fragment.start);
             add_epsilon(automata, start, right_fragment.start);
             add_epsilon(automata, left_fragment.end, end);
@@ -95,9 +90,9 @@ fn build(node: &RegexAst, automata: &mut FiniteAutomata) -> Fragment {
             Fragment { start, end }
         },
         RegexAst::Star(inner) => {
-            let start = add_state(automata);
+            let start = automata.add_state();
             let inner_fragment = build(inner, automata);
-            let end = add_state(automata);
+            let end = automata.add_state();
             add_epsilon(automata, start, end);
             add_epsilon(automata, start, inner_fragment.start);
             add_epsilon(automata, inner_fragment.end, end);
@@ -105,18 +100,18 @@ fn build(node: &RegexAst, automata: &mut FiniteAutomata) -> Fragment {
             Fragment { start, end }
         },
         RegexAst::Plus(inner) => {
-            let start = add_state(automata);
+            let start = automata.add_state();
             let inner_fragment = build(inner, automata);
-            let end = add_state(automata);
+            let end = automata.add_state();
             add_epsilon(automata, start, inner_fragment.start);
             add_epsilon(automata, inner_fragment.end, end);
             add_epsilon(automata, inner_fragment.end, inner_fragment.start);
             Fragment { start, end }
         },
         RegexAst::Quest(inner) => {
-            let start = add_state(automata);
+            let start = automata.add_state();
             let inner_fragment = build(inner, automata);
-            let end = add_state(automata);
+            let end = automata.add_state();
             add_epsilon(automata, start, inner_fragment.start);
             add_epsilon(automata, inner_fragment.end, end);
             add_epsilon(automata, start, end);

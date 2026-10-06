@@ -313,6 +313,10 @@ impl StateMachine for TuringMachine {
         &self.states_by_id
     }
 
+    fn markers_mut(&mut self) -> (&mut HashMap<StateID, State>, &mut Option<StateID>, &mut HashSet<StateID>) {
+        (&mut self.states_by_id, &mut self.initial_state_id, &mut self.final_states)
+    }
+
     fn is_deterministic(&self) -> bool {
         self.deterministic
     }
@@ -366,37 +370,7 @@ impl StateMachine for TuringMachine {
         self.rebuild_parsed_state(state_id);
     }
 
-    fn make_initial(&mut self, state_id: StateID) {
-        match self.states_by_id.get(&state_id) {
-            Some(_) => (),
-            None => return,
-        }
-        match self.initial_state_id {
-            Some(old_id) => {
-                if let Some(old_initial_state) = self.states_by_id.get_mut(&old_id) {
-                    old_initial_state.initial_flag = false;
-                }
-            }
-            None => (),
-        }
-        if let Some(state) = self.states_by_id.get_mut(&state_id) {
-            state.initial_flag = true;
-            self.initial_state_id = Some(state_id);
-        }
-    }
-
-    fn make_final(&mut self, state_id: StateID) {
-        if let Some(state) = self.states_by_id.get_mut(&state_id) {
-            state.final_flag = true;
-            self.final_states.insert(state_id);
-        }
-    }
-
     fn forget_state(&mut self, state_id: StateID) {
-        self.final_states.remove(&state_id);
-        if self.initial_state_id == Some(state_id) {
-            self.initial_state_id = None;
-        }
         self.parsed.remove(&state_id);
         for list in self.parsed.values_mut() {
             list.retain(|(target, _)| *target != state_id);

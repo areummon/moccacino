@@ -51,13 +51,34 @@ impl FiniteAutomata {
         &self.string_transitions
     }
 
-    pub fn check_input(&self, input: &mut Input) -> bool {
-        match self.initial_state_id {
-            Some(initial_id) => {
-                self.recursive_traversing(&initial_id, input)
-            },
-            None => false,
+    pub fn check_input(&self, input: &str) -> bool {
+        let Some(initial_id) = self.initial_state_id else {
+            return false;
+        };
+        let mut visited: HashSet<(StateID, usize)> = HashSet::new();
+        let mut pending = vec![(initial_id, 0)];
+        while let Some((state_id, offset)) = pending.pop() {
+            if !visited.insert((state_id, offset)) {
+                continue;
+            }
+            let Some(state) = self.states_by_id.get(&state_id) else {
+                continue;
+            };
+            let rest = &input[offset..];
+            if state.final_flag && rest.is_empty() {
+                return true;
+            }
+            for (next_id, labels) in state.iter_by_transition() {
+                for label in labels {
+                    if is_epsilon_label(label) {
+                        pending.push((*next_id, offset));
+                    } else if rest.starts_with(label.as_str()) {
+                        pending.push((*next_id, offset + label.len()));
+                    }
+                }
+            }
         }
+        false
     }
 
     pub fn initial_configuration(&self, input: &str) -> Option<FiniteConfiguration> {
@@ -77,19 +98,17 @@ impl FiniteAutomata {
         if let Some(state) = self.states_by_id.get(&config.state_id) {
             for (next_id, transitions) in state.iter_by_transition() {
                 for label in transitions.iter() {
-                    if label.is_empty() || label == "ε" {
-                        successors.push(FiniteConfiguration {
-                            state_id: *next_id,
-                            remaining_input: config.remaining_input.clone(),
-                        });
+                    let consumed = if is_epsilon_label(label) {
+                        0
                     } else if config.remaining_input.starts_with(label.as_str()) {
-                        let mut rest = config.remaining_input.clone();
-                        rest.replace_range(0..label.len(), "");
-                        successors.push(FiniteConfiguration {
-                            state_id: *next_id,
-                            remaining_input: rest,
-                        });
-                    }
+                        label.len()
+                    } else {
+                        continue;
+                    };
+                    successors.push(FiniteConfiguration {
+                        state_id: *next_id,
+                        remaining_input: config.remaining_input[consumed..].to_string(),
+                    });
                 }
             }
         }
@@ -130,44 +149,19 @@ impl FiniteAutomata {
         }
     }
 
-    fn recursive_traversing(&self, state_id: &StateID, input: &mut Input) -> bool {
-        let mut visited = HashSet::new();
-        self.recursive_traversing_aux(state_id, input, &mut visited)
-    }
-
-    fn recursive_traversing_aux(&self, state_id: &StateID, input: &mut Input, visited: &mut HashSet<(StateID, String)>) -> bool {
-        let key = (*state_id, input.clone());
-        if visited.contains(&key) {
-            return false;
-        }
-        visited.insert(key);
-
-        match self.states_by_id.get(state_id) {
-            Some(state) => {
-                if state.final_flag && input.is_empty() {
-                    return true;
-                }
-                let mut accepted_bool = false;
-                for (id, transition) in state.iter_by_transition() {
-                    for string in transition.iter() {
-                        if string.is_empty() || string == "ε" {
-                            accepted_bool = accepted_bool || self.recursive_traversing_aux(id, &mut input.clone(), visited);
-                            continue;
-                        }
-                        if input.starts_with(string.as_str()) {
-                            let mut rest = input.clone();
-                            rest.replace_range(0..string.len(), "");
-                            accepted_bool = accepted_bool || self.recursive_traversing_aux(id, &mut rest, visited);
-                        }
-                    }
-                    if accepted_bool {
-                        break;
+    fn reachable_from(&self, start: StateID) -> HashSet<StateID> {
+        let mut reachable = HashSet::from([start]);
+        let mut pending = vec![start];
+        while let Some(id) = pending.pop() {
+            if let Some(state) = self.states_by_id.get(&id) {
+                for (target, labels) in state.iter_by_transition() {
+                    if !labels.is_empty() && reachable.insert(*target) {
+                        pending.push(*target);
                     }
                 }
-                return accepted_bool;
             }
-            None => {return false;},
         }
+        reachable
     }
 
     pub fn lambda_closure(&self, state_id: StateID, input_string: &str) -> BTreeSet<StateID> {
@@ -205,73 +199,58 @@ impl FiniteAutomata {
     }
 
     pub fn to_dfa(&self) -> FiniteAutomata {
-            if self.deterministic {
-                panic!("For now this doesn't do anything, but it should return an Error()");
+        if self.deterministic {
+            panic!("For now this doesn't do anything, but it should return an Error()");
+        }
+        let subsets_and_transitions = subset_construction(self);
+        let initial_closure = self.initial_state_id.map(|initial_id| self.lambda_closure(initial_id, ""));
+        let mut states_by_id: HashMap<StateID, State> = HashMap::new();
+        let mut id_by_subsets: HashMap<&BTreeSet<StateID>, StateID> = HashMap::new();
+        let mut new_initial_id = 0;
+        let mut final_states: HashSet<StateID> = HashSet::new();
+        for (id, subset) in (0..).zip(subsets_and_transitions.keys()) {
+            let mut state = State::new(format!("q{}", id));
+            if initial_closure.as_ref() == Some(subset) {
+                new_initial_id = id;
+                state.initial_flag = true;
             }
-            let subsets_and_transitions = subset_construction(&self);
-            let mut states_by_id: HashMap<StateID, State> = HashMap::new();
-            let mut id_by_subsets: HashMap<BTreeSet<StateID>, StateID> = HashMap::new();
-            let mut new_initial_id = 0;
-            let mut final_states: HashSet<StateID> = HashSet::new();
-            let mut id = 0;
-            let initial_closure: Option<BTreeSet<StateID>> =
-                self.initial_state_id.map(|initial_id| {
-                    let mut closure = self.lambda_closure(initial_id, "");
-                    closure.insert(initial_id);
-                    closure
-                });
-            for (subset, _) in subsets_and_transitions.iter() {
-                let mut state = State::new(format!("q{}", id));
-                if let Some(initial_subset) = &initial_closure {
-                    if initial_subset == subset {
-                        new_initial_id = id;
-                        state.initial_flag = true;
-                    }
-                }
-                for current_id in subset {
-                    if let Some(current_state) = self.states_by_id.get(current_id) {
-                        if current_state.final_flag == true {
-                            state.final_flag = true;
-                            final_states.insert(id);
-                            break;
-                        }
-                    }
-                }
-                id_by_subsets.insert(subset.clone(), id);
-                state.label = subset.clone();
-                states_by_id.insert(id, state);
-                id += 1;
+            if subset.iter().any(|member| self.states_by_id.get(member).is_some_and(|s| s.final_flag)) {
+                state.final_flag = true;
+                final_states.insert(id);
             }
-            for (subset, transitions) in subsets_and_transitions {
-                let Some(&from) = id_by_subsets.get(&subset) else { continue };
-                for (set, string) in transitions {
-                    if let Some(&to) = id_by_subsets.get(&set) {
-                        if let Some(state) = states_by_id.get_mut(&from) {
-                            state.add_transition(to, string.to_string());
-                        }
+            state.label = subset.clone();
+            id_by_subsets.insert(subset, id);
+            states_by_id.insert(id, state);
+        }
+        for (subset, transitions) in &subsets_and_transitions {
+            let from = id_by_subsets[subset];
+            for (set, string) in transitions {
+                if let Some(&to) = id_by_subsets.get(set) {
+                    if let Some(state) = states_by_id.get_mut(&from) {
+                        state.add_transition(to, string.to_string());
                     }
                 }
             }
-            FiniteAutomata {
-                states_by_id,
-                string_transitions: self.string_transitions.clone(),
-                initial_state_id: Some(new_initial_id),
-                final_states,
-                deterministic: true,
-            }
+        }
+        FiniteAutomata {
+            states_by_id,
+            string_transitions: self.string_transitions.clone(),
+            initial_state_id: Some(new_initial_id),
+            final_states,
+            deterministic: true,
+        }
     }
 
-    pub fn minimize(&self)  -> Self  {
+    pub fn minimize(&self) -> Self {
         if !self.deterministic {
             panic!("Cannon minimize a nfa");
         }
-        let mut unreachable_states: Vec<StateID> = Vec::new();
-        if let Some(initial_id) = self.initial_state_id {
-            unreachable_states = get_unreachable_states(&self, initial_id);
-        }
         let mut minimized_automata = self.clone();
-        for id in unreachable_states {
-            minimized_automata.remove_state(id);
+        if let Some(initial_id) = self.initial_state_id {
+            let reachable = self.reachable_from(initial_id);
+            for id in self.states_by_id.keys().filter(|id| !reachable.contains(id)) {
+                minimized_automata.remove_state(*id);
+            }
         }
         convert_minimized_dfa(&minimized_automata, hopcroft_algorithm(&minimized_automata))
     }
@@ -281,18 +260,14 @@ impl FiniteAutomata {
 
         let mut edges: HashMap<(StateID, StateID), RegexAst> = HashMap::new();
         let mut union_edge = |from: StateID, to: StateID, label: &str| {
-            let piece: RegexAst = if label == "ε" || label.is_empty() {
+            let piece = if is_epsilon_label(label) {
                 Epsilon
             } else {
-                let mut ast: Option<RegexAst> = None;
-                for c in label.chars() {
-                    let node = Char(c);
-                    ast = Some(match ast {
-                        Some(existing) => Concat(Box::new(existing), Box::new(node)),
-                        None => node,
-                    });
-                }
-                ast.expect("non-empty label")
+                label
+                    .chars()
+                    .map(Char)
+                    .reduce(|existing, node| Concat(Box::new(existing), Box::new(node)))
+                    .expect("non-empty label")
             };
             match edges.get_mut(&(from, to)) {
                 Some(existing) => {
@@ -304,25 +279,11 @@ impl FiniteAutomata {
             }
         };
 
-        let initial_id = match self.initial_state_id {
-            Some(id) => id,
-            None => return Empty,
+        let Some(initial_id) = self.initial_state_id else {
+            return Empty;
         };
 
-        let reachable = {
-            let mut visited: HashSet<StateID> = HashSet::from([initial_id]);
-            let mut stack = vec![initial_id];
-            while let Some(id) = stack.pop() {
-                if let Some(state) = self.states_by_id.get(&id) {
-                    for (target, _) in state.iter_by_transition() {
-                        if visited.insert(*target) {
-                            stack.push(*target);
-                        }
-                    }
-                }
-            }
-            visited
-        };
+        let reachable = self.reachable_from(initial_id);
 
         let next_id = self.states_by_id.keys().copied().max().map_or(0, |max| max + 1);
         let new_start = next_id;
@@ -351,10 +312,8 @@ impl FiniteAutomata {
         for r in remaining {
             let loop_ast = edges.get(&(r, r)).cloned();
             let loop_star = loop_ast.map(|ast| Star(Box::new(ast)));
-            let into: Vec<StateID> = edges.keys().filter(|(_, to)| *to == r).map(|(from, _)| *from).collect();
-            let out_of: Vec<StateID> = edges.keys().filter(|(from, _)| *from == r).map(|(_, to)| *to).collect();
-            let mut into = into;
-            let mut out_of = out_of;
+            let mut into: Vec<StateID> = edges.keys().filter(|(_, to)| *to == r).map(|(from, _)| *from).collect();
+            let mut out_of: Vec<StateID> = edges.keys().filter(|(from, _)| *from == r).map(|(_, to)| *to).collect();
             into.sort();
             out_of.sort();
             for p in into.iter().filter(|p| **p != r) {
@@ -404,6 +363,10 @@ impl StateMachine for FiniteAutomata {
         &self.states_by_id
     }
 
+    fn markers_mut(&mut self) -> (&mut HashMap<StateID, State>, &mut Option<StateID>, &mut HashSet<StateID>) {
+        (&mut self.states_by_id, &mut self.initial_state_id, &mut self.final_states)
+    }
+
     fn is_deterministic(&self) -> bool {
         self.deterministic
     }
@@ -416,11 +379,7 @@ impl StateMachine for FiniteAutomata {
         &self.initial_state_id
     }
 
-    fn forget_state(&mut self, state_id: StateID) {
-        self.final_states.remove(&state_id);
-        if self.initial_state_id == Some(state_id) {
-            self.initial_state_id = None;
-        }
+    fn forget_state(&mut self, _state_id: StateID) {
         self.refresh_determinism();
     }
 
@@ -453,32 +412,6 @@ impl StateMachine for FiniteAutomata {
         }
         self.refresh_determinism();
     }
-
-    fn make_initial(&mut self, state_id: StateID) {
-        match self.states_by_id.get(&state_id) {
-            Some(_) => (),
-            None => return,
-        }
-        match self.initial_state_id {
-            Some(old_id) => {
-                if let Some(old_initial_state) = self.states_by_id.get_mut(&old_id) {
-                    old_initial_state.initial_flag = false;
-                }
-            }
-            None => (),
-        }
-        if let Some(state) = self.states_by_id.get_mut(&state_id) {
-            state.initial_flag = true;
-            self.initial_state_id = Some(state_id);
-        }
-    }
-
-    fn make_final(&mut self, state_id: StateID) {
-        if let Some(state) = self.states_by_id.get_mut(&state_id) {
-            state.final_flag = true;
-            self.final_states.insert(state_id);
-        }
-    }
 }
 
 impl Machine for FiniteAutomata {
@@ -487,7 +420,7 @@ impl Machine for FiniteAutomata {
     }
 
     fn accepts(&self, input: &str) -> bool {
-        self.check_input(&mut input.to_string())
+        self.check_input(input)
     }
 
     fn validate(&self) -> Result<(), String> {
@@ -509,54 +442,41 @@ impl Machine for FiniteAutomata {
     }
 }
 
-pub fn get_unreachable_states(automata: &FiniteAutomata, initial_id: StateID) -> Vec<StateID> {
-    let mut reachable_states: HashSet<StateID> = HashSet::new();
-    let mut new_states: HashSet<StateID> = HashSet::new();
-    reachable_states.insert(initial_id);
-    new_states.insert(initial_id);
-    while !new_states.is_empty() {
-        let mut temp = HashSet::new();
-        for state_id in new_states {
-            for string in automata.string_transitions.iter() {
-                match automata.transition_function(state_id, &string) {
-                    Some(new_id) => { temp.insert(new_id); },
-                    None => (),
-                }
-            }
-        }
-        new_states = temp.symmetric_difference(&reachable_states).cloned().collect();
-        if new_states.is_subset(&reachable_states) {
-            break;
-        }
-        reachable_states = reachable_states.union(&new_states).cloned().collect();
-    }
-    let mut unreachable_states = Vec::new();
-    for (id, _) in automata.states_by_id.iter() {
-        if !reachable_states.contains(id) {
-            unreachable_states.push(*id);
-        }
-    }
-    unreachable_states
-}
+const SINK: StateID = u64::MAX;
 
-pub fn hopcroft_algorithm(automata: &FiniteAutomata) -> HashSet<BTreeSet<StateID>> {
-    const SINK: StateID = u64::MAX;
-
-    let rejecting_states: BTreeSet<StateID> = automata.get_final_states().iter().cloned().collect();
-    let mut non_rejecting_states = hashmap_set_difference(automata.get_states_by_id_ref(),
-                                                    automata.get_final_states());
-    let mut partition_p: HashSet<BTreeSet<StateID>> = HashSet::new();
-    if !rejecting_states.is_empty() {
-        partition_p.insert(rejecting_states);
+fn hopcroft_algorithm(automata: &FiniteAutomata) -> HashSet<BTreeSet<StateID>> {
+    let mut sources_into: HashMap<(&str, StateID), Vec<StateID>> = HashMap::new();
+    for symbol in &automata.string_transitions {
+        for &id in automata.states_by_id.keys() {
+            let target = automata.transition_function(id, symbol).unwrap_or(SINK);
+            sources_into.entry((symbol, target)).or_default().push(id);
+        }
+        sources_into.entry((symbol, SINK)).or_default().push(SINK);
     }
-    non_rejecting_states.insert(SINK);
-    partition_p.insert(non_rejecting_states);
+
+    let accepting: BTreeSet<StateID> = automata.final_states.iter().copied().collect();
+    let mut rejecting: BTreeSet<StateID> = automata
+        .states_by_id
+        .keys()
+        .filter(|id| !automata.final_states.contains(id))
+        .copied()
+        .collect();
+    rejecting.insert(SINK);
+    let mut partition_p: HashSet<BTreeSet<StateID>> = HashSet::from([rejecting]);
+    if !accepting.is_empty() {
+        partition_p.insert(accepting);
+    }
 
     let mut partition_w: Vec<BTreeSet<StateID>> = partition_p.iter().cloned().collect();
 
     while let Some(set_a) = partition_w.pop() {
-        for string in automata.get_string_transitions() {
-            let set_x = transition_function_set(automata, &set_a, string);
+        for symbol in &automata.string_transitions {
+            let set_x: BTreeSet<StateID> = set_a
+                .iter()
+                .filter_map(|target| sources_into.get(&(symbol.as_str(), *target)))
+                .flatten()
+                .copied()
+                .collect();
             if set_x.is_empty() {
                 continue;
             }
@@ -588,130 +508,65 @@ pub fn hopcroft_algorithm(automata: &FiniteAutomata) -> HashSet<BTreeSet<StateID
         }
     }
 
-    let mut result_partition: HashSet<BTreeSet<StateID>> = HashSet::new();
-    for set in partition_p {
-        let real_states: BTreeSet<StateID> = set.into_iter().filter(|&id| id != SINK).collect();
-        if !real_states.is_empty() {
-            result_partition.insert(real_states);
-        }
-    }
-    result_partition
-}
-
-fn hashmap_set_difference(map: &HashMap<StateID, State>, set: &HashSet<StateID>) -> BTreeSet<StateID> {
-    let mut difference_set = BTreeSet::new();
-    for (map_id, _) in map.iter() {
-        if !set.contains(map_id) {
-            difference_set.insert(*map_id);
-        }
-    }
-    difference_set
-}
-
-fn transition_function_set(automata: &FiniteAutomata, set: &BTreeSet<StateID>, string: &str) -> BTreeSet<StateID> {
-    const SINK: StateID = u64::MAX;
-    let mut new_set = BTreeSet::new();
-    for (id,_) in automata.get_states_by_id_ref() {
-        let target = match automata.transition_function(*id, string) {
-            Some(target) => target,
-            None => SINK,
-        };
-        if set.contains(&target) {
-            new_set.insert(*id);
-        }
-    }
-    if set.contains(&SINK) {
-        new_set.insert(SINK);
-    }
-    new_set
+    partition_p
+        .into_iter()
+        .map(|set| set.into_iter().filter(|&id| id != SINK).collect::<BTreeSet<StateID>>())
+        .filter(|set| !set.is_empty())
+        .collect()
 }
 
 fn convert_minimized_dfa(automata: &FiniteAutomata, partition: HashSet<BTreeSet<StateID>>) -> FiniteAutomata {
-    let mut state_id_by_label: HashMap<BTreeSet<StateID>, StateID> = HashMap::new();
-    let mut index = 0;
     let mut minimized_automata = FiniteAutomata::new();
-    let og_final_states = automata.get_final_states();
-    for set in partition.into_iter() {
-        minimized_automata.add_state();
-        if let Some(initial_id) = automata.get_initial_state_id() {
-            if set.contains(initial_id) {
-                minimized_automata.make_initial(index);
-            }
+    let mut block_of: HashMap<StateID, StateID> = HashMap::new();
+    let mut representatives: Vec<(StateID, StateID)> = Vec::new();
+    for set in partition {
+        let block = minimized_automata.add_state();
+        if automata.initial_state_id.is_some_and(|initial_id| set.contains(&initial_id)) {
+            minimized_automata.make_initial(block);
         }
-        for id in set.iter() {
-            if og_final_states.contains(id) {
-                minimized_automata.make_final(index);
-                break;
-            }
+        if set.iter().any(|id| automata.final_states.contains(id)) {
+            minimized_automata.make_final(block);
         }
-        minimized_automata.add_label(index, set.clone());
-        state_id_by_label.insert(set, index);
-        index += 1;
+        block_of.extend(set.iter().map(|&id| (id, block)));
+        if let Some(&representative) = set.first() {
+            representatives.push((block, representative));
+        }
+        minimized_automata.add_label(block, set);
     }
-    for (set, id) in state_id_by_label.iter() {
-        for set_id in set.iter() {
-            for string in automata.get_string_transitions() {
-                if let Some(state_id) = automata.transition_function(*set_id, string) {
-                    for (minimized_set, minimized_id) in state_id_by_label.iter() {
-                        if minimized_set.contains(&state_id) {
-                            minimized_automata.add_transition(*id, *minimized_id, string.to_string());
-                            break;
-                        }
-                    }
-                }
+    for (block, representative) in representatives {
+        for symbol in &automata.string_transitions {
+            let target = automata.transition_function(representative, symbol);
+            if let Some(&to) = target.and_then(|target| block_of.get(&target)) {
+                minimized_automata.add_transition(block, to, symbol.clone());
             }
-            break;
         }
     }
     minimized_automata
 }
 
-pub fn subset_construction(automata: &FiniteAutomata) -> HashMap<BTreeSet<StateID>, Vec<(BTreeSet<StateID>, &str)>> {
-    let mut sets_to_visit: Vec<BTreeSet<StateID>> = Vec::new();
-    let mut visited_sets: HashSet<BTreeSet<StateID>> = HashSet::new();
-    let mut transitions_by_subsets: HashMap<BTreeSet<StateID>, Vec<(BTreeSet<StateID>,&str)>> = HashMap::new();
-    let initial_id = match automata.initial_state_id {
-        Some(id) => id,
-        None => panic!("There is not an initial state.")
-    };
-    let mut current_subset = automata.lambda_closure(initial_id, "");
-    current_subset.insert(initial_id);
-    sets_to_visit.push(current_subset.clone());
-    visited_sets.insert(current_subset.clone());
-    transitions_by_subsets.insert(current_subset, Vec::new());
-    while !sets_to_visit.is_empty() {
-        let mut vector_transitions: Vec<(BTreeSet<u64>, &str)> = Vec::new();
-        let current_subset = match sets_to_visit.pop() {
-            Some(set) => {
-                set
-            },
-            None => panic!("There is no subset, this should never occur"),
-        };
+type SubsetTransitions<'a> = HashMap<BTreeSet<StateID>, Vec<(BTreeSet<StateID>, &'a str)>>;
 
-        for string in automata.get_string_transitions() {
-            let new_subset = lambda_closure_subset(&automata, &current_subset, string);
-            if new_subset.is_empty() || visited_sets.contains(&new_subset) {
-                vector_transitions.push((new_subset, string));
-                continue;
+fn subset_construction(automata: &FiniteAutomata) -> SubsetTransitions<'_> {
+    let initial_id = automata.initial_state_id.expect("There is not an initial state.");
+    let initial_subset = automata.lambda_closure(initial_id, "");
+    let mut transitions_by_subsets: SubsetTransitions = HashMap::from([(initial_subset.clone(), Vec::new())]);
+    let mut sets_to_visit = vec![initial_subset];
+    while let Some(current_subset) = sets_to_visit.pop() {
+        let mut vector_transitions: Vec<(BTreeSet<StateID>, &str)> = Vec::new();
+        for string in &automata.string_transitions {
+            let new_subset: BTreeSet<StateID> = current_subset
+                .iter()
+                .flat_map(|id| automata.lambda_closure(*id, string))
+                .collect();
+            if !new_subset.is_empty() && !transitions_by_subsets.contains_key(&new_subset) {
+                sets_to_visit.push(new_subset.clone());
+                transitions_by_subsets.insert(new_subset.clone(), Vec::new());
             }
-            sets_to_visit.push(new_subset.clone());
-            transitions_by_subsets.insert(new_subset.clone(), Vec::new());
-            visited_sets.insert(new_subset.clone());
             vector_transitions.push((new_subset, string));
         }
-        if let Some(vector) = transitions_by_subsets.get_mut(&current_subset) {
-            *vector = vector_transitions;
-        }
+        transitions_by_subsets.insert(current_subset, vector_transitions);
     }
     transitions_by_subsets
-}
-
-fn lambda_closure_subset(automata: &FiniteAutomata, subset: &BTreeSet<StateID>, input_string: &str) -> BTreeSet<StateID> {
-    let mut subset_result: BTreeSet<StateID> = BTreeSet::new();
-    for id in subset {
-        subset_result = subset_result.union(&automata.lambda_closure(*id, input_string)).cloned().collect();
-    }
-    subset_result
 }
 
 fn is_epsilon_label(label: &str) -> bool {

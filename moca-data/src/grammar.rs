@@ -142,12 +142,21 @@ impl Grammar {
                 })
                 .sum()
         };
+        let sorted_productions: HashMap<&String, Vec<&Vec<String>>> = self
+            .productions
+            .iter()
+            .map(|(variable, bodies)| {
+                let mut sorted: Vec<&Vec<String>> = bodies.iter().collect();
+                sorted.sort();
+                (variable, sorted)
+            })
+            .collect();
         let mut steps_left = max_steps;
 
         while let Some(Reverse((_, index))) = heap.pop() {
             let form = nodes[index].form.clone();
             if is_terminal_form(self, &form) {
-                if concatenate(&form) == input {
+                if form.concat() == input {
                     let mut chain_rev = Vec::new();
                     let mut cursor = Some(index);
                     while let Some(node_index) = cursor {
@@ -163,13 +172,7 @@ impl Grammar {
                 Some(found) => found,
                 None => continue,
             };
-            let variable = form[position].clone();
-            let mut bodies: Vec<Vec<String>> = self
-                .productions_of(&variable)
-                .cloned()
-                .unwrap_or_default();
-            bodies.sort();
-            for body in bodies {
+            for body in sorted_productions.get(&form[position]).map(Vec::as_slice).unwrap_or_default() {
                 if steps_left == 0 {
                     break;
                 }
@@ -181,12 +184,12 @@ impl Grammar {
                 let terminal_matches_target = if leftmost {
                     let cut = extreme_variable_position(self, &next, true)
                         .unwrap_or(next.len());
-                    input.starts_with(&concatenate(&next[..cut]))
+                    input.starts_with(&next[..cut].concat())
                 } else {
                     let cut = extreme_variable_position(self, &next, false)
                         .map(|p| p + 1)
                         .unwrap_or(0);
-                    input.ends_with(&concatenate(&next[cut..]))
+                    input.ends_with(&next[cut..].concat())
                 };
                 if !terminal_matches_target || minimum_length(&next) > input_length {
                     continue;
@@ -217,19 +220,7 @@ impl Grammar {
             .or_default()
             .push(vec![self.start_symbol.clone()]);
 
-        let nullable = nullable_from_table(&productions);
-        let mut stripped: ProductionTable = BTreeMap::new();
-        for (variable, bodies) in &productions {
-            let entry = stripped.entry(variable.clone()).or_default();
-            for body in bodies {
-                for variant in nullable_dropping_variants(body, &nullable) {
-                    if !variant.is_empty() {
-                        entry.push(variant);
-                    }
-                }
-            }
-        }
-        let productions = dedup_bodies(stripped);
+        let productions = without_nullable_bodies(&productions, &nullable_from_table(&productions));
 
         let productions = eliminate_unit_productions(productions);
 
@@ -350,26 +341,13 @@ fn is_terminal_form(grammar: &Grammar, form: &[String]) -> bool {
     form.iter().all(|symbol| !grammar.nonterminals.contains(symbol))
 }
 
-fn concatenate(symbols: &[String]) -> String {
-    symbols.concat()
-}
-
-fn extreme_variable_position(
-    grammar: &Grammar,
-    form: &[String],
-    leftmost: bool,
-) -> Option<usize> {
-    let indices: Box<dyn Iterator<Item = usize>> = if leftmost {
-        Box::new(0..form.len())
+fn extreme_variable_position(grammar: &Grammar, form: &[String], leftmost: bool) -> Option<usize> {
+    let is_variable = |symbol: &String| grammar.nonterminals.contains(symbol);
+    if leftmost {
+        form.iter().position(is_variable)
     } else {
-        Box::new((0..form.len()).rev())
-    };
-    for index in indices {
-        if grammar.nonterminals.contains(&form[index]) {
-            return Some(index);
-        }
+        form.iter().rposition(is_variable)
     }
-    None
 }
 
 fn all_symbol_names(productions: &ProductionTable, declared: &BTreeSet<String>) -> BTreeSet<String> {
@@ -401,31 +379,38 @@ fn dedup_bodies(mut table: ProductionTable) -> ProductionTable {
     table
 }
 
-fn nullable_dropping_variants(body: &[String], nullable: &NullableSet) -> Vec<Vec<String>> {
-    let droppable: Vec<usize> = body
+fn without_nullable_bodies(productions: &ProductionTable, nullable: &NullableSet) -> ProductionTable {
+    let stripped = productions
         .iter()
-        .enumerate()
-        .filter(|(_, symbol)| nullable.contains(*symbol))
-        .map(|(index, _)| index)
+        .map(|(variable, bodies)| {
+            let variants = bodies
+                .iter()
+                .flat_map(|body| nullable_dropping_variants(body, nullable))
+                .filter(|variant| !variant.is_empty())
+                .collect();
+            (variable.clone(), variants)
+        })
         .collect();
-    let variants_cap = 1u64 << droppable.len().min(20);
-    let mut out = Vec::new();
-    for mask in 0..variants_cap {
-        let dropped: HashSet<usize> = droppable
-            .iter()
-            .enumerate()
-            .filter(|(bit, _)| mask & (1u64 << bit) != 0)
-            .map(|(_, &position)| position)
-            .collect();
-        let variant: Vec<String> = body
-            .iter()
-            .enumerate()
-            .filter(|(index, _)| !dropped.contains(index))
-            .map(|(_, symbol)| symbol.clone())
-            .collect();
-        out.push(variant);
-    }
-    out
+    dedup_bodies(stripped)
+}
+
+fn nullable_dropping_variants(body: &[String], nullable: &NullableSet) -> Vec<Vec<String>> {
+    let droppable = body.iter().filter(|symbol| nullable.contains(*symbol)).count();
+    (0..1u64 << droppable.min(20))
+        .map(|mask| {
+            let mut bit = 0;
+            body.iter()
+                .filter(|symbol| {
+                    if !nullable.contains(*symbol) {
+                        return true;
+                    }
+                    bit += 1;
+                    bit > 20 || mask & (1 << (bit - 1)) == 0
+                })
+                .cloned()
+                .collect()
+        })
+        .collect()
 }
 
 fn eliminate_unit_productions(productions: ProductionTable) -> ProductionTable {
@@ -638,20 +623,9 @@ use crate::state_machine::StateMachine;
 
 impl Grammar {
     pub fn to_finite_automata(&self) -> Result<FiniteAutomata, String> {
-        let mut productions: ProductionTable = self.production_table();
-        let nullable = nullable_from_table(&productions);
-        let mut stripped: ProductionTable = BTreeMap::new();
-        for (variable, bodies) in &productions {
-            let entry = stripped.entry(variable.clone()).or_default();
-            for body in bodies {
-                for variant in nullable_dropping_variants(body, &nullable) {
-                    if !variant.is_empty() {
-                        entry.push(variant);
-                    }
-                }
-            }
-        }
-        productions = eliminate_unit_productions(dedup_bodies(stripped));
+        let table = self.production_table();
+        let nullable = nullable_from_table(&table);
+        let productions = eliminate_unit_productions(without_nullable_bodies(&table, &nullable));
 
         for (variable, bodies) in &productions {
             for body in bodies {
@@ -828,7 +802,6 @@ impl Grammar {
             }
         }
 
-        let terminals = self.terminals();
         let symbols: HashSet<&String> = self
             .nonterminals
             .iter()
@@ -907,42 +880,40 @@ fn cyk_accepts(cnf: &Grammar, tokens: &[String]) -> bool {
             .map(|bodies| bodies.iter().any(Vec::is_empty))
             .unwrap_or(false);
     }
-    let mut table: Vec<Vec<BTreeSet<String>>> = vec![vec![BTreeSet::new(); n + 1]; n];
-    for i in 0..n {
-        for (variable, bodies) in &cnf.productions {
-            if bodies.iter().any(|body| body.len() == 1 && body[0] == tokens[i]) {
-                table[i][1].insert(variable.clone());
-            }
-        }
+    let rules = || {
+        cnf.productions
+            .iter()
+            .flat_map(|(variable, bodies)| bodies.iter().map(move |body| (variable.as_str(), body.as_slice())))
+    };
+    let binary: Vec<(&str, &str, &str)> = rules()
+        .filter_map(|(variable, body)| match body {
+            [left, right] => Some((variable, left.as_str(), right.as_str())),
+            _ => None,
+        })
+        .collect();
+    let mut table: Vec<Vec<BTreeSet<&str>>> = vec![vec![BTreeSet::new(); n + 1]; n];
+    for (i, token) in tokens.iter().enumerate() {
+        table[i][1] = rules()
+            .filter(|(_, body)| matches!(body, [symbol] if symbol == token))
+            .map(|(variable, _)| variable)
+            .collect();
     }
     for len in 2..=n {
         for i in 0..=(n - len) {
+            let mut cell: BTreeSet<&str> = BTreeSet::new();
             for split in 1..len {
-                if table[i][split].is_empty() || table[i + split][len - split].is_empty() {
+                let (left, right) = (&table[i][split], &table[i + split][len - split]);
+                if left.is_empty() || right.is_empty() {
                     continue;
                 }
-                let mut to_add: Vec<String> = Vec::new();
-                {
-                    let left_set = &table[i][split];
-                    let right_set = &table[i + split][len - split];
-                    for (variable, bodies) in &cnf.productions {
-                        if table[i][len].contains(variable) || to_add.contains(variable) {
-                            continue;
-                        }
-                        let derives = bodies.iter().any(|body| {
-                            body.len() == 2
-                                && left_set.contains(&body[0])
-                                && right_set.contains(&body[1])
-                        });
-                        if derives {
-                            to_add.push(variable.clone());
-                        }
-                    }
-                }
-                for variable in to_add {
-                    table[i][len].insert(variable);
-                }
+                cell.extend(
+                    binary
+                        .iter()
+                        .filter(|(_, b, c)| left.contains(b) && right.contains(c))
+                        .map(|(a, _, _)| *a),
+                );
             }
+            table[i][len] = cell;
         }
     }
     table[0][n].contains(cnf.start_symbol())

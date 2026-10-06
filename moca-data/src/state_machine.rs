@@ -22,6 +22,8 @@ pub trait StateMachine {
 
     fn get_states_by_id_ref(&self) -> &HashMap<StateID, State>;
 
+    fn markers_mut(&mut self) -> (&mut HashMap<StateID, State>, &mut Option<StateID>, &mut HashSet<StateID>);
+
     fn is_deterministic(&self) -> bool;
 
     fn get_final_states(&self) -> &HashSet<StateID>;
@@ -39,9 +41,7 @@ pub trait StateMachine {
     }
 
     fn add_state_with_id_label(&mut self, id: u64, label: &str) {
-        let states_by_id = self.get_states_by_id_mut_ref();
-        let state_name = label;
-        states_by_id.insert(id, State::new(state_name.to_string()));
+        self.get_states_by_id_mut_ref().insert(id, State::new(label.to_string()));
     }
 
     fn add_n_states(&mut self, n: u64) {
@@ -53,16 +53,14 @@ pub trait StateMachine {
     fn add_transition(&mut self, state_id1: StateID, state_id2: StateID, input: Input);
 
     fn modify_name(&mut self, state_id: StateID, new_name: String) {
-        let states_by_id = self.get_states_by_id_mut_ref();
-        if let Some(state) = states_by_id.get_mut(&state_id) {
+        if let Some(state) = self.get_states_by_id_mut_ref().get_mut(&state_id) {
             state.name = new_name;
         }
     }
 
     fn modify_input(&mut self, state_id: StateID, state_transition_id: StateID,
                         old_input: &str, new_input: Input) {
-        let states_by_id = self.get_states_by_id_mut_ref();
-        if let Some(state) = states_by_id.get_mut(&state_id) {
+        if let Some(state) = self.get_states_by_id_mut_ref().get_mut(&state_id) {
             state.modify_input(state_transition_id, old_input, new_input);
         }
     }
@@ -70,29 +68,49 @@ pub trait StateMachine {
     fn forget_state(&mut self, _state_id: StateID) {}
 
     fn remove_state(&mut self, state_id: StateID) {
-        let states_by_id = self.get_states_by_id_mut_ref();
-        if let Some(_) = states_by_id.get_mut(&state_id) {
-            states_by_id.remove(&state_id);
-            for (_, states) in states_by_id.iter_mut() {
-                states.remove_state(state_id);
-            }
-            self.forget_state(state_id);
+        let (states_by_id, initial, finals) = self.markers_mut();
+        if states_by_id.remove(&state_id).is_none() {
+            return;
         }
+        for state in states_by_id.values_mut() {
+            state.remove_state(state_id);
+        }
+        finals.remove(&state_id);
+        if *initial == Some(state_id) {
+            *initial = None;
+        }
+        self.forget_state(state_id);
     }
 
     fn remove_transition(&mut self, state_id: StateID, state_transition_id: StateID, input: &str) {
-        let states_by_id = self.get_states_by_id_mut_ref();
-        if let Some(state) = states_by_id.get_mut(&state_id) {
+        if let Some(state) = self.get_states_by_id_mut_ref().get_mut(&state_id) {
             state.remove_transition(state_transition_id, input);
         }
     }
 
-    fn make_initial(&mut self, state_id: StateID);
+    fn make_initial(&mut self, state_id: StateID) {
+        let (states_by_id, initial, _) = self.markers_mut();
+        if !states_by_id.contains_key(&state_id) {
+            return;
+        }
+        if let Some(old) = initial.and_then(|old_id| states_by_id.get_mut(&old_id)) {
+            old.initial_flag = false;
+        }
+        if let Some(state) = states_by_id.get_mut(&state_id) {
+            state.initial_flag = true;
+        }
+        *initial = Some(state_id);
+    }
 
-    fn make_final(&mut self, state_id: StateID);
+    fn make_final(&mut self, state_id: StateID) {
+        let (states_by_id, _, finals) = self.markers_mut();
+        if let Some(state) = states_by_id.get_mut(&state_id) {
+            state.final_flag = true;
+            finals.insert(state_id);
+        }
+    }
 
     fn iter_by_state(&mut self) -> Iter<'_, StateID, State> {
-        let states_by_id = self.get_states_by_id_mut_ref();
-        states_by_id.iter()
+        self.get_states_by_id_mut_ref().iter()
     }
 }
