@@ -1,5 +1,3 @@
-/* `.ce` file loading: native file picker, entity -> tab construction and
- * the paste-ready vision-LLM prompt that generates `.ce` files. */
 
 use iced::Task;
 use std::collections::HashMap;
@@ -15,9 +13,6 @@ use super::message::Message;
 use super::tab::{Tab, TabMachine};
 use crate::gui::theme::Tone;
 
-/* Paste-ready prompt for vision-capable LLMs: attach a state-diagram
- * image and the model answers with a loadable `.ce` file. Mirrors
- * docs/vision-llm-prompt.md. */
 pub(crate) const LLM_PROMPT: &str = r#"You are given an image of one or more computational models (a state diagram of an automaton, a Turing machine, a pushdown automaton, a regular expression, or a context-free grammar).
 
 Transcribe what you see into a `.ce` file with the exact syntax below, then output ONLY the file contents (no explanations, no code fences).
@@ -70,9 +65,6 @@ TASK
 Look at the attached image carefully (states, arrows, labels, initial arrow, double circles for accepting states, stack/tape annotations) and produce the matching `.ce` file. Use short state names exactly as drawn or numbered q0, q1, ... if unlabeled. Output only the .ce file contents."#;
 
 impl super::app::App {
-    /* Opens the in-app load dialog. The dialog offers both the native
-     * file picker (unavailable on systems without a FileChooser portal)
-     * and a plain path field that always works. */
     pub(crate) fn open_load_dialog(&mut self) -> Task<Message> {
         self.load_dialog_open = true;
         self.load_path_text.clear();
@@ -85,9 +77,6 @@ impl super::app::App {
         Task::none()
     }
 
-    /* Native picker: resolves to the file name + contents, or an error
-     * message when no portal/GTK chooser is available (rfd reports both
-     * user-cancel and backend failure as "no file"). */
     pub(crate) fn load_browse_clicked(&mut self) -> Task<Message> {
         let dialog = rfd::AsyncFileDialog::new()
             .add_filter("Computational entities", &["ce", "cm"])
@@ -135,7 +124,6 @@ impl super::app::App {
         }
     }
 
-    /* Loads directly from the typed path; read failures surface inline. */
     pub(crate) fn load_path_submitted(&mut self) -> Task<Message> {
         let path = self.load_path_text.trim().to_string();
         if path.is_empty() {
@@ -166,14 +154,6 @@ impl super::app::App {
         Task::none()
     }
 
-    /* ---------- .ce saving ---------- */
-
-    /* Opens the save dialog for the active tab. The entity is serialized
-     * right away so the gate runs before the dialog ever shows: empty
-     * entities, invalid machines and unparseable grammar text surface
-     * through the error popup instead. Canvas families sync the drawing
-     * into the machine first (it is the source of truth); grammar tabs
-     * parse straight from the editor text. */
     pub(crate) fn open_save_dialog(&mut self) -> Task<Message> {
         self.open_menu = None;
 
@@ -235,8 +215,6 @@ impl super::app::App {
         Task::none()
     }
 
-    /* Stashes the serialized entity and opens the save dialog, suggesting
-     * the tab name as file name. */
     fn stash_pending_save(&mut self, contents: String) {
         self.pending_save = Some(contents);
         let fingerprint = self.get_active_tab().content_fingerprint();
@@ -251,9 +229,6 @@ impl super::app::App {
         Task::none()
     }
 
-    /* Native picker: rfd's save dialog writes the stashed bytes directly;
-     * the handle resolves to Ok(()) or an error message (user-cancel and
-     * backend failure both report "no file"). */
     pub(crate) fn save_browse_clicked(&mut self) -> Task<Message> {
         let Some(contents) = self.pending_save.clone() else {
             self.save_dialog_error =
@@ -302,8 +277,6 @@ impl super::app::App {
         }
     }
 
-    /* Writes to the typed path; a missing extension gets ".ce" appended.
-     * Write failures surface inline like the load dialog's read errors. */
     pub(crate) fn save_path_submitted(&mut self) -> Task<Message> {
         let Some(contents) = self.pending_save.clone() else {
             self.save_dialog_error =
@@ -344,7 +317,6 @@ impl super::app::App {
         self.pending_save_fingerprint = None;
     }
 
-    /* The file now holds what the tab contained when the dialog opened. */
     fn mark_pending_save_done(&mut self) {
         if let Some((index, fingerprint)) = self.pending_save_fingerprint {
             if let Some(tab) = self.tabs.get_mut(index) {
@@ -354,9 +326,6 @@ impl super::app::App {
         }
     }
 
-    /* Parses the loaded file and opens one tab per healthy entity; the
-     * broken ones (if any) are summarized in the error popup. Called by
-     * both the Browse button and the typed-path flow. */
     pub(crate) fn entities_loaded(
         &mut self,
         file_name: String,
@@ -380,7 +349,6 @@ impl super::app::App {
             return Task::none();
         }
 
-        // Deduplicate fallback names: the second bare "TM" becomes "TM 2".
         let entity_count = entities.len();
         let mut used: HashMap<String, usize> = HashMap::new();
         let mut tasks = Vec::new();
@@ -425,7 +393,6 @@ impl super::app::App {
         Task::batch(tasks)
     }
 
-    /* Grammar entities have no canvas; they open as editing-panel tabs. */
     pub(crate) fn open_grammar_in_new_tab(&mut self, name: String, grammar: Grammar) {
         let mut tab = Tab::new_grammar();
         tab.name = name;
@@ -441,7 +408,6 @@ impl super::app::App {
         self.active_tab = self.tabs.len() - 1;
     }
 
-    /* Puts the vision-LLM prompt on the clipboard. */
     pub(crate) fn copy_llm_prompt(&mut self) -> Task<Message> {
         self.open_menu = None;
         self.toast(
@@ -453,7 +419,6 @@ impl super::app::App {
     }
 }
 
-/* Formats collected entity errors as a bullet list for the popup. */
 fn summarize_errors(errors: &[moca_data::entity_file::EntityError]) -> String {
     let mut summary = String::new();
     for error in errors.iter().take(5) {
@@ -471,8 +436,6 @@ fn summarize_errors(errors: &[moca_data::entity_file::EntityError]) -> String {
     }
     summary
 }
-/* Turns a tab name into a usable file name base: path separators and line
- * breaks become dashes, blanks collapse to "entity". */
 fn sanitize_file_name(name: &str) -> String {
     let cleaned: String = name
         .chars()

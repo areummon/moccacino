@@ -1,11 +1,3 @@
-/* Design tokens and reusable widget styles for the whole GUI. The look is
- * soft and warm: pastel accents (peach, sage, lavender, butter) over cream
- * paper in the light theme and warm cocoa in the dark one. Every color
- * lives in a `Palette`; style functions receive iced's `&Theme` and pick
- * the matching palette through `palette(theme)`, so switching the app
- * theme restyles everything without threading colors through the views.
- * Canvases (the state-machine editor, icons) resolve colors the same way
- * inside `draw`. */
 
 use iced::font::Weight;
 use iced::widget::{button, container, rule, scrollable, text, text_editor, text_input};
@@ -24,17 +16,10 @@ const fn hexa(rgb: u32, a: f32) -> Color {
     Color { a, ..c }
 }
 
-/* ---- Fonts ---- */
-
-/* Rounded, friendly UI face; bundled in assets/fonts and registered in
- * main.rs. Symbols it lacks (ε, arrows) fall back per glyph. */
 pub(crate) const UI: Font = Font::with_name("Nunito");
 pub(crate) const SEMIBOLD: Font = Font { weight: Weight::Semibold, ..UI };
 pub(crate) const BOLD: Font = Font { weight: Weight::Bold, ..UI };
-/* Monospace for tapes, stacks, labels and generated code. */
 pub(crate) const MONO: Font = Font::with_name("JetBrains Mono");
-
-/* ---- Shape ---- */
 
 pub(crate) const RADIUS_SM: f32 = 8.0;
 pub(crate) const RADIUS_MD: f32 = 10.0;
@@ -42,19 +27,12 @@ pub(crate) const RADIUS_LG: f32 = 14.0;
 pub(crate) const RADIUS_XL: f32 = 18.0;
 pub(crate) const RADIUS_PILL: f32 = 999.0;
 
-/* ---- Palettes ---- */
-
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Palette {
-    /* Window background behind every surface. */
     pub(crate) bg: Color,
-    /* Cards, header, dock, dialogs. */
     pub(crate) surface: Color,
-    /* Resting fill of neutral buttons. */
     pub(crate) raised: Color,
-    /* Hover fill of neutral/ghost controls. */
     pub(crate) hover: Color,
-    /* Inputs and code boxes. */
     pub(crate) sunken: Color,
     pub(crate) border: Color,
     pub(crate) border_soft: Color,
@@ -64,9 +42,7 @@ pub(crate) struct Palette {
     pub(crate) accent: Color,
     pub(crate) accent_hover: Color,
     pub(crate) accent_soft: Color,
-    /* Text drawn on an `accent` fill. */
     pub(crate) accent_text: Color,
-    /* Text/strokes that sit on `accent_soft`. */
     pub(crate) accent_strong: Color,
     pub(crate) success: Color,
     pub(crate) success_soft: Color,
@@ -77,21 +53,18 @@ pub(crate) struct Palette {
     pub(crate) shadow: Color,
     pub(crate) scrim: Color,
     pub(crate) selection: Color,
-    /* State-machine canvas. */
     pub(crate) canvas_bg: Color,
     pub(crate) canvas_grid: Color,
     pub(crate) node_fill: Color,
     pub(crate) node_stroke: Color,
     pub(crate) edge: Color,
     pub(crate) label_bg: Color,
-    /* One pastel per machine family (tab dots, node tint, picker cards). */
     pub(crate) family_finite: Color,
     pub(crate) family_pda: Color,
     pub(crate) family_tm: Color,
     pub(crate) family_grammar: Color,
 }
 
-/* Cream paper: linen background, warm cocoa text, peach accent. */
 pub(crate) const LIGHT: Palette = Palette {
     bg: hex(0xF6EFE4),
     surface: hex(0xFFFBF5),
@@ -129,8 +102,6 @@ pub(crate) const LIGHT: Palette = Palette {
     family_grammar: hex(0xF3DE8A),
 };
 
-/* Warm cocoa: brown-charcoal surfaces, oat text, the same pastels a touch
- * quieter so they glow instead of shout. */
 pub(crate) const DARK: Palette = Palette {
     bg: hex(0x1F1A17),
     surface: hex(0x2A2420),
@@ -190,9 +161,6 @@ impl ThemeMode {
         }
     }
 
-    /* The iced theme handed to the runtime: its base palette drives the
-     * default text color and built-in widget fallbacks, and its darkness
-     * is how `palette(theme)` finds its way back to our tokens. */
     pub(crate) fn iced_theme(self) -> Theme {
         let p = self.palette();
         let name = match self {
@@ -212,7 +180,6 @@ impl ThemeMode {
     }
 }
 
-/* The palette behind an iced theme produced by `ThemeMode::iced_theme`. */
 pub(crate) fn palette(theme: &Theme) -> &'static Palette {
     if theme.extended_palette().is_dark {
         &DARK
@@ -220,8 +187,6 @@ pub(crate) fn palette(theme: &Theme) -> &'static Palette {
         &LIGHT
     }
 }
-
-/* ---- Machine families ---- */
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Family {
@@ -263,8 +228,6 @@ impl Family {
     }
 }
 
-/* ---- Helpers ---- */
-
 pub(crate) fn mix(a: Color, b: Color, t: f32) -> Color {
     Color {
         r: a.r + (b.r - a.r) * t,
@@ -294,8 +257,6 @@ fn border(color: Color, width: f32, radius: f32) -> Border {
     }
 }
 
-/* ---- Text ---- */
-
 pub(crate) fn text_dim(theme: &Theme) -> text::Style {
     text::Style { color: Some(palette(theme).text_dim) }
 }
@@ -308,9 +269,6 @@ pub(crate) fn text_danger(theme: &Theme) -> text::Style {
     text::Style { color: Some(palette(theme).danger) }
 }
 
-/* ---- Buttons ---- */
-
-/* Filled peach call to action (dialog confirm, Load, active Play). */
 pub(crate) fn button_primary(theme: &Theme, status: button::Status) -> button::Style {
     let p = palette(theme);
     let background = match status {
@@ -330,7 +288,6 @@ pub(crate) fn button_primary(theme: &Theme, status: button::Status) -> button::S
     }
 }
 
-/* Neutral bordered button. */
 pub(crate) fn button_secondary(theme: &Theme, status: button::Status) -> button::Style {
     let p = palette(theme);
     let (background, text_color) = match status {
@@ -346,7 +303,6 @@ pub(crate) fn button_secondary(theme: &Theme, status: button::Status) -> button:
     }
 }
 
-/* Borderless button that only shows a fill on hover. */
 pub(crate) fn button_ghost(theme: &Theme, status: button::Status) -> button::Style {
     let p = palette(theme);
     let (background, text_color) = match status {
@@ -362,7 +318,6 @@ pub(crate) fn button_ghost(theme: &Theme, status: button::Status) -> button::Sty
     }
 }
 
-/* Filled destructive button (confirming a discard). */
 pub(crate) fn button_danger(theme: &Theme, status: button::Status) -> button::Style {
     let p = palette(theme);
     let background = match status {
@@ -377,7 +332,6 @@ pub(crate) fn button_danger(theme: &Theme, status: button::Status) -> button::St
     }
 }
 
-/* Ghost variant for destructive actions (Clear canvas, remove label). */
 pub(crate) fn button_danger_ghost(theme: &Theme, status: button::Status) -> button::Style {
     let p = palette(theme);
     let background = match status {
@@ -392,8 +346,6 @@ pub(crate) fn button_danger_ghost(theme: &Theme, status: button::Status) -> butt
     }
 }
 
-/* Header menu triggers: ghost buttons that stay tinted while their
- * dropdown is open. */
 pub(crate) fn menu_trigger(open: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
     move |theme, status| {
         let p = palette(theme);
@@ -411,7 +363,6 @@ pub(crate) fn menu_trigger(open: bool) -> impl Fn(&Theme, button::Status) -> but
     }
 }
 
-/* Rows inside dropdown menus. */
 pub(crate) fn menu_item(theme: &Theme, status: button::Status) -> button::Style {
     let p = palette(theme);
     let (background, text_color) = match status {
@@ -427,7 +378,6 @@ pub(crate) fn menu_item(theme: &Theme, status: button::Status) -> button::Style 
     }
 }
 
-/* Header tabs: the active one is a raised card, the rest are quiet. */
 pub(crate) fn tab_pill(active: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
     move |theme, status| {
         let p = palette(theme);
@@ -448,7 +398,6 @@ pub(crate) fn tab_pill(active: bool) -> impl Fn(&Theme, button::Status) -> butto
     }
 }
 
-/* Tool palette entries and other on/off pills. */
 pub(crate) fn toggle_pill(active: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
     move |theme, status| {
         let p = palette(theme);
@@ -467,7 +416,6 @@ pub(crate) fn toggle_pill(active: bool) -> impl Fn(&Theme, button::Status) -> bu
     }
 }
 
-/* Startup picker cards; `selected` mirrors the keyboard highlight. */
 pub(crate) fn option_card(selected: bool, tint: Color) -> impl Fn(&Theme, button::Status) -> button::Style {
     move |theme, status| {
         let p = palette(theme);
@@ -492,7 +440,6 @@ pub(crate) fn option_card(selected: bool, tint: Color) -> impl Fn(&Theme, button
     }
 }
 
-/* Tiny round close button inside tab pills. */
 pub(crate) fn tab_close(theme: &Theme, status: button::Status) -> button::Style {
     let p = palette(theme);
     let (background, text_color) = match status {
@@ -506,8 +453,6 @@ pub(crate) fn tab_close(theme: &Theme, status: button::Status) -> button::Style 
         shadow: Shadow::default(),
     }
 }
-
-/* ---- Containers ---- */
 
 pub(crate) fn app_background(theme: &Theme) -> container::Style {
     let p = palette(theme);
@@ -526,7 +471,6 @@ pub(crate) fn header(theme: &Theme) -> container::Style {
     }
 }
 
-/* Rounded surface card with a gentle lift (dock, grammar cards). */
 pub(crate) fn card(theme: &Theme) -> container::Style {
     let p = palette(theme);
     container::Style {
@@ -537,7 +481,6 @@ pub(crate) fn card(theme: &Theme) -> container::Style {
     }
 }
 
-/* Floating overlays on the canvas (tool palette, zoom chip). */
 pub(crate) fn floating(theme: &Theme) -> container::Style {
     let p = palette(theme);
     container::Style {
@@ -578,7 +521,6 @@ pub(crate) fn tooltip(theme: &Theme) -> container::Style {
     }
 }
 
-/* Recessed box for code, derivations, tapes and lanes. */
 pub(crate) fn sunken(theme: &Theme) -> container::Style {
     let p = palette(theme);
     container::Style {
@@ -604,7 +546,6 @@ pub(crate) fn status_bar(theme: &Theme) -> container::Style {
     }
 }
 
-/* Pastel chip; `tone` picks the fill/text pair. */
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Tone {
     Neutral,
@@ -633,7 +574,6 @@ pub(crate) fn chip(tone: Tone) -> impl Fn(&Theme) -> container::Style {
     }
 }
 
-/* Small colored dot marking a machine family. */
 pub(crate) fn family_dot(family: Family) -> impl Fn(&Theme) -> container::Style {
     move |theme| {
         let p = palette(theme);
@@ -645,7 +585,6 @@ pub(crate) fn family_dot(family: Family) -> impl Fn(&Theme) -> container::Style 
     }
 }
 
-/* Accent dot marking a tab with unsaved changes. */
 pub(crate) fn unsaved_dot(theme: &Theme) -> container::Style {
     container::Style {
         background: Some(palette(theme).accent_strong.into()),
@@ -654,7 +593,6 @@ pub(crate) fn unsaved_dot(theme: &Theme) -> container::Style {
     }
 }
 
-/* Round badge behind a family glyph (startup picker cards). */
 pub(crate) fn family_badge(family: Family) -> impl Fn(&Theme) -> container::Style {
     move |theme| {
         let p = palette(theme);
@@ -685,8 +623,6 @@ pub(crate) fn toast(tone: Tone) -> impl Fn(&Theme) -> container::Style {
     }
 }
 
-/* Cells of tapes, input ribbons and stacks. `focus` marks the head / next
- * symbol / stack top, `spent` dims consumed input. */
 pub(crate) fn cell(focus: bool, spent: bool) -> impl Fn(&Theme) -> container::Style {
     move |theme| {
         let p = palette(theme);
@@ -705,8 +641,6 @@ pub(crate) fn cell(focus: bool, spent: bool) -> impl Fn(&Theme) -> container::St
         }
     }
 }
-
-/* ---- Inputs ---- */
 
 pub(crate) fn input(theme: &Theme, status: text_input::Status) -> text_input::Style {
     let p = palette(theme);
@@ -742,7 +676,6 @@ pub(crate) fn editor(theme: &Theme, status: text_editor::Status) -> text_editor:
     }
 }
 
-/* Slim, rounded scrollbars that stay out of the way. */
 pub(crate) fn scroll(theme: &Theme, status: scrollable::Status) -> scrollable::Style {
     let p = palette(theme);
     let active = !matches!(status, scrollable::Status::Active);
@@ -771,8 +704,6 @@ pub(crate) fn divider(theme: &Theme) -> rule::Style {
     }
 }
 
-/* Scrollbars that only appear while the pointer is over the area (tab
- * strip), so they never read as an underline. */
 pub(crate) fn scroll_subtle(theme: &Theme, status: scrollable::Status) -> scrollable::Style {
     let mut style = scroll(theme, status);
     if matches!(status, scrollable::Status::Active) {

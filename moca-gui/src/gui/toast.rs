@@ -1,8 +1,3 @@
-/* Non-blocking notifications: short-lived toasts stacked in the bottom
- * right corner for results and confirmations (check-input verdicts,
- * clipboard copies, saves and loads). Real errors keep the modal popup.
- * Expiry rides the same pattern as auto-play: the subscription only ticks
- * while at least one toast is alive. */
 
 use std::time::{Duration, Instant};
 
@@ -55,8 +50,6 @@ impl super::app::App {
         Task::none()
     }
 
-    /* Bottom-right column of toasts; the layer is transparent so the app
-     * underneath stays interactive. */
     pub(crate) fn create_toast_layer(&self) -> Element<'_, Message> {
         let mut stack = column![].spacing(8).align_x(Alignment::End);
         for toast in &self.toasts {

@@ -81,15 +81,11 @@ impl super::app::App {
 
     pub(crate) fn submit_check_input(&mut self) -> Task<Message> {
         let input = self.get_active_tab().check_input_text.clone();
-        // Allow blank inputs to be processed (don't convert to epsilon)
         self.get_active_tab_mut().sync_gui_to_machine();
-        // Surface structural/label problems before running the machine.
         if let Err(problem) = self.get_active_tab().machine.validate() {
             self.error_message = Some(problem);
             return Task::none();
         }
-        // Works for every machine family (Turing machines use their default
-        // step budget and dispatch on the determinism flag).
         let result = self.get_active_tab().machine.accepts(&input);
         self.get_active_tab_mut().check_input_dialog_open = false;
         let shown = if input.is_empty() { "ε (empty word)".to_string() } else { format!("'{}'", input) };
@@ -123,8 +119,6 @@ impl super::app::App {
         Task::none()
     }
 
-    /* Compiles the typed regular expression and opens it as a new tab. The
-     * dialog stays open when the pattern is invalid so the user can fix it. */
     pub(crate) fn submit_regex(&mut self) -> Task<Message> {
         let pattern = self.get_active_tab().regex_text.trim().to_string();
 
@@ -150,9 +144,6 @@ impl super::app::App {
 
     pub(crate) fn open_latex_export(&mut self) -> Task<Message> {
         self.open_menu = None;
-        // Grammar tabs export their productions as a LaTeX listing
-        // instead of a TikZ drawing; the editor text is parsed fresh so
-        // unsaved edits are reflected, mirroring the other grammar ops.
         if matches!(self.get_active_tab().machine, TabMachine::Grammar(_)) {
             let source = self.get_active_tab().grammar_text.clone();
             return match moca_data::grammar::parse_grammar(&source) {
@@ -178,15 +169,14 @@ impl super::app::App {
             return Task::none();
         }
 
-        // Convert transitions HashMap to Vec<Transition> for export
         let mut export_transitions = Vec::new();
         for (&(from, to), labels) in &self.get_active_tab().transitions {
             for label in labels {
                 export_transitions.push(state_machine::Transition {
                     from_state_id: from,
                     to_state_id: to,
-                    from_point: iced::Point::ORIGIN, // dummy
-                    to_point: iced::Point::ORIGIN,   // dummy
+                    from_point: iced::Point::ORIGIN,
+                    to_point: iced::Point::ORIGIN,
                     label: label.clone(),
                 });
             }
@@ -208,8 +198,6 @@ impl super::app::App {
         Task::none()
     }
 
-    /* Converts the tab's finite automaton into an equivalent regular
-     * expression (state elimination) and shows it in an export dialog. */
     pub(crate) fn open_regex_export(&mut self) -> Task<Message> {
         self.open_menu = None;
 

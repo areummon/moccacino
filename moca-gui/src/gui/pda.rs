@@ -1,6 +1,3 @@
-/* Pushdown automaton run panel: stepping over configurations with a stack
- * lane instead of a tape strip. Mirrors the Turing panel's structure;
- * nondeterministic machines explore the frontier level by level. */
 use std::collections::HashSet;
 
 use iced::Task;
@@ -16,7 +13,6 @@ use super::widgets::{self, CellSize, Outcome};
 use crate::gui::theme::{self, Family};
 
 const STACK_VISIBLE_ENTRIES: usize = 14;
-/* Lane window rendered per branch in the nondeterministic view. */
 const ND_LANES_VISIBLE: usize = 12;
 
 impl super::app::App {
@@ -35,8 +31,6 @@ impl super::app::App {
             return Task::none();
         }
         self.get_active_tab_mut().sync_gui_to_machine();
-        // Malformed labels or a missing initial state abort the run early
-        // with a precise message instead of halting silently mid-run.
         if let Err(problem) = self.get_active_tab().machine.validate() {
             self.error_message = Some(problem);
             return Task::none();
@@ -99,10 +93,6 @@ impl super::app::App {
         Task::none()
     }
 
-    /* One level of the nondeterministic frontier: every live branch takes a
-     * parallel step, successors dedup against the visited set, and the
-     * verdict mirrors the PDA traversal exactly (arrival acceptance before
-     * expanding, empty next frontier = rejected). */
     pub(crate) fn advance_pda_frontier_by_one_level(&mut self) {
         if !self.active_tab_is_pda() {
             return;
@@ -120,8 +110,6 @@ impl super::app::App {
         if frontier.finished.is_some() {
             return;
         }
-        // Arrival semantics, mirroring `traverse`: an accepting configuration
-        // accepts before any transition is applied.
         if frontier.alive.iter().any(|config| pda.is_accepting(config)) {
             frontier.finished = Some(true);
             return;
@@ -159,8 +147,6 @@ impl super::app::App {
         if run.finished.is_some() {
             return;
         }
-        // Arrival semantics, mirroring `traverse`: an accepting state with
-        // the input fully consumed accepts before any transition is applied.
         if pda.is_accepting(&run.config) {
             run.finished = Some(true);
             return;
@@ -172,8 +158,6 @@ impl super::app::App {
                 run.config = successors.into_iter().next().expect("length checked");
                 run.steps += 1;
             },
-            // Only reachable on machines whose determinism flag missed an
-            // ambiguity; refuse to pick a branch rather than lie.
             _ => {
                 self.error_message = Some(
                     "Ambiguous step: several transitions apply at once. The deterministic flag missed an ambiguity, so step-by-step running stops here.".to_string(),
@@ -225,8 +209,6 @@ impl super::app::App {
                     .spacing(12)
                     .align_y(Alignment::Center)
                     .into(),
-                    // Input on the left, the stack (growing to the right,
-                    // top highlighted) on the right.
                     row![
                         column![
                             widgets::caption("INPUT"),
@@ -258,9 +240,6 @@ impl super::app::App {
         widgets::run_dock(Family::Pushdown, Family::Pushdown.title(), tab.dock_collapsed, self.dock_is_compact(), controls.into(), status, body)
     }
 
-    /* Level-by-level lane view for nondeterministic machines: one row per
-     * live branch with its state, its stack (top on the right) and the
-     * input still to consume. */
     fn create_pda_nd_lane_view(&self, frontier: &PdaNdFrontier) -> Element<'_, Message> {
         let rows = frontier
             .alive

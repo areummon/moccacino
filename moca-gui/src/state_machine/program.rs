@@ -27,9 +27,6 @@ pub(crate) struct StateMachine<'a> {
     pub(crate) known_viewport: Size,
 }
 
-/* Widget-local interaction state: the gesture in progress plus whatever
- * the cursor currently hovers (drawn in an uncached overlay, so hovering
- * never invalidates the cached drawing). */
 #[derive(Debug, Default)]
 pub(crate) struct Interaction {
     pending: Option<PendingTransition>,
@@ -41,7 +38,6 @@ impl StateMachine<'_> {
         self.state.zoom()
     }
 
-    /* Viewport → world. */
     fn to_world(&self, point: Point) -> Point {
         let scroll = self.state.scroll();
         let zoom = self.zoom();
@@ -71,8 +67,6 @@ impl canvas::Program<CanvasMessage> for StateMachine<'_> {
         let scroll = self.state.scroll();
         let zoom = self.zoom();
         let viewport = bounds.size();
-        // Hit-testing happens in world coordinates: the stored state
-        // positions are world positions, the cursor is viewport-relative.
         let world_position = cursor_position.map(|pos| self.to_world(pos));
 
         match event {
@@ -85,7 +79,6 @@ impl canvas::Program<CanvasMessage> for StateMachine<'_> {
                     mouse::ScrollDelta::Pixels { x, y } => (x, y),
                 };
                 if self.state.is_ctrl_pressed() {
-                    // Ctrl+wheel zooms around the cursor.
                     let factor = 1.0015f32.powf(dy.clamp(-240.0, 240.0));
                     let (new_zoom, new_scroll) =
                         zoom_target(zoom, scroll, factor, anchor, self.states, viewport);
@@ -94,7 +87,6 @@ impl canvas::Program<CanvasMessage> for StateMachine<'_> {
                         Some(CanvasMessage::Zoomed { zoom: new_zoom, scroll: new_scroll }),
                     );
                 }
-                // Shift+wheel pans sideways on plain mouse wheels.
                 let (dx, dy) = if self.state.is_shift_pressed() && dx == 0.0 { (-dy, 0.0) } else { (dx, dy) };
                 let new_scroll = clamp_scroll(
                     Vector::new(scroll.x + dx / zoom, scroll.y - dy / zoom),
@@ -113,8 +105,6 @@ impl canvas::Program<CanvasMessage> for StateMachine<'_> {
                     return (canvas::event::Status::Ignored, None);
                 };
 
-                // Shared hit-testing: the active tool decides what a press
-                // on each target means.
                 let hit = self.hit_test(cursor_pos);
                 let clicked_node = match hit {
                     Some(Hit::State(id)) => self.states.iter().find(|node| node.id == id),
@@ -153,9 +143,6 @@ impl canvas::Program<CanvasMessage> for StateMachine<'_> {
                                     Some(CanvasMessage::StateDoubleClicked(node.id)),
                                 );
                             }
-                            // Modifier clicks never become drags, and they
-                            // leave no click tracking so a fast modifier
-                            // double-tap cannot trigger a rename.
                             if self.state.is_shift_pressed() || self.state.is_alt_pressed() {
                                 return (
                                     canvas::event::Status::Captured,
@@ -184,7 +171,6 @@ impl canvas::Program<CanvasMessage> for StateMachine<'_> {
                             };
                             return (canvas::event::Status::Captured, Some(message));
                         }
-                        // Empty space: begin panning the viewport.
                         interaction.pending = Some(PendingTransition::Panning {
                             origin_scroll: scroll,
                             cursor_start: screen_pos,
@@ -204,8 +190,6 @@ impl canvas::Program<CanvasMessage> for StateMachine<'_> {
                     EditorTool::Transition => match interaction.pending.take() {
                         Some(PendingTransition::Start { from_state_id, from_point }) => {
                             if let Some(to_node) = clicked_node {
-                                // Instead of adding the transition here,
-                                // request a label from the GUI.
                                 (
                                     canvas::event::Status::Captured,
                                     Some(CanvasMessage::RequestTransitionLabel {
@@ -216,7 +200,6 @@ impl canvas::Program<CanvasMessage> for StateMachine<'_> {
                                     }),
                                 )
                             } else {
-                                // Clicking anything but a state cancels.
                                 (canvas::event::Status::Captured, None)
                             }
                         }
@@ -246,8 +229,6 @@ impl canvas::Program<CanvasMessage> for StateMachine<'_> {
                 }
             }
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
-                // Keep the app's idea of the viewport size current (zoom
-                // buttons and fit-to-content need it).
                 if (viewport.width - self.known_viewport.width).abs() > 0.5
                     || (viewport.height - self.known_viewport.height).abs() > 0.5
                 {
@@ -257,8 +238,6 @@ impl canvas::Program<CanvasMessage> for StateMachine<'_> {
                     interaction.hover = None;
                     return (canvas::event::Status::Ignored, None);
                 };
-                // Self-heal after content shrinks (state deleted or
-                // moved): clamp the stored scroll back into range.
                 let healed = clamp_scroll(scroll, self.states, viewport, zoom);
                 if Self::changed(healed, scroll)
                     && !matches!(interaction.pending, Some(PendingTransition::Dragging { .. }))
@@ -294,7 +273,6 @@ impl canvas::Program<CanvasMessage> for StateMachine<'_> {
                     }
                     _ => {
                         interaction.hover = match self.state.active_tool() {
-                            // Creating states only cares about empty space.
                             EditorTool::State => None,
                             _ => self.hit_test(cursor_pos),
                         };
@@ -307,9 +285,6 @@ impl canvas::Program<CanvasMessage> for StateMachine<'_> {
                 (canvas::event::Status::Ignored, None)
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => match interaction.pending {
-                // A press-release without movement counts as a click: keep
-                // it tracked so the next press can detect a double-click
-                // rename. Real drags clear the tracking.
                 Some(PendingTransition::Dragging { state_id, moved, .. }) => {
                     interaction.pending = if moved {
                         None
@@ -368,8 +343,6 @@ impl canvas::Program<CanvasMessage> for StateMachine<'_> {
         let zoom = self.zoom();
         let tint = self.family.color(p);
 
-        // Background and dot grid depend only on the view, so they live in
-        // their own cache and survive drags and edits.
         let grid = self.state.grid_cache.draw(renderer, bounds.size(), |frame| {
             frame.fill(&Path::rectangle(Point::ORIGIN, frame.size()), p.canvas_bg);
             frame.scale(zoom);
@@ -378,7 +351,6 @@ impl canvas::Program<CanvasMessage> for StateMachine<'_> {
         });
 
         let content = self.state.cache.draw(renderer, bounds.size(), |frame| {
-            // World content is drawn scaled and shifted.
             frame.scale(zoom);
             frame.translate(-scroll);
 
@@ -414,8 +386,6 @@ impl canvas::Program<CanvasMessage> for StateMachine<'_> {
 
         let mut geometries = vec![grid, content];
 
-        // Uncached overlay: hover highlights, the pending transition line
-        // and the delete badge follow the cursor every frame.
         let mut overlay = Frame::new(renderer, bounds.size());
         let deleting = self.state.is_deletion_mode();
         let highlight = if deleting { p.danger } else { p.accent };
@@ -475,7 +445,6 @@ impl canvas::Program<CanvasMessage> for StateMachine<'_> {
             }
         });
 
-        // Delete badge next to the cursor, in screen space.
         if deleting && self.interactive {
             if let Some(position) = cursor.position_in(bounds) {
                 let center = position + Vector::new(14.0, 14.0);
@@ -500,8 +469,6 @@ impl canvas::Program<CanvasMessage> for StateMachine<'_> {
 }
 
 impl StateMachine<'_> {
-    /* Dot grid over the visible world area; coarser when zoomed out so the
-     * dot count stays bounded. */
     fn draw_grid(&self, frame: &mut Frame, p: &Palette, viewport: Size) {
         let zoom = self.zoom();
         let scroll = self.state.scroll();
@@ -509,8 +476,6 @@ impl StateMachine<'_> {
         let visible = Size::new(viewport.width / zoom, viewport.height / zoom);
         let start_x = (scroll.x / spacing).floor() * spacing;
         let start_y = (scroll.y / spacing).floor() * spacing;
-        // Tiny squares: two triangles each instead of a tessellated circle,
-        // indistinguishable at this size.
         let side = 2.4 / zoom.max(0.8);
         let dots = Path::new(|b| {
             let mut y = start_y;
@@ -526,9 +491,6 @@ impl StateMachine<'_> {
         frame.fill(&dots, p.canvas_grid);
     }
 
-    /* Thin scroll thumbs whenever part of the drawing is off screen: the
-     * track spans the union of the content box and the visible area, the
-     * thumb is the visible area inside it. */
     fn draw_scrollbars(&self, frame: &mut Frame, p: &Palette, view: Size) {
         const THICKNESS: f32 = 5.0;
         const MARGIN: f32 = 4.0;
@@ -542,7 +504,6 @@ impl StateMachine<'_> {
         let visible = Rectangle::new(Point::new(scroll.x, scroll.y), Size::new(view.width / zoom, view.height / zoom));
         let color = theme::alpha(p.text_faint, 0.55);
 
-        // (track start, track length) in world units per axis.
         let span = |content_start: f32, content_len: f32, view_start: f32, view_len: f32| {
             let start = content_start.min(view_start);
             let end = (content_start + content_len).max(view_start + view_len);
@@ -579,7 +540,6 @@ impl StateMachine<'_> {
     }
 }
 
-/* One transition label on a rounded pill. */
 fn draw_label_pill(frame: &mut Frame, p: &Palette, rect: Rectangle, label: &str, stroke: iced::Color, fill: iced::Color) {
     let pill = Path::rounded_rectangle(rect.position(), rect.size(), (rect.height / 2.0).into());
     frame.fill(&pill, fill);

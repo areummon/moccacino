@@ -1,5 +1,3 @@
-/* Grammar editing panel: parse, membership check, leftmost derivation and
- * CNF conversion over the grammar held by a tab. */
 use iced::Task;
 use iced::widget::{column, container, horizontal_space, row, scrollable, text_input, tooltip};
 use iced::{Alignment, Element, Length};
@@ -15,9 +13,6 @@ use crate::gui::theme::{self, Family};
 const GRAMMAR_PLACEHOLDER: &str = "S -> a S b | ε";
 
 impl super::app::App {
-    /* Multi-line editor actions: perform the edit and mirror the content
-     * into the plain string the parser consumes. Ctrl+Enter parses instead
-     * of inserting a newline. */
     pub(crate) fn grammar_editor_action(&mut self, action: iced::widget::text_editor::Action) -> Task<Message> {
         if matches!(
             action,
@@ -39,8 +34,6 @@ impl super::app::App {
         Task::none()
     }
 
-    /* Parses the textarea content into the machine slot of the tab; errors
-     * surface through the shared error popup with line information. */
     pub(crate) fn grammar_parse(&mut self) -> Task<Message> {
         let source = self.get_active_tab().grammar_text.trim().to_string();
         if source.is_empty() {
@@ -61,7 +54,6 @@ impl super::app::App {
         Task::none()
     }
 
-    /* Membership via CYK: the word is segmented into single characters. */
     pub(crate) fn grammar_check_word(&mut self) -> Task<Message> {
         let parsed = self.ensure_parsed_grammar();
         let (grammar, problem) = match parsed {
@@ -83,7 +75,6 @@ impl super::app::App {
         Task::none()
     }
 
-    /* Leftmost derivation display for the typed word. */
     pub(crate) fn grammar_derive(&mut self) -> Task<Message> {
         let parsed = self.ensure_parsed_grammar();
         let (grammar, problem) = match parsed {
@@ -117,8 +108,6 @@ impl super::app::App {
         Task::none()
     }
 
-    /* Converts to Chomsky normal form and opens it in a fresh grammar tab,
-     * mirroring how DFA->NFA/Minimize produce their own tabs. */
     pub(crate) fn grammar_to_cnf(&mut self) -> Task<Message> {
         let parsed = self.ensure_parsed_grammar();
         let (grammar, problem) = match parsed {
@@ -143,8 +132,6 @@ impl super::app::App {
         Task::none()
     }
 
-    /* Runs an FA-only transformation report used by operations.rs guards on
-     * grammar tabs. */
     pub(crate) fn reject_operation_for_grammar(&mut self, operation: &str) -> Task<Message> {
         self.error_message = Some(format!(
             "Cannot {}: the tab holds a grammar, not a state machine.",
@@ -153,13 +140,10 @@ impl super::app::App {
         Task::none()
     }
 
-    /* Parses the current textarea content without touching error state when
-     * it succeeds; returns (grammar, parse-problem-if-any). */
     pub(crate) fn ensure_parsed_grammar(&mut self) -> Option<(Grammar, Option<String>)> {
         let source = self.get_active_tab().grammar_text.trim().to_string();
         match moca_data::grammar::parse_grammar(&source) {
             Ok(grammar) => {
-                // Refresh the stored machine so canvas-free tabs stay in sync.
                 self.get_active_tab_mut().machine = TabMachine::Grammar(grammar.clone());
                 Some((grammar, None))
             },
@@ -171,11 +155,7 @@ impl super::app::App {
     }
 }
 
-/* -------- panel view builder -------- */
-
 impl super::app::App {
-    /* Grammar tabs have no canvas: the workspace becomes two cards, the
-     * productions editor on the left and word testing on the right. */
     pub(crate) fn create_grammar_panel(&self) -> Element<'_, Message> {
         let tab = self.get_active_tab();
 

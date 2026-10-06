@@ -1,25 +1,14 @@
-// This module generates LaTeX export code: TikZ drawings for automata
-// diagrams and an align* listing for grammars.
-// The generated TikZ code uses only the tikzpicture environment and automata library styles.
 
 use crate::state_machine::{StateNode, Transition};
 use moca_data::grammar::Grammar;
 use std::collections::HashSet;
 
-/// Exports the automaton to TikZ/PGF code using tikzpicture and automata styles.
-/// - `states`: all state nodes (with positions and labels)
-/// - `transitions`: all transitions (with from/to, label, and points)
-/// - `initial_state`: optional id of the initial state
-/// - `final_states`: set of ids of final states
-///
-/// Returns a String containing the TikZ code.
 pub fn export_to_tikz(
     states: &[StateNode],
     transitions: &[Transition],
     initial_state: Option<usize>,
     final_states: &HashSet<usize>,
 ) -> String {
-    // Find bounds for normalization
     let (min_x, min_y, max_x, max_y) = states.iter().fold(
         (f32::INFINITY, f32::INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY),
         |(min_x, min_y, max_x, max_y), s| {
@@ -33,9 +22,8 @@ pub fn export_to_tikz(
     );
     let width = (max_x - min_x).max(1.0);
     let height = (max_y - min_y).max(1.0);
-    let scale = 5.0 / width.max(height); 
+    let scale = 5.0 / width.max(height);
 
-    // Map state id to node name
     let mut id_to_name = std::collections::HashMap::new();
     for (i, s) in states.iter().enumerate() {
         id_to_name.insert(s.id, format!("q{}", i));
@@ -47,7 +35,6 @@ pub fn export_to_tikz(
     tikz.push_str("\\begin{center}\n");
     tikz.push_str("\\begin{tikzpicture}[shorten >=1pt, node distance=2cm, on grid, initial text=, auto]\n");
 
-    // Draw states using automata library shapes
     for s in states {
         let x = (s.position.x - min_x) * scale;
         let y = (s.position.y - min_y) * scale;
@@ -61,7 +48,6 @@ pub fn export_to_tikz(
         if is_final {
             style.push_str(", accepting");
         }
-        // Format label for math mode: convert q0 -> q_0, q12 -> q_{12}, etc.
         let mut latex_label = s.label.to_string();
         if let Some((_prefix, _digits)) = latex_label.split_once(|c: char| c.is_ascii_digit()) {
             let idx = s.label.chars().position(|c| c.is_ascii_digit()).unwrap_or(0);
@@ -79,14 +65,13 @@ pub fn export_to_tikz(
             style,
             name,
             x,
-            -y, 
+            -y,
             latex_label
         ));
     }
 
-    // Group transitions by (from, to) pairs to handle multiple labels
     let mut transition_groups: std::collections::HashMap<(usize, usize), Vec<String>> = std::collections::HashMap::new();
-    
+
     for t in transitions {
         let key = (t.from_state_id, t.to_state_id);
         let mut label = t.label.to_string();
@@ -96,29 +81,25 @@ pub fn export_to_tikz(
         transition_groups.entry(key).or_insert_with(Vec::new).push(label);
     }
 
-    // Draw transitions with stacked labels
     for ((from_id, to_id), labels) in &transition_groups {
         let from = id_to_name.get(from_id).unwrap();
         let to = id_to_name.get(to_id).unwrap();
-        
+
         if from_id == to_id {
-            // Self-loop with stacked labels
             if labels.len() == 1 {
                 tikz.push_str(&format!(
                     "  \\path[->] ({}) edge[loop above] node{{{}}} ({});\n",
                     from, labels[0], to
                 ));
             } else {
-                // Multiple labels for loop - stack them vertically
                 tikz.push_str(&format!(
                     "  \\path[->] ({}) edge[loop above] node[align=center]{{{}}} ({});\n",
                     from, labels.join("\\\\"), to
                 ));
             }
         } else {
-            // Check for reverse edge for curve
             let has_reverse = transition_groups.contains_key(&(*to_id, *from_id));
-            
+
             if has_reverse {
                 if labels.len() == 1 {
                     tikz.push_str(&format!(
@@ -126,7 +107,6 @@ pub fn export_to_tikz(
                         from, labels[0], to
                     ));
                 } else {
-                    // Multiple labels for curved edge - stack them vertically
                     tikz.push_str(&format!(
                         "  \\path[->] ({}) edge[bend left] node[align=center]{{{}}} ({}) ;\n",
                         from, labels.join("\\\\"), to
@@ -139,7 +119,6 @@ pub fn export_to_tikz(
                         from, labels[0], to
                     ));
                 } else {
-                    // Multiple labels for straight edge - stack them vertically
                     tikz.push_str(&format!(
                         "  \\path[->] ({}) edge node[align=center]{{{}}} ({}) ;\n",
                         from, labels.join("\\\\"), to
@@ -154,8 +133,6 @@ pub fn export_to_tikz(
     tikz
 }
 
-/* Escapes characters with special meaning in LaTeX so arbitrary grammar
- * symbols survive rendering. */
 fn escape_latex(symbol: &str) -> String {
     let mut escaped = String::with_capacity(symbol.len());
     for c in symbol.chars() {
@@ -173,8 +150,6 @@ fn escape_latex(symbol: &str) -> String {
     escaped
 }
 
-/* One math-mode symbol: multi-character terminals are wrapped in \text
- * so their token boundary stays visible (a S b vs. \text{if}). */
 fn latex_symbol(symbol: &str) -> String {
     if symbol.chars().count() > 1 {
         format!("\\text{{{}}}", escape_latex(symbol))
@@ -183,9 +158,6 @@ fn latex_symbol(symbol: &str) -> String {
     }
 }
 
-/// Exports the grammar to LaTeX: a comment header carrying the tuple
-/// G = (V, Σ, P, S) and one align* line per variable listing its
-/// alternatives joined by \mid (empty bodies render as \varepsilon).
 pub fn export_grammar_to_latex(grammar: &Grammar) -> String {
     let variables: Vec<String> = grammar.nonterminals().iter().cloned().collect();
     let terminals: Vec<String> = grammar.terminals().into_iter().collect();
@@ -231,4 +203,4 @@ pub fn export_grammar_to_latex(grammar: &Grammar) -> String {
     latex.push_str("\n\\end{align*}\n");
     latex.push_str("\\end{center}\n");
     latex
-} 
+}

@@ -1,5 +1,3 @@
-/* Regular expressions: syntax tree, parser and Thompson compilation into
- * finite automata. */
 pub mod ast;
 pub mod compiler;
 pub mod parser;

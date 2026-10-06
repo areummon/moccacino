@@ -1,7 +1,3 @@
-/* Tiny persisted preferences: a `key=value` text file under the user's
- * config directory ($XDG_CONFIG_HOME/moccacino/settings, falling back to
- * ~/.config). Every failure is silently ignored — a missing or unwritable
- * file just means defaults. */
 
 use std::path::PathBuf;
 

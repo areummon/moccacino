@@ -9,7 +9,6 @@ use super::tab::TabMachine;
 use super::widgets::{self, dialog_card, modal_layer, DIALOG_LG, DIALOG_MD, DIALOG_SM};
 use crate::gui::theme::{self, Family};
 
-/* Text-input ids, so opening a dialog can focus its field right away. */
 pub(crate) const EDIT_TEXT_INPUT: &str = "edit-text";
 pub(crate) const EDIT_LABEL_INPUT: &str = "edit-label";
 pub(crate) const CHECK_INPUT: &str = "check-input";
@@ -34,8 +33,6 @@ fn field<'a>(
         .into()
 }
 
-/* An inline error line that keeps its height when empty, so dialogs do not
- * jump when a message appears. */
 fn error_line<'a>(error: Option<&String>) -> Element<'a, Message> {
     match error {
         Some(error) => row![icon(Icon::Warn, 14.0, Ink::Danger), text(error.clone()).size(13).style(theme::text_danger)]
@@ -46,7 +43,6 @@ fn error_line<'a>(error: Option<&String>) -> Element<'a, Message> {
     }
 }
 
-/* Label syntax reminder for the machine family being edited. */
 fn label_hint(machine: &TabMachine) -> &'static str {
     match machine {
         TabMachine::Finite(_) => "A symbol such as a — leave blank for ε",
@@ -57,8 +53,6 @@ fn label_hint(machine: &TabMachine) -> &'static str {
 }
 
 impl super::app::App {
-    /* Load `.ce` dialog: a path field that always works plus a native
-     * Browse button for systems with a working file chooser. */
     pub(crate) fn create_load_dialog(&self) -> Element<'_, Message> {
         let body = column![
             row![
@@ -85,8 +79,6 @@ impl super::app::App {
         ))
     }
 
-    /* Save `.ce` dialog: mirrors the load dialog. The entity text is
-     * already serialized into `pending_save` when this opens. */
     pub(crate) fn create_save_dialog(&self) -> Element<'_, Message> {
         let tab = self.get_active_tab();
         let body = column![
@@ -114,9 +106,6 @@ impl super::app::App {
         ))
     }
 
-    /* First screen: pick the family to start with. Keyboard navigation
-     * (arrows + Enter) is handled in `handle_key_pressed`; the highlight
-     * mirrors `startup_selected`. */
     pub(crate) fn create_startup_picker(&self) -> Element<'_, Message> {
         let p = self.palette();
         let card = |index: usize, family: Family| -> Element<'_, Message> {
@@ -376,7 +365,6 @@ impl super::app::App {
         ))
     }
 
-    /* Cheat sheet of every keyboard shortcut (F1 or ?). */
     pub(crate) fn create_shortcuts_dialog(&self) -> Element<'_, Message> {
         let entry = |keys: &'static [&'static str], description: &'static str| -> Element<'_, Message> {
             let mut caps = row![].spacing(4).align_y(Alignment::Center);
@@ -435,7 +423,6 @@ impl super::app::App {
                 entry(&["F1"], "This cheat sheet"),
             ],
         );
-        // Two columns when there is room, one scrolling column otherwise.
         let sections: Element<'_, Message> = if self.layout_width() >= 820.0 {
             row![canvas, column![view, app].spacing(18).width(Length::Fill)].spacing(28).into()
         } else {
@@ -454,7 +441,6 @@ impl super::app::App {
 }
 
 impl super::app::App {
-    /* Unsaved-changes confirmation before closing the app or a tab. */
     pub(crate) fn create_close_dialog(&self) -> Element<'_, Message> {
         let Some(request) = self.pending_close else {
             return Space::new(0, 0).into();

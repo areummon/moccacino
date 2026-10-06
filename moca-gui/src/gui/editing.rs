@@ -15,8 +15,6 @@ impl super::app::App {
         self.get_active_tab_mut().state_id_to_index.clear();
         self.get_active_tab_mut().initial_state = None;
         self.get_active_tab_mut().final_states.clear();
-        // Clear the machine in place so the tab keeps its family: swapping in
-        // a default Finite machine made Turing/pushdown run panels vanish.
         self.get_active_tab_mut().machine.clear();
         self.get_active_tab_mut().check_input_dialog_open = false;
         self.get_active_tab_mut().check_input_text.clear();
@@ -43,7 +41,6 @@ impl super::app::App {
 
     pub(crate) fn finish_editing(&mut self) -> Task<Message> {
         let active_tab = self.get_active_tab_mut();
-        // Handle pending transition dialog
         if active_tab.pending_transition_dialog_open {
             if let Some((from_state_id, to_state_id, from_point, to_point)) = active_tab.pending_transition.take() {
                 let label = if active_tab.pending_transition_label.trim().is_empty() {
@@ -85,7 +82,6 @@ impl super::app::App {
     }
 
     pub(crate) fn cancel_editing(&mut self) -> Task<Message> {
-        // Cancel pending transition dialog
         self.get_active_tab_mut().pending_transition = None;
         self.get_active_tab_mut().pending_transition_label.clear();
         self.get_active_tab_mut().pending_transition_dialog_open = false;
@@ -117,17 +113,14 @@ impl super::app::App {
     pub(crate) fn save_edit_transition_labels(&mut self) -> Task<Message> {
         let active_tab = self.get_active_tab_mut();
         if let Some((from, to)) = active_tab.editing_transition_pair {
-            // Convert empty strings to "ε" and filter out completely empty labels
             let new_labels: Vec<String> = active_tab.editing_transition_label_inputs.iter()
                 .map(|s| if s.trim().is_empty() { "ε".to_string() } else { s.clone() })
-                .filter(|s| s != "ε" || active_tab.editing_transition_label_inputs.iter().any(|input| !input.trim().is_empty())) // Keep ε only if there are other non-empty labels
+                .filter(|s| s != "ε" || active_tab.editing_transition_label_inputs.iter().any(|input| !input.trim().is_empty()))
                 .collect();
 
             if new_labels.is_empty() {
-                // If no labels remain, remove the entire transition
                 active_tab.transitions.remove(&(from, to));
             } else {
-                // Otherwise, update with the new labels
                 let mut set = indexmap::IndexSet::new();
                 for label in new_labels {
                     set.insert(label);

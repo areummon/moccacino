@@ -1,4 +1,3 @@
-/* Turing machine run panel: interactive stepping over configurations. */
 use std::collections::HashSet;
 
 use iced::Task;
@@ -14,7 +13,6 @@ use super::widgets::{self, CellSize, Outcome};
 use crate::gui::theme::Family;
 
 const TAPE_CONTEXT: i64 = 12;
-/* Lane window rendered per branch in the nondeterministic view. */
 const ND_LANES_VISIBLE: usize = 12;
 
 impl super::app::App {
@@ -33,8 +31,6 @@ impl super::app::App {
             return Task::none();
         }
         self.get_active_tab_mut().sync_gui_to_machine();
-        // Malformed labels or a missing initial state abort the run early
-        // with a precise message instead of halting silently mid-run.
         if let Err(problem) = self.get_active_tab().machine.validate() {
             self.error_message = Some(problem);
             return Task::none();
@@ -89,8 +85,6 @@ impl super::app::App {
         Task::none()
     }
 
-    /* One auto-play tick: deterministic runs advance one step,
-     * nondeterministic frontiers advance one level. */
     pub(crate) fn run_tick(&mut self) -> Task<Message> {
         if self.run_tick_interval().is_some() {
             if self.active_tab_is_turing() {
@@ -124,10 +118,6 @@ impl super::app::App {
         Task::none()
     }
 
-    /* One level of the nondeterministic frontier: every live branch takes a
-     * parallel step, successors dedup against the visited set, and the
-     * verdict mirrors `run_nondeterministic` exactly (arrival acceptance
-     * before expanding, empty next frontier = rejected). */
     fn advance_tm_frontier_by_one_level(&mut self) {
         if !self.active_tab_is_turing() {
             return;
@@ -170,8 +160,6 @@ impl super::app::App {
         if !self.active_tab_is_turing() || !self.get_active_tab().machine.is_deterministic() {
             return;
         }
-        // Split borrows so the machine and its run state can be touched at
-        // the same time.
         let tab = self.get_active_tab_mut();
         let (machine, tm_run) = (&tab.machine, &mut tab.tm_run);
         let turing = match machine {
@@ -185,8 +173,6 @@ impl super::app::App {
         if run.finished.is_some() {
             return;
         }
-        // Arrival semantics, mirroring `run`: an accepting state accepts
-        // before any transition is applied.
         if turing.get_final_states().contains(&run.config.state_id()) {
             run.finished = Some(RunOutcome::Accepted);
             return;
@@ -196,7 +182,6 @@ impl super::app::App {
                 run.config = next_config;
                 run.steps += 1;
             },
-            // No applicable transition on some tape.
             None => run.finished = Some(RunOutcome::Rejected),
         }
     }
@@ -234,7 +219,6 @@ impl super::app::App {
                     self.create_nd_lane_view(frontier),
                 )
             } else if let Some(run) = &tab.tm_run {
-                // Tape strip with the head highlighted.
                 let (window, head_offset) = run.config.tape().snapshot(TAPE_CONTEXT);
                 (
                     row![
@@ -266,7 +250,6 @@ impl super::app::App {
         widgets::run_dock(Family::Turing, Family::Turing.title(), tab.dock_collapsed, self.dock_is_compact(), controls.into(), status, body)
     }
 
-    /* Level-by-level lane view for nondeterministic machines. */
     fn create_nd_lane_view(&self, frontier: &NdFrontier) -> Element<'_, Message> {
         let rows = frontier
             .alive
@@ -286,7 +269,6 @@ impl super::app::App {
     }
 }
 
-/* Turing outcomes collapse to the dock's accepted/rejected/running view. */
 fn outcome(finished: Option<RunOutcome>) -> Outcome {
     match finished {
         Some(RunOutcome::Accepted) => Outcome::Accepted,

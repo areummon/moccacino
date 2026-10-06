@@ -1,11 +1,5 @@
-/* Recursive descent parser for the regular expression syntax described in
- * `ast.rs`. It works on characters (not bytes) and reports the position of the
- * offending character on errors. */
 use super::ast::RegexAst;
 
-/* Error produced while parsing a regular expression. `position` is the index
- * (in characters) of the character that caused the failure, or the length of
- * the pattern for unexpected end-of-input errors. */
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParseError {
     pub position: usize,
@@ -20,8 +14,6 @@ impl std::fmt::Display for ParseError {
 
 impl std::error::Error for ParseError {}
 
-/* Parses a pattern into a RegexAst. An empty pattern is the empty string
- * matcher; empty groups and empty alternatives act as ε. */
 pub fn parse(pattern: &str) -> Result<RegexAst, ParseError> {
     let chars: Vec<char> = pattern.chars().collect();
     let mut parser = Parser { chars: &chars, pos: 0 };
@@ -50,7 +42,6 @@ impl<'a> Parser<'a> {
         c
     }
 
-    /* Consumes a character that has already been peeked. */
     fn eat(&mut self) {
         self.pos += 1;
     }
@@ -62,7 +53,6 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /* union := concat ('|' concat)* */
     fn union(&mut self) -> Result<RegexAst, ParseError> {
         let mut left = self.concat()?;
         while self.peek() == Some('|') {
@@ -73,8 +63,6 @@ impl<'a> Parser<'a> {
         Ok(left)
     }
 
-    /* concat := repeat* — juxtaposition; zero atoms means ε. Stops at '|', ')'
-     * or end of input. */
     fn concat(&mut self) -> Result<RegexAst, ParseError> {
         let mut nodes: Vec<RegexAst> = Vec::new();
         loop {
@@ -88,7 +76,6 @@ impl<'a> Parser<'a> {
         }).unwrap_or(RegexAst::Epsilon))
     }
 
-    /* repeat := atom ('*' | '+' | '?')* */
     fn repeat(&mut self) -> Result<RegexAst, ParseError> {
         let mut node = self.atom()?;
         loop {
@@ -110,7 +97,6 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /* atom := '(' union ')' | '\' char | 'ε' | any other character */
     fn atom(&mut self) -> Result<RegexAst, ParseError> {
         match self.peek() {
             Some('(') => {

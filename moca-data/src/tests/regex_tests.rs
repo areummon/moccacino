@@ -3,10 +3,6 @@ use std::collections::BTreeSet;
 use crate::regex::{self, RegexAst};
 use crate::state_machine::{Machine, StateMachine};
 
-/* ---------- Naive reference matcher (independent of the compiler) ---------- */
-
-/* Returns every position of `text` reachable by matching some prefix of the
- * text from `start` with exactly one path through the expression. */
 fn endpoints(node: &RegexAst, text: &[char], start: usize) -> BTreeSet<usize> {
     let single = |p: usize| BTreeSet::from([p]);
     match node {
@@ -30,10 +26,8 @@ fn endpoints(node: &RegexAst, text: &[char], start: usize) -> BTreeSet<usize> {
         },
         RegexAst::Star(inner) => {
             let mut result = single(start);
-            // One repetition, seeded directly...
             let mut frontier = endpoints(inner, text, start);
             result.extend(frontier.iter().copied());
-            // ...then closing under further repetitions.
             loop {
                 frontier = frontier
                     .iter()
@@ -69,7 +63,6 @@ fn naive_accepts(ast: &RegexAst, text: &str) -> bool {
     endpoints(ast, &chars, 0).contains(&chars.len())
 }
 
-/* Exhaustive inputs of growing length over the given alphabet. */
 fn exhaustive_inputs(alphabet: &[char], max_len: usize) -> Vec<String> {
     let mut inputs = vec![String::new()];
     for _ in 0..max_len {
@@ -86,8 +79,6 @@ fn exhaustive_inputs(alphabet: &[char], max_len: usize) -> Vec<String> {
     inputs.retain(|s| s.chars().count() <= max_len);
     inputs
 }
-
-/* ---------- Parser ---------- */
 
 #[test]
 fn regex_parse_valid_test() {
@@ -110,8 +101,6 @@ fn regex_parse_errors_test() {
             pattern
         );
     }
-    // The specific failure positions are stable, and the error type (re-exported
-    // for library users) renders its message with the position.
     let error: regex::ParseError = regex::parse("(").unwrap_err();
     assert_eq!(error.position, 1);
     assert_eq!(error.to_string(), "expected ')' to close the group (at position 1)");
@@ -121,8 +110,6 @@ fn regex_parse_errors_test() {
 
 #[test]
 fn regex_parse_precedence_test() {
-    // Concatenation binds tighter than alternation: ab|cd matches exactly
-    // {"ab", "cd"}.
     let ast = regex::parse("ab|cd").unwrap();
     assert!(naive_accepts(&ast, "ab"));
     assert!(naive_accepts(&ast, "cd"));
@@ -130,25 +117,20 @@ fn regex_parse_precedence_test() {
     assert!(!naive_accepts(&ast, "cb"));
     assert!(!naive_accepts(&ast, "abcd"));
 
-    // Repetition binds tighter than concatenation: ab* is a(b*).
     let ast = regex::parse("ab*").unwrap();
     assert!(naive_accepts(&ast, "a"));
     assert!(naive_accepts(&ast, "abbb"));
     assert!(!naive_accepts(&ast, "abab"));
 
-    // Alternation only extends as far as the alternation operands: a|bc.
     let ast = regex::parse("a|bc").unwrap();
     assert!(naive_accepts(&ast, "bc"));
     assert!(!naive_accepts(&ast, "ac"));
 
-    // Escapes produce literal characters.
     let ast = regex::parse("\\*|a\\+").unwrap();
     assert!(naive_accepts(&ast, "*"));
     assert!(naive_accepts(&ast, "a+"));
     assert!(!naive_accepts(&ast, "aa"));
 }
-
-/* ---------- Compiler ---------- */
 
 #[test]
 fn regex_compile_agrees_with_naive_matcher_test() {
@@ -186,7 +168,6 @@ fn regex_compile_agrees_with_naive_matcher_test() {
 
 #[test]
 fn regex_pipeline_minimize_test() {
-    // The classic example: (a|b)*abb minimizes to a 4-state DFA.
     let automata = regex::compile_str("(a|b)*abb").unwrap();
     assert_eq!(automata.is_deterministic(), false);
     let deterministic_automata = automata.to_dfa();
@@ -206,9 +187,6 @@ fn regex_pipeline_minimize_test() {
         );
     }
 
-    // A pure-star language also survives the full pipeline. The minimal DFA
-    // is partial here (missing transitions reject via the implicit sink), so
-    // the minimum is 2 real states.
     let automata = regex::compile_str("(ab)*").unwrap();
     let minimized = automata.to_dfa().minimize();
     assert_eq!(minimized.get_states_by_id_ref().len(), 2);
@@ -219,22 +197,17 @@ fn regex_pipeline_minimize_test() {
 
 #[test]
 fn regex_empty_language_and_epsilon_test() {
-    // ε compiles to an automaton accepting exactly the empty string.
     let automata = regex::compile_str("ε").unwrap();
     assert!(automata.accepts(""));
     assert!(!automata.accepts("a"));
 
-    // The programmatic Empty node accepts nothing at all.
     let automata = regex::compile(&RegexAst::Empty);
     assert!(!automata.accepts(""));
     assert!(!automata.accepts("anything"));
 
-    // An empty pattern behaves like ε.
     let automata = regex::compile_str("").unwrap();
     assert!(automata.accepts(""));
 }
-
-/* ---------- Display (used by DFA -> regex export) ---------- */
 
 #[test]
 fn regex_display_precedence_test() {
@@ -244,7 +217,6 @@ fn regex_display_precedence_test() {
         (RegexAst::Char('*'), "\\*"),
         (RegexAst::Char('|'), "\\|"),
         (RegexAst::Char('\\'), "\\\\"),
-        // Concat binds tighter than union: flat rendering parses back.
         (
             RegexAst::Union(
                 Box::new(RegexAst::Concat(
@@ -255,7 +227,6 @@ fn regex_display_precedence_test() {
             ),
             "ab|c",
         ),
-        // Union inside concat needs parentheses.
         (
             RegexAst::Concat(
                 Box::new(RegexAst::Union(
@@ -266,7 +237,6 @@ fn regex_display_precedence_test() {
             ),
             "(a|b)c",
         ),
-        // Postfix operands that are not atoms get grouped.
         (
             RegexAst::Star(Box::new(RegexAst::Concat(
                 Box::new(RegexAst::Char('a')),
@@ -283,7 +253,6 @@ fn regex_display_precedence_test() {
             RegexAst::Plus(Box::new(RegexAst::Char('a'))),
             "a+",
         ),
-        // Associative union chains render flat.
         (
             RegexAst::Union(
                 Box::new(RegexAst::Char('a')),
@@ -300,8 +269,6 @@ fn regex_display_precedence_test() {
     }
 }
 
-/* ---------- FiniteAutomata::to_regex (state elimination) ---------- */
-
 fn build_odd_a_dfa() -> crate::finite_automata::FiniteAutomata {
     use crate::state_machine::StateMachine;
     let mut automata = crate::finite_automata::FiniteAutomata::new();
@@ -316,7 +283,6 @@ fn build_odd_a_dfa() -> crate::finite_automata::FiniteAutomata {
 }
 
 fn build_abb_nfa() -> crate::finite_automata::FiniteAutomata {
-    // (a|b)*abb with epsilon transitions, the classic example.
     use crate::state_machine::StateMachine;
     let mut automata = crate::finite_automata::FiniteAutomata::new();
     automata.add_n_states(11);
@@ -345,20 +311,17 @@ fn fa_to_regex_language_agreement_test() {
     let mut odd = build_odd_a_dfa();
     let abb = build_abb_nfa();
 
-    // Empty language: a total DFA rejecting everything.
     let mut reject_all = FiniteAutomata::new();
     reject_all.add_n_states(1);
     reject_all.make_initial(0);
     reject_all.add_transition(0, 0, "a".to_string());
 
-    // Universal language over {a}: accepting initial state with a loop.
     let mut accept_all = FiniteAutomata::new();
     accept_all.add_n_states(1);
     accept_all.make_initial(0);
     accept_all.make_final(0);
     accept_all.add_transition(0, 0, "a".to_string());
 
-    // Junk unreachable state must not influence the result.
     odd.add_state();
     odd.add_transition(2, 2, "a".to_string());
     odd.make_final(2);
@@ -379,7 +342,6 @@ fn fa_to_regex_language_agreement_test() {
         }
     }
 
-    // Spot checks with known shapes.
     assert_eq!(abb.to_regex().to_string().is_empty(), false);
     let reject_text = reject_all.to_regex().to_string();
     assert!(!regex::compile_str(&reject_text).unwrap().accepts("a"));
@@ -388,13 +350,10 @@ fn fa_to_regex_language_agreement_test() {
 #[test]
 fn fa_to_regex_empty_machine_test() {
     use crate::finite_automata::FiniteAutomata;
-    // No initial state: empty language.
     let machine = FiniteAutomata::new();
     assert!(matches!(machine.to_regex(), RegexAst::Empty));
 }
 
-/* A literal ε (`\ε`) parses, but labels reserve ε for the empty word, so
- * compiling it is rejected rather than silently turned into an ε move. */
 #[test]
 fn regex_literal_epsilon_is_not_compiled_test() {
     assert!(regex::parse("a\\ε").is_ok());

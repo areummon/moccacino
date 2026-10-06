@@ -1,18 +1,9 @@
 use std::collections::{HashMap, HashSet, BTreeSet};
 use std::collections::hash_map::Iter;
 
-/* Type to represent the unique id of a state. */
 pub type StateID = u64;
-/* Type to represent the input a trasntition has. */
 pub type Input = String;
 
-/* Struct that represents an state of a machine. 
- * The state has a hashmap because it is going to be used
- * in different structs, so implementing this feature instead
- * of the outer structure gives more practicality.
- * The input_transitions variable is used to save all string transitions.
- * The label is used only in automata reductions or transformations like NDA -> DFA to
- * store the subset of id's gotten by the subset construction algorithm.*/
 #[derive(PartialEq, Debug, Eq, Clone)]
 pub struct State {
     pub name: String,
@@ -35,14 +26,7 @@ impl State {
         }
     }
 
-    /* Functon to add a transition to another state given it's id.
-     * It uses replace nstead of insert to avoid having two same
-     * input transitions. If there is a transition to another state
-     * with the same input then the function returns true, and false 
-     * otherwise. It checks in O(1) if a transition already exists. */
     pub fn add_transition(&mut self, state_id: StateID, input: Input) -> bool {
-        // Re-adding a label to the same target is a duplicate, not a second
-        // choice; only the same label towards another target is ambiguous.
         let already_to_target = self
             .transitions_by_id
             .get(&state_id)
@@ -53,7 +37,6 @@ impl State {
         deterministic_flag
     }
 
-    /* Function to remove a transition. */
     pub fn remove_transition(&mut self, state_id: StateID, input: &str) {
         if let Some(transitions) = self.transitions_by_id.get_mut(&state_id) {
             transitions.remove(input);
@@ -61,10 +44,6 @@ impl State {
         self.rebuild_input_transitions();
     }
 
-    /* Function to modify an input transition, in the current implementation
-     * the program uses a hashset so to modify a input trasition, it has
-     * to remove it and add the modified version. It uses replace in case 
-     * the new input is already an input transition. */
     pub fn modify_input(&mut self, state_id: StateID, old_input: &str, new_input: Input) {
         if let Some(transitions) = self.transitions_by_id.get_mut(&state_id) {
             transitions.remove(old_input);
@@ -73,15 +52,11 @@ impl State {
         self.rebuild_input_transitions();
     }
 
-    /* Function to remove an entry in the transitions HashMap in case
-     * a state was removed. */
     pub fn remove_state(&mut self, state_id: StateID) {
         self.transitions_by_id.remove(&state_id);
         self.rebuild_input_transitions();
     }
 
-    /* Keeps the set of labels in use in step with the transitions after a
-     * removal or an edit, so later ambiguity checks never see ghost labels. */
     fn rebuild_input_transitions(&mut self) {
         self.input_transitions = self
             .transitions_by_id
@@ -90,9 +65,7 @@ impl State {
             .collect();
     }
 
-    /* Iterator for transitions_by_id hashmap. */
     pub fn iter_by_transition(&self) -> Iter<'_, StateID, HashSet<Input>> {
         self.transitions_by_id.iter()
     }
 }
-

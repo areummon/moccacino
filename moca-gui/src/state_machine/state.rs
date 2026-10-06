@@ -10,30 +10,19 @@ use crate::gui::theme::Family;
 
 pub(crate) const MIN_ZOOM: f32 = 0.4;
 pub(crate) const MAX_ZOOM: f32 = 2.5;
-/* Fit-to-content never magnifies past this, so tiny machines stay calm. */
 const FIT_MAX_ZOOM: f32 = 1.25;
-/* World margin kept around the drawn states: room for labels, the
- * initial pointer and (upwards) self-loops. */
 const CONTENT_MARGIN: f32 = 80.0;
 const CONTENT_MARGIN_TOP: f32 = 120.0;
 
 pub struct State {
-    /* Machine drawing (edges, nodes); cleared by every edit. */
     pub(crate) cache: canvas::Cache,
-    /* Dot grid; depends only on the view, so it survives drags and edits. */
     pub(crate) grid_cache: canvas::Cache,
     ctrl_pressed: bool,
     shift_pressed: bool,
     alt_pressed: bool,
-    /* The active editing tool (JFLAP-style); Delete doubles as the old
-     * deletion mode. */
     tool: EditorTool,
-    /* Tool to restore when a temporary Delete engagement ends (the Delete
-     * key press stashes the current tool, its release restores it). */
     tool_before_temp_delete: EditorTool,
-    /* World position of the viewport's top-left corner. */
     scroll: Vector,
-    /* Screen pixels per world unit. */
     zoom: f32,
     pub next_id: usize,
 }
@@ -55,13 +44,10 @@ impl Default for State {
     }
 }
 
-/* Everything the canvas needs besides the drawing itself. */
 pub(crate) struct CanvasContext<'a> {
     pub(crate) active_states: &'a HashSet<usize>,
     pub(crate) family: Family,
-    /* False while a modal is open: the canvas then ignores the mouse. */
     pub(crate) interactive: bool,
-    /* Last viewport size the app knows about; the canvas reports changes. */
     pub(crate) known_viewport: Size,
 }
 
@@ -108,8 +94,6 @@ impl State {
         self.grid_cache.clear();
     }
 
-    /* Zoom by `factor` keeping the world point under `anchor` (viewport
-     * coordinates) fixed on screen. */
     pub(crate) fn zoom_around(&mut self, factor: f32, anchor: Point, states: &[StateNode], viewport: Size) {
         let (zoom, scroll) = zoom_target(self.zoom, self.scroll, factor, anchor, states, viewport);
         self.zoom = zoom;
@@ -118,8 +102,6 @@ impl State {
         self.grid_cache.clear();
     }
 
-    /* Frame every state in the viewport, centered, without magnifying
-     * small machines beyond FIT_MAX_ZOOM. */
     pub(crate) fn fit_to(&mut self, states: &[StateNode], viewport: Size) {
         if states.is_empty() || viewport.width < 1.0 || viewport.height < 1.0 {
             self.zoom = 1.0;
@@ -144,7 +126,6 @@ impl State {
         self.cache.clear();
     }
 
-    /* Repaint everything, grid included (theme switches). */
     pub(crate) fn request_full_redraw(&mut self) {
         self.cache.clear();
         self.grid_cache.clear();
@@ -174,8 +155,6 @@ impl State {
         self.alt_pressed
     }
 
-    /* The active tool; Delete doubles as deletion mode, which is why the
-     * old flag accessor derives from it. */
     pub(crate) fn active_tool(&self) -> EditorTool {
         self.tool
     }
@@ -185,15 +164,12 @@ impl State {
         self.cache.clear();
     }
 
-    /* Remembers the current tool before a temporary Delete engagement. */
     pub fn stash_tool(&mut self) {
         if self.tool != EditorTool::Delete {
             self.tool_before_temp_delete = self.tool;
         }
     }
 
-    /* Restores the stashed tool, falling back to Arrow when Delete itself
-     * was stashed (never re-engage Delete from a release). */
     pub fn restore_tool(&mut self) {
         self.tool = match self.tool_before_temp_delete {
             EditorTool::Delete => EditorTool::Arrow,
@@ -215,8 +191,6 @@ impl State {
     }
 }
 
-/* World rectangle covering every state plus drawing margins; a unit box
- * at the origin when the canvas is empty. */
 pub(crate) fn content_bounds(states: &[StateNode]) -> Rectangle {
     if states.is_empty() {
         return Rectangle::new(Point::ORIGIN, Size::new(1.0, 1.0));
@@ -238,12 +212,7 @@ pub(crate) fn content_bounds(states: &[StateNode]) -> Rectangle {
     )
 }
 
-/* Allowed scroll interval per axis at a zoom level. Panning is free as long
- * as a strip of the content box stays on screen, so the drawing can never
- * be lost off-canvas, while placing a state near an edge never makes the
- * view jump. An empty canvas pans freely. */
 pub(crate) fn scroll_range(states: &[StateNode], viewport: Size, zoom: f32) -> ((f32, f32), (f32, f32)) {
-    /* World units of content that must remain visible. */
     const KEEP_VISIBLE: f32 = 120.0;
     const UNBOUNDED: (f32, f32) = (-1.0e7, 1.0e7);
     if states.is_empty() {
@@ -268,7 +237,6 @@ pub(crate) fn clamp_scroll(scroll: Vector, states: &[StateNode], viewport: Size,
     Vector::new(scroll.x.clamp(x_lo, x_hi), scroll.y.clamp(y_lo, y_hi))
 }
 
-/* The zoom and scroll after zooming by `factor` around a viewport point. */
 pub(crate) fn zoom_target(
     zoom: f32,
     scroll: Vector,

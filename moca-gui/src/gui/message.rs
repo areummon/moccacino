@@ -3,12 +3,9 @@ use iced::keyboard;
 use crate::gui::theme::Family;
 use crate::state_machine::{self, EditorTool};
 
-/* Header dropdown menus; at most one is open at a time. */
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Menu {
-    /* New-entity menu, anchored under its header trigger. */
     New,
-    /* The same entity list, anchored at the tab bar's "+" button. */
     NewFromTabs,
     Operations,
     File,
@@ -19,8 +16,6 @@ pub enum Menu {
 pub enum Message {
     Canvas(state_machine::CanvasMessage),
     SelectTool(EditorTool),
-    /* `captured` is true when a focused widget (text input) already
-     * consumed the key, so single-key shortcuts must stay inert. */
     KeyPressed {
         key: keyboard::Key,
         modifiers: keyboard::Modifiers,
@@ -38,10 +33,7 @@ pub enum Message {
     ChooseStartupModule(usize),
     StartupOpenFile,
     ExitApp,
-    /* The window's close button (the app intercepts it to protect unsaved
-     * work). */
     WindowCloseRequested,
-    // Unsaved-changes confirmation.
     ConfirmCloseDiscard,
     ConfirmCloseSave,
     CancelClose,

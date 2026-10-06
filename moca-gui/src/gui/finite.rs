@@ -1,6 +1,3 @@
-/* Finite automaton run panel: single-branch stepping for deterministic
- * machines, level-by-level branches for nondeterministic ones. Mirrors the
- * Turing panel's structure. */
 use std::collections::HashSet;
 
 use iced::Task;
@@ -14,7 +11,6 @@ use super::tab::{FiniteNdFrontier, FiniteRun, TabMachine};
 use super::widgets::{self, CellSize, Outcome};
 use crate::gui::theme::Family;
 
-/* Lane window rendered per branch in the nondeterministic view. */
 const ND_LANES_VISIBLE: usize = 12;
 
 impl super::app::App {
@@ -33,8 +29,6 @@ impl super::app::App {
             return Task::none();
         }
         self.get_active_tab_mut().sync_gui_to_machine();
-        // Malformed labels or a missing initial state abort the run early
-        // with a precise message instead of halting silently mid-run.
         if let Err(problem) = self.get_active_tab().machine.validate() {
             self.error_message = Some(problem);
             return Task::none();
@@ -99,10 +93,6 @@ impl super::app::App {
         Task::none()
     }
 
-    /* One level of the nondeterministic frontier: every live branch takes
-     * one transition, successors dedup against the visited set, and the
-     * verdict mirrors `check_input` exactly (a final state with the input
-     * fully consumed accepts before expanding; an empty frontier rejects). */
     pub(crate) fn advance_finite_frontier_by_one_level(&mut self) {
         if !self.active_tab_is_finite() {
             return;
@@ -144,8 +134,6 @@ impl super::app::App {
         if !self.active_tab_is_finite() || !self.get_active_tab().machine.is_deterministic() {
             return;
         }
-        // Split borrows so the machine and its run state can be touched at
-        // the same time.
         let tab = self.get_active_tab_mut();
         let (machine, finite_run) = (&tab.machine, &mut tab.finite_run);
         let finite = match machine {
@@ -159,8 +147,6 @@ impl super::app::App {
         if run.finished.is_some() {
             return;
         }
-        // Whole-input semantics, mirroring `check_input`: a final state
-        // accepts only once the input is fully consumed.
         if finite.is_accepting(&run.config) {
             run.finished = Some(true);
             return;
@@ -174,13 +160,9 @@ impl super::app::App {
                     run.config = next;
                     run.steps += 1;
                 } else {
-                    // ε-cycle: `check_input`'s memoization abandons the
-                    // branch, so the single-branch run rejects here.
                     run.finished = Some(false);
                 }
             },
-            // Only reachable on machines whose determinism flag missed an
-            // ambiguity; refuse to pick a branch rather than lie.
             _ => {
                 self.error_message = Some(
                     "Ambiguous step: several transitions apply at once. The deterministic flag missed an ambiguity, so step-by-step running stops here.".to_string(),
@@ -222,8 +204,6 @@ impl super::app::App {
                     self.create_finite_nd_lane_view(frontier),
                 )
             } else if let Some(run) = &tab.finite_run {
-                // Input ribbon: the consumed prefix dimmed, the next symbol
-                // highlighted.
                 let consumed = run.input.chars().count() - run.config.remaining_input().chars().count();
                 (
                     row![
@@ -250,8 +230,6 @@ impl super::app::App {
         widgets::run_dock(Family::Finite, Family::Finite.title(), tab.dock_collapsed, self.dock_is_compact(), controls.into(), status, body)
     }
 
-    /* Level-by-level lane view for nondeterministic machines: one row per
-     * live branch with its state and the input still to consume. */
     fn create_finite_nd_lane_view(&self, frontier: &FiniteNdFrontier) -> Element<'_, Message> {
         let rows = frontier
             .alive
@@ -269,7 +247,6 @@ impl super::app::App {
         widgets::lanes(rows, frontier.alive.len().saturating_sub(ND_LANES_VISIBLE))
     }
 
-    /* Display label of a machine state id: the canvas name when drawn. */
     pub(crate) fn state_label(&self, state_id: u64) -> String {
         self.get_active_tab()
             .states

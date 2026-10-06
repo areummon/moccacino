@@ -11,8 +11,6 @@ use moca_data::state::{State, StateID};
 use moca_data::state_machine::{Machine, MachineKind, StateMachine};
 use moca_data::turing_machine::{Configuration, RunOutcome, TuringMachine};
 
-/* Shared empty maps so grammar tabs can answer structural queries without
- * per-call allocations. */
 static EMPTY_STATES: std::sync::OnceLock<HashMap<StateID, State>> = std::sync::OnceLock::new();
 static EMPTY_FINALS: std::sync::OnceLock<HashSet<u64>> = std::sync::OnceLock::new();
 
@@ -24,18 +22,13 @@ fn empty_finals() -> &'static HashSet<u64> {
     EMPTY_FINALS.get_or_init(HashSet::new)
 }
 
-/* Snapshot of a running Turing machine shown in the tab's run panel. */
 #[derive(Debug, Clone)]
 pub(crate) struct TmRun {
     pub(crate) config: Configuration,
     pub(crate) steps: u64,
-    /* Set once the machine accepted or rejected; some branches never do. */
     pub(crate) finished: Option<RunOutcome>,
 }
 
-/* Frontier of a running nondeterministic Turing machine: every live branch's
- * configuration after `level` parallel steps. Mirrors
- * `run_nondeterministic`'s level loop and dedup, one level per Step press. */
 #[derive(Debug, Clone)]
 pub(crate) struct NdFrontier {
     pub(crate) level: u64,
@@ -44,35 +37,23 @@ pub(crate) struct NdFrontier {
     pub(crate) finished: Option<RunOutcome>,
 }
 
-/* Snapshot of a running pushdown automaton shown in the tab's run panel.
- * The original input is kept so the ribbon can dim the consumed prefix. */
 #[derive(Debug, Clone)]
 pub(crate) struct PdaRun {
     pub(crate) config: PdaConfiguration,
     pub(crate) input: String,
     pub(crate) steps: u64,
-    /* Some(true) = accepted, Some(false) = rejected (halt or bounds). */
     pub(crate) finished: Option<bool>,
 }
 
-/* Snapshot of a running finite automaton shown in the tab's run panel. The
- * original input is kept so the ribbon can dim the consumed prefix; the
- * visited set mirrors `check_input`'s memoization: revisiting a (state,
- * remaining input) pair is an ε-cycle dead end. */
 #[derive(Debug, Clone)]
 pub(crate) struct FiniteRun {
     pub(crate) config: FiniteConfiguration,
     pub(crate) input: String,
     pub(crate) steps: u64,
     pub(crate) visited: HashSet<FiniteConfiguration>,
-    /* Some(true) = accepted, Some(false) = rejected. */
     pub(crate) finished: Option<bool>,
 }
 
-/* Frontier of a running nondeterministic machine: every live branch's
- * configuration after `level` parallel transitions, deduped against the
- * visited set. Mirrors the library traversals (arrival acceptance before
- * expanding, empty frontier = rejected), one level per Step press. */
 #[derive(Debug, Clone)]
 pub(crate) struct FiniteNdFrontier {
     pub(crate) level: u64,
@@ -89,10 +70,6 @@ pub(crate) struct PdaNdFrontier {
     pub(crate) finished: Option<bool>,
 }
 
-/* The formal object behind a tab: machine families dispatch through the
- * shared traits, grammars use their own surface (they are not state
- * machines), and finite-only transformations stay explicit optional
- * methods. */
 #[derive(Debug, Clone)]
 pub(crate) enum TabMachine {
     Finite(FiniteAutomata),
@@ -116,8 +93,6 @@ impl TabMachine {
         TabMachine::Pushdown(PushdownAutomata::new("Z".to_string()))
     }
 
-    /* Machine families implementing the shared traits; grammars are not
-     * machines, so their tabs answer None here. */
     pub(crate) fn machine_kind(&self) -> Option<MachineKind> {
         match self {
             TabMachine::Finite(_) => Some(MachineKind::Finite),
@@ -139,8 +114,6 @@ impl TabMachine {
             TabMachine::Grammar(_) => Family::Grammar,
         }
     }
-
-    // ---- Structural API (StateMachine trait; grammar variant ignores it) ----
 
     pub(crate) fn clear(&mut self) {
         match self {
@@ -207,8 +180,6 @@ impl TabMachine {
             TabMachine::Finite(finite) => finite.get_states_by_id_ref(),
             TabMachine::Pushdown(pda) => pda.get_states_by_id_ref(),
             TabMachine::Turing(turing) => turing.get_states_by_id_ref(),
-            // The canvas has nothing to show for grammar tabs; an empty map
-            // keeps load paths uniform.
             TabMachine::Grammar(_) => empty_states(),
         }
     }
@@ -231,9 +202,6 @@ impl TabMachine {
         }
     }
 
-    // ---- Behavioral API ----
-
-    /* Grammars interpret "accepts" as CYK membership. */
     pub(crate) fn accepts(&self, input: &str) -> bool {
         match self {
             TabMachine::Finite(finite) => Machine::accepts(finite, input),
@@ -258,9 +226,6 @@ impl TabMachine {
         }
     }
 
-    // ---- Finite-only transformations ----
-
-    /* Subset construction into a DFA, for nondeterministic finite automata. */
     pub(crate) fn into_dfa(&self) -> Option<TabMachine> {
         match self {
             TabMachine::Finite(finite) if !finite.is_deterministic() => {
@@ -270,7 +235,6 @@ impl TabMachine {
         }
     }
 
-    /* Hopcroft minimization, for deterministic finite automata. */
     pub(crate) fn minimized(&self) -> Option<TabMachine> {
         match self {
             TabMachine::Finite(finite) if finite.is_deterministic() => {
@@ -281,16 +245,11 @@ impl TabMachine {
     }
 }
 
-/* Facts the status bar shows about a tab, recomputed after edits that can
- * change the machine (never per frame, never on plain drags or scrolls). */
 #[derive(Debug, Clone, Default)]
 pub(crate) struct TabInsight {
     pub(crate) deterministic: bool,
-    /* Why the machine cannot run yet, if anything. */
     pub(crate) problem: Option<String>,
     pub(crate) production_count: usize,
-    /* The content differs from what was last saved or loaded (or, for a
-     * tab that was never saved, it is not empty). */
     pub(crate) unsaved: bool,
 }
 
@@ -308,35 +267,22 @@ pub(crate) struct Tab {
     pub(crate) edit_text: String,
     pub(crate) check_input_dialog_open: bool,
     pub(crate) check_input_text: String,
-    // Run dock collapsed to its header row.
     pub(crate) dock_collapsed: bool,
-    // Cached status-bar facts, refreshed after structural edits.
     pub(crate) insight: TabInsight,
-    // States the loaded run occupies, mirrored after every update so the
-    // canvas can glow them (and redraw only when they change).
     pub(crate) run_highlight: HashSet<usize>,
-    // Fingerprint of the content as last saved or loaded; None for tabs
-    // that never touched a file (generated results), which count as
-    // unsaved as soon as they hold anything.
     pub(crate) saved_fingerprint: Option<u64>,
     pub(crate) regex_dialog_open: bool,
     pub(crate) regex_text: String,
-    // Turing run panel state.
     pub(crate) tm_input_text: String,
     pub(crate) tm_playing: bool,
-    // Pushdown run panel state.
     pub(crate) pda_input_text: String,
     pub(crate) pda_run: Option<PdaRun>,
     pub(crate) pda_playing: bool,
     pub(crate) pda_frontier: Option<PdaNdFrontier>,
-    // Finite run panel state.
     pub(crate) finite_input_text: String,
     pub(crate) finite_playing: bool,
     pub(crate) finite_run: Option<FiniteRun>,
     pub(crate) finite_frontier: Option<FiniteNdFrontier>,
-    // Grammar panel state: editor content, parsed result mirror and last
-    // outputs. The editor is the source of truth while typing; grammar_text
-    // mirrors it as a plain string for the parser calls.
     pub(crate) grammar_content: iced::widget::text_editor::Content,
     pub(crate) grammar_text: String,
     pub(crate) grammar_word: String,
@@ -362,7 +308,6 @@ impl Tab {
         tab
     }
 
-    /* A fresh tab holding an empty single-tape Turing machine. */
     pub(crate) fn new_turing() -> Self {
         let mut tab = Self::new();
         tab.machine = TabMachine::new_turing();
@@ -377,7 +322,6 @@ impl Tab {
         tab
     }
 
-    /* A fresh tab whose panel edits a context-free grammar. */
     pub(crate) fn new_grammar() -> Self {
         let mut tab = Self::new();
         tab.machine = TabMachine::Grammar(Grammar::default());
@@ -394,8 +338,6 @@ impl Tab {
         tab
     }
 
-    /* A fresh, empty tab of the given family. It starts clean (the default
-     * grammar template included), so closing it right away never asks. */
     pub(crate) fn new_of(family: Family) -> Self {
         let mut tab = match family {
             Family::Finite => Self::new(),
@@ -407,8 +349,6 @@ impl Tab {
         tab
     }
 
-    /* States the loaded run currently occupies (every live branch for
-     * nondeterministic frontiers); highlighted on the canvas. */
     pub(crate) fn active_run_states(&self) -> HashSet<usize> {
         let mut active = HashSet::new();
         match &self.machine {
@@ -441,8 +381,6 @@ impl Tab {
         active
     }
 
-    /* Whether a run is loaded, has finished, and is auto-playing. A finished
-     * run never plays, whatever its play flag still says. */
     pub(crate) fn run_state(&self) -> (bool, bool, bool) {
         let (loaded, finished, playing) = match &self.machine {
             TabMachine::Turing(_) => (
@@ -468,8 +406,6 @@ impl Tab {
         (loaded, finished, playing && !finished)
     }
 
-    /* Syncs the drawing into the machine and caches what the status bar
-     * shows. Grammar tabs parse their editor text instead. */
     pub(crate) fn refresh_insight(&mut self) {
         if self.machine.is_grammar() {
             let parsed = moca_data::grammar::parse_grammar(self.grammar_text.trim());
@@ -505,10 +441,6 @@ impl Tab {
         };
     }
 
-    /* Hash of everything a .ce save persists: names, transitions (labels as
-     * a set), initial and accepting states, or the grammar text. Layout,
-     * zoom and runs are not part of the file, so they never count as
-     * changes. */
     pub(crate) fn content_fingerprint(&self) -> u64 {
         use std::hash::{Hash, Hasher};
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -554,7 +486,6 @@ impl Tab {
         }
     }
 
-    /* Records the current content as saved (after a save or a load). */
     pub(crate) fn mark_saved(&mut self) {
         self.saved_fingerprint = Some(self.content_fingerprint());
         self.insight.unsaved = false;
@@ -578,7 +509,6 @@ impl Tab {
         self.state_machine.request_redraw();
     }
 
-    /* The active canvas editing tool, stored on the canvas state. */
     pub(crate) fn active_tool(&self) -> crate::state_machine::EditorTool {
         self.state_machine.active_tool()
     }
@@ -591,18 +521,12 @@ impl Tab {
     pub(crate) fn sync_gui_to_machine(&mut self) {
         self.machine.clear();
 
-        // Add all states
         for state_node in &self.states {
             self.machine.add_state_with_id_label(state_node.id as u64, &state_node.label);
         }
 
-        // Add all transitions (multi-label)
         for (&(from, to), labels) in &self.transitions {
             for label in labels {
-                // A blank or whitespace-only label denotes ε on machine
-                // families that have ε-transitions; Turing tapes have no
-                // such concept, so blank labels stay as typed there and are
-                // reported by Machine::validate.
                 let normalized = if !matches!(self.machine, TabMachine::Turing(_))
                     && (label.trim().is_empty() || label == "ε")
                 {
@@ -614,12 +538,10 @@ impl Tab {
             }
         }
 
-        // Set final states
         for &state_id in &self.final_states {
             self.machine.make_final(state_id as u64);
         }
 
-        // Set initial state
         if let Some(initial_id) = self.initial_state {
             self.machine.make_initial(initial_id as u64);
         }
@@ -648,7 +570,6 @@ impl Tab {
 
         self.state_machine.next_id = max_id_after_load + 1;
 
-        // Add all transitions (multi-label)
         for (from_id, state) in self.machine.states_ref() {
             for (to_id, inputs) in state.iter_by_transition() {
                 let key = (*from_id as usize, *to_id as usize);
@@ -680,17 +601,10 @@ impl Tab {
             Self::apply_grid_layout_to_tab(self);
         }
 
-        // Fresh content starts visible at the top-left of the canvas.
         self.state_machine.set_scroll(iced::Vector::new(0.0, 0.0));
         self.state_machine.request_redraw();
     }
 
-    /* Deterministic layered (Sugiyama-lite) layout for loaded machines:
-     * states are stacked in top-down layers following the flow from the
-     * initial state. Cycle back-edges are excluded from the layering so
-     * star loops cannot fold the graph onto itself, crossing order is
-     * improved with barycenter sweeps, and the horizontal spacing adapts
-     * so small graphs breathe while wide ones stay navigable. */
     fn apply_layered_layout_to_tab(active_tab: &mut Tab) {
         use std::collections::BTreeSet;
 
@@ -716,8 +630,6 @@ impl Tab {
             }
         };
 
-        // Adjacency over the drawn states, self-loops excluded, iteration
-        // order deterministic (sorted ids).
         let neighbors: Vec<Vec<usize>> = {
             let mut adjacency: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); node_count];
             for (&(from, to), _) in &active_tab.transitions {
@@ -733,9 +645,6 @@ impl Tab {
                 .collect()
         };
 
-        // Depth-first search from the initial state with gray/black
-        // coloring: an edge into a gray node closes a cycle (back edge)
-        // and is dropped from the layering graph.
         let mut color = vec![0u8; node_count];
         let mut back_edge = vec![BTreeSet::new(); node_count];
         let mut preorder: Vec<usize> = Vec::new();
@@ -767,8 +676,6 @@ impl Tab {
         }
         let reachable: Vec<bool> = color.iter().map(|&c| c != 0).collect();
 
-        // Longest-path layering: Kahn topological order over the kept
-        // edges, relaxing layer[v] to layer[u] + 1.
         let mut indegree = vec![0usize; node_count];
         let mut kept: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); node_count];
         for u in 0..node_count {
@@ -810,9 +717,6 @@ impl Tab {
             layers[layer[u]].push(u);
         }
 
-        // Barycenter sweeps: repeatedly reorder each layer by the mean
-        // position of its (undirected) neighbors in the neighboring
-        // layers; stable sort keeps ties deterministic.
         let mut undirected: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); node_count];
         for u in 0..node_count {
             if !reachable[u] {
@@ -841,8 +745,6 @@ impl Tab {
                 (0..max_layer).rev().collect()
             };
             for l in order {
-                // Precompute barycenter keys up front so the position
-                // table is not borrowed while the layer is reordered.
                 let mut keys: Vec<(usize, f32)> = layers[l]
                     .iter()
                     .map(|&u| {
@@ -866,8 +768,6 @@ impl Tab {
             }
         }
 
-        // Coordinates: horizontal spacing adapts to the widest layer so
-        // the drawing comfortably uses the canvas width.
         const START_X: f32 = 150.0;
         const START_Y: f32 = 150.0;
         const Y_SPACING: f32 = 150.0;
@@ -888,8 +788,6 @@ impl Tab {
             }
         }
 
-        // States not reachable from the initial state go to their own
-        // wrapped rows below the layered region.
         let unreachable: Vec<usize> = (0..node_count).filter(|&u| !reachable[u]).collect();
         if !unreachable.is_empty() {
             let per_row = ((TARGET_WIDTH / x_spacing).floor() as usize).max(1);
@@ -924,7 +822,5 @@ impl Tab {
                 start_y + (row as f32 * spacing)
             );
         }
-
-        // No-op: no from_point/to_point to update
     }
 }

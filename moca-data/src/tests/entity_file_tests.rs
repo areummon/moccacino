@@ -108,7 +108,6 @@ final: q1
     let (entities, errors) = parse_entity_file(source);
     assert!(errors.is_empty(), "unexpected errors: {:?}", errors);
     let pda = pda_of(&entities[0].entity);
-    // The assembled label must use the repo's `input;pop/push` convention.
     let labels: Vec<String> = pda
         .get_states_by_id_ref()
         .values()
@@ -148,7 +147,6 @@ final: b
 
 #[test]
 fn entity_file_tm_direction_handling_test() {
-    // Lowercase directions are accepted and normalized.
     let source = "\
 entity: turing
 states: a, b
@@ -160,7 +158,6 @@ final: b
     assert!(errors.is_empty(), "unexpected errors: {:?}", errors);
     assert!(tm_of(&entities[0].entity).accepts("0"));
 
-    // Unknown directions are rejected.
     let message = first_error_message(
         "\
 entity: turing
@@ -189,8 +186,6 @@ final: b
 
 #[test]
 fn entity_file_auto_registration_test() {
-    // Labels only referenced in transitions, initial and finals become
-    // states automatically.
     let source = "\
 entity: nfa
 states: start
@@ -234,8 +229,6 @@ regex: (a|b
 
 #[test]
 fn entity_file_grammar_invalid_test() {
-    // A line without `->` is a real parse error (note: an empty RHS like
-    // `S ->` is VALID here — it denotes an ε-production).
     let message = first_error_message(
         "\
 entity: grammar
@@ -292,7 +285,6 @@ regex: a*
     assert_eq!(entities.len(), 2, "expected the two healthy entities");
     assert_eq!(errors.len(), 1);
     assert_eq!(errors[0].entity_name, "DFA");
-    // The healthy DFA accepts exactly "a" (b has no outgoing edges).
     assert!(finite_of(&entities[0].entity).accepts("a"));
     assert!(!finite_of(&entities[0].entity).accepts("aa"));
     assert!(finite_of(&entities[1].entity).accepts("aaaa"));
@@ -358,15 +350,10 @@ final: q1
 ";
     let (entities, errors) = parse_entity_file(source);
     assert!(errors.is_empty(), "unexpected errors: {:?}", errors);
-    // Defaults apply: TM blank '_', PDA bottom marker 'Z'.
     assert!(tm_of(&entities[0].entity).accepts(""));
     assert!(Machine::accepts(pda_of(&entities[1].entity), "a"));
 }
 
-/* ---------- .ce serialization round-trips ---------- */
-
-/* All (from, to, label) triples of a machine keyed by state labels, so
- * saved/reloaded machines compare structurally regardless of state ids. */
 fn machine_triples(states: &HashMap<StateID, State>) -> BTreeSet<(String, String, String)> {
     let mut triples = BTreeSet::new();
     for (from_id, state) in states {
@@ -385,8 +372,6 @@ fn machine_triples(states: &HashMap<StateID, State>) -> BTreeSet<(String, String
 
 #[test]
 fn entity_file_save_load_finite_roundtrip_test() {
-    // `new()`, so the determinism flag starts true like the loader's
-    // machines do and the dfa/nfa alias comparison is meaningful.
     let mut fa = FiniteAutomata::new();
     fa.add_state_with_id_label(0, "q0");
     fa.add_state_with_id_label(1, "q1");
@@ -490,7 +475,6 @@ fn entity_file_save_empty_entity_test() {
 
 #[test]
 fn entity_file_save_unrepresentable_label_test() {
-    // Finite: a comma inside the symbol breaks the tuple segmentation.
     let mut fa = FiniteAutomata::default();
     fa.add_state_with_id_label(0, "q0");
     fa.add_state_with_id_label(1, "q1");
@@ -498,15 +482,12 @@ fn entity_file_save_unrepresentable_label_test() {
     fa.add_transition(0, 1, "a,b".to_string());
     assert!(write_finite_entity("e", &fa).is_err());
 
-    // Pushdown: a label missing the push part (storable, but the engine
-    // skips it and the tuple format cannot express it).
     let mut pda = PushdownAutomata::new("Z".to_string());
     pda.add_state_with_id_label(0, "q0");
     pda.make_initial(0);
     pda.add_transition(0, 0, "a;Z".to_string());
     assert!(write_pushdown_entity("e", &pda).is_err());
 
-    // Turing: invalid direction, then a missing direction.
     let mut tm = TuringMachine::new('_');
     tm.add_state_with_id_label(0, "q0");
     tm.make_initial(0);

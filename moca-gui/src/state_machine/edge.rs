@@ -1,8 +1,3 @@
-/* Geometry of one drawn transition (all labels between an ordered pair of
- * states): the shaft curve, the arrowhead and the label pills. Drawing,
- * hit-testing and hover highlighting all derive from this single source,
- * so what you see is exactly what you can click. Coordinates are world
- * coordinates. */
 
 use iced::widget::canvas::{Path, path};
 use iced::{Point, Rectangle, Size, Vector};
@@ -13,14 +8,11 @@ use super::util::VectorExt;
 pub(crate) const LABEL_FONT_SIZE: f32 = 13.0;
 pub(crate) const LABEL_HEIGHT: f32 = 20.0;
 const LABEL_GAP: f32 = 3.0;
-/* JetBrains Mono advances 0.6em per glyph, so label widths are exact. */
 const LABEL_CHAR_WIDTH: f32 = LABEL_FONT_SIZE * 0.6;
 const LABEL_PADDING_X: f32 = 8.0;
-/* Distance between the shaft and the nearest edge of the label block. */
 const LABEL_CLEARANCE: f32 = 5.0;
 const ARROW_LENGTH: f32 = 11.0;
 const ARROW_HALF_WIDTH: f32 = 4.8;
-/* How close (world units) a click must land to the shaft to hit it. */
 const SHAFT_HIT_DISTANCE: f32 = 7.0;
 
 #[derive(Debug, Clone, Copy)]
@@ -50,28 +42,19 @@ impl Shaft {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct EdgeGeometry {
     shaft: Shaft,
-    /* Arrow tip (on the target's boundary) and the unit travel direction
-     * arriving there. */
     tip: Point,
     direction: Vector,
-    /* Point on the shaft the label block hangs off, and the unit normal
-     * pointing to the side the labels sit on. */
     label_anchor: Point,
     label_normal: Vector,
 }
 
 impl EdgeGeometry {
-    /* `has_reverse` bends both directions of a two-way pair apart so
-     * neither hides the other; `loop_direction` is the unit vector a
-     * self-loop points along (away from the state's other edges). */
     pub(crate) fn new(from: &StateNode, to: &StateNode, has_reverse: bool, loop_direction: Vector) -> Self {
         if from.id == to.id {
             return Self::self_loop(from, loop_direction);
         }
         let delta = to.position - from.position;
         if has_reverse {
-            // Both directions bend to the same absolute side of their own
-            // travel direction, so the pair separates into two arcs.
             let perpendicular = Vector::new(-delta.y, delta.x).unit();
             let midpoint = from.position + delta * 0.5;
             let control = midpoint + perpendicular * (delta.length() * 0.22).max(24.0);
@@ -99,10 +82,6 @@ impl EdgeGeometry {
         }
     }
 
-    /* A teardrop pointing along `direction`: it leaves the state a little
-     * clockwise of that direction and returns a little counterclockwise
-     * (for the default upward loop: out at the upper right, back in at the
-     * upper left). */
     fn self_loop(node: &StateNode, direction: Vector) -> Self {
         const SPREAD: f32 = 0.52;
         const LEAN: f32 = 0.42;
@@ -124,8 +103,6 @@ impl EdgeGeometry {
         }
     }
 
-    /* The shaft, stopping just short of the tip so the stroke never pokes
-     * through the filled arrowhead. */
     pub(crate) fn shaft_path(&self) -> Path {
         let end = self.tip - self.direction * (ARROW_LENGTH * 0.6);
         let mut builder = path::Builder::new();
@@ -157,8 +134,6 @@ impl EdgeGeometry {
         })
     }
 
-    /* One rectangle per label, stacked in label order, placed beside the
-     * shaft on the normal side. */
     pub(crate) fn label_rects<'l>(&self, labels: impl IntoIterator<Item = &'l String>) -> Vec<(Rectangle, &'l str)> {
         let labels: Vec<&str> = labels.into_iter().map(String::as_str).collect();
         if labels.is_empty() {
@@ -168,8 +143,6 @@ impl EdgeGeometry {
         let block_width = widths.iter().cloned().fold(0.0, f32::max);
         let block_height =
             labels.len() as f32 * LABEL_HEIGHT + (labels.len() - 1) as f32 * LABEL_GAP;
-        // Push the block out along the normal until its nearest side
-        // clears the shaft.
         let n = self.label_normal;
         let reach = n.x.abs() * block_width / 2.0 + n.y.abs() * block_height / 2.0;
         let center = self.label_anchor + n * (LABEL_CLEARANCE + reach);
@@ -188,8 +161,6 @@ impl EdgeGeometry {
             .collect()
     }
 
-    /* Whether a world point hits this edge: on a label pill, or close
-     * enough to the shaft. */
     pub(crate) fn hit<'l>(&self, point: Point, labels: impl IntoIterator<Item = &'l String>) -> bool {
         if self
             .label_rects(labels)

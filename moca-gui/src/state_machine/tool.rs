@@ -1,24 +1,12 @@
-/* JFLAP-style canvas editing tools. One active tool per tab decides what a
- * mouse press on the canvas means — select/move, create states, connect
- * states, or delete — instead of one overloaded click model guarded by
- * modifier keys. The active tool lives on the canvas `State` and is
- * switched from the floating tool palette or the keyboard. */
 
 use crate::gui::icons::Icon;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum EditorTool {
-    /* Select/edit: drag states, drag empty space pans, Shift+click toggles
-     * final, Alt+click toggles initial, double-click renames, clicking a
-     * transition opens its label editor. */
     #[default]
     Arrow,
-    /* Click empty canvas creates a state at the cursor. */
     State,
-    /* Click a source state, then a target state, to request a new
-     * transition label. */
     Transition,
-    /* Click a state or transition to remove it. */
     Delete,
 }
 
@@ -44,7 +32,6 @@ impl EditorTool {
         }
     }
 
-    /* Number-key shortcut. */
     pub(crate) fn shortcut(self) -> &'static str {
         match self {
             EditorTool::Arrow => "1",
@@ -54,8 +41,6 @@ impl EditorTool {
         }
     }
 
-    /* Description of the tool's interactions, shown as the palette
-     * button's tooltip. */
     pub(crate) fn tooltip(self) -> &'static str {
         match self {
             EditorTool::Arrow => {
@@ -72,7 +57,6 @@ impl EditorTool {
         }
     }
 
-    /* One-line hint for the status bar. */
     pub(crate) fn hint(self) -> &'static str {
         match self {
             EditorTool::Arrow => "Drag states · drag space to pan · double-click to rename",
