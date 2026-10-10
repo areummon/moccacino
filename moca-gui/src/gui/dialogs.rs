@@ -397,7 +397,7 @@ impl super::app::App {
                 entry(&["Tab"], "Toggle Select ↔ Delete"),
                 entry(&["Del"], "Hold for a quick delete"),
                 entry(&["Shift", "click"], "Toggle accepting state"),
-                entry(&["Alt", "click"], "Toggle initial state"),
+                entry(&["Alt", "click"], "Make initial state"),
                 entry(&["Esc"], "Back to Select"),
             ],
         );
