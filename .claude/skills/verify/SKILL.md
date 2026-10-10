@@ -1,6 +1,6 @@
 ---
 name: verify
-description: Launch and drive the moccacino desktop GUI (Iced, automata workbench) the way a user does — on a private Xvfb display with xdotool clicks/keys, screenshots and clipboard reads as evidence. Use to prove any user-visible change (canvas editing, run panels, operations, .ce load/save, grammar tab, exports) in the real app instead of only `cargo test`.
+description: Launch and drive the moccacino desktop GUI (Iced, automata workbench) the way a user does — on a private Xvfb display with xdotool clicks/keys, screenshots and clipboard reads as evidence — and its wasm web build in headless Chromium. Use to prove any user-visible change (canvas editing, run panels, operations, .ce load/save, grammar tab, exports) in the real app instead of only `cargo test`.
 ---
 
 # Verify moccacino in the real GUI
@@ -126,6 +126,14 @@ $M down        # kills exactly the app + Xvfb pids recorded by `up`, deletes $RU
 It never kills by process name, keeps `$EVID` (prints `evidence kept: …`), and
 is safe to rerun. Run it after every failed attempt too. Afterwards `git status`
 must show no stray files (only `.claude/` if the skill itself is uncommitted).
+
+## Web build
+
+The wasm build has its own driver, `.claude/skills/verify/scripts/web DIST_DIR OUT_DIR [ACTIONS_JSON]`
+(Node + headless Chromium over CDP; build `dist/` with trunk in the devshell first).
+It serves the build, runs the JSON actions, saves numbered PNGs to `OUT_DIR`, prints console
+output, and exits 1 on any page exception or panic. Recipes and the action format are in
+[`features/web.md`](features/web.md).
 
 ## Gotchas
 
