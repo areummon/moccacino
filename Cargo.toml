@@ -23,6 +23,9 @@ rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "a
 # The web build: WebGL2 (iced alone targets only WebGPU) and the browser APIs platform.rs uses.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 iced = { version = "0.13.1", features = ["webgl"] }
+console_error_panic_hook = "0.1.7"
+# iced_futures -> wasm-timer -> parking_lot 0.11 pulls `instant` without this feature, leaving an unresolved `env.now` import.
+instant = { version = "0.1.13", features = ["wasm-bindgen"] }
 js-sys = "0.3.77"
 wasm-bindgen = "0.2.100"
 web-sys = { version = "0.3.77", features = ["Window", "Document", "Storage", "Navigator", "Clipboard", "Blob", "BlobPropertyBag", "Url", "Node", "Element", "HtmlElement", "HtmlAnchorElement"] }

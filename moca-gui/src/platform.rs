@@ -8,6 +8,8 @@ mod imp {
 
     pub(crate) const IS_WEB: bool = false;
 
+    pub(crate) fn init() {}
+
     fn settings_path() -> Option<PathBuf> {
         let base = std::env::var_os("XDG_CONFIG_HOME")
             .filter(|value| !value.is_empty())
@@ -44,6 +46,10 @@ mod imp {
     use web_sys::{Blob, BlobPropertyBag, HtmlAnchorElement, Storage, Url};
 
     pub(crate) const IS_WEB: bool = true;
+
+    pub(crate) fn init() {
+        console_error_panic_hook::set_once();
+    }
 
     const SETTINGS_KEY: &str = "moccacino.settings";
 
