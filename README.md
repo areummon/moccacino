@@ -1,6 +1,8 @@
 # moccacino
 
-moccacino is a desktop workbench for automata theory and formal languages. Draw machines on a canvas, run them step by step, and apply the classic conversions, all in one interface with light and dark themes. It is written in Rust with the [Iced](https://github.com/iced-rs/iced) GUI library.
+moccacino is a workbench for automata theory and formal languages. Draw machines on a canvas, run them step by step, and apply the classic conversions, all in one interface with light and dark themes. It runs on the desktop and in the browser, and is written in Rust with the [Iced](https://github.com/iced-rs/iced) GUI library.
+
+**Try it in your browser: [areummon.github.io/moccacino](https://areummon.github.io/moccacino/)** (no installation needed).
 
 <p align="center">
   <img src="docs/media/draw.gif" width="800" alt="Drawing a finite automaton: adding states, linking them with transitions and typing their labels">
@@ -27,7 +29,18 @@ Across every family:
 
 ## Installation
 
-### With Nix (recommended)
+### In the browser
+
+Open [areummon.github.io/moccacino](https://areummon.github.io/moccacino/). The page loads the same app compiled to WebAssembly and draws through WebGL2, which every current desktop browser supports. The first visit downloads about 3 MB.
+
+The web version has the same features as the desktop app, with these differences:
+
+- **Open .ce file…** opens your browser's file picker, and **Save tab as .ce…** downloads `<tab name>.ce` to your downloads folder.
+- The theme you pick is remembered by your browser.
+- The browser keeps `Ctrl+T`, `Ctrl+W` and `Ctrl+Tab` for its own tabs. Use the `+` button and the `×` on each tab instead.
+- Closing the browser tab does not warn you about unsaved work, so save before you leave.
+
+### With Nix (recommended for the desktop app)
 
 The flake provides the toolchain and every graphics library (X11, Wayland, Vulkan, Mesa):
 
@@ -43,7 +56,7 @@ nix develop      # dev shell (or let direnv load it through the committed .envrc
 
 ### With Cargo
 
-You need Rust and Cargo. The flake pins nightly, but stable should also work. On Linux you also need the usual X11/Wayland/Vulkan development libraries.
+You need Rust and Cargo. `rust-toolchain.toml` pins the nightly toolchain, and `rustup` installs it on the first build. On Linux you also need the usual X11/Wayland/Vulkan development libraries.
 
 ```bash
 git clone https://github.com/areummon/moccacino.git
@@ -119,7 +132,7 @@ From there you can check words, view a leftmost derivation, or convert the gramm
 
 ### Files
 
-**File → Open .ce file…** (`Ctrl+O`) loads a file with every entity in its own tab. **Save tab as .ce…** (`Ctrl+S`) writes the active tab. Ready-made demos live in [`examples/`](examples/):
+**File → Open .ce file…** (`Ctrl+O`) loads a file with every entity in its own tab. **Save tab as .ce…** (`Ctrl+S`) writes the active tab. In the browser, these use the file picker and a download. Ready-made demos live in [`examples/`](examples/):
 
 ```text
 entity: pda
@@ -145,8 +158,8 @@ Press `F1` (or `?`) in the app for the full cheat sheet. The main shortcuts are:
 
 | Shortcut | Action |
 |---|---|
-| `Ctrl+T` / `Ctrl+W` | New tab / close tab |
-| `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous tab |
+| `Ctrl+T` / `Ctrl+W` | New tab / close tab (desktop only) |
+| `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous tab (desktop only) |
 | `Ctrl+O` / `Ctrl+S` | Open / save a `.ce` file |
 | `Ctrl+Shift+L` | Switch between the light and dark themes |
 | `1`–`4`, `Tab`, `Esc` | Editing tools |
@@ -168,7 +181,20 @@ cargo test -p moca-data --bin moca-data
 
 Besides unit tests for each family, the suite cross-checks the engines against each other and against reference algorithms. For example, it compares Hopcroft's algorithm with table-filling minimization on random DFAs.
 
-The Nix flake builds with [Crane](https://github.com/ipetkov/crane) and pins the toolchain and graphics drivers.
+The Nix flake builds with [Crane](https://github.com/ipetkov/crane) and pins the graphics drivers. The toolchain is pinned once, in `rust-toolchain.toml`, which the flake and CI both read.
+
+### Web build
+
+The web version is built with [trunk](https://trunkrs.dev/), which the dev shell provides along with the `wasm32-unknown-unknown` target:
+
+```bash
+trunk serve                                         # local server with live reload
+trunk build --release --public-url /moccacino/      # static site in dist/
+```
+
+`index.html` is trunk's entry point. Platform differences (settings storage, downloads, the panic hook) live in `moca-gui/src/platform.rs`. `vendor/iced_winit` is iced_winit 0.13 with two web fixes: keyboard modifiers ([iced#2618](https://github.com/iced-rs/iced/issues/2618)) and clipboard support. Remove it when upgrading to an iced release that includes them.
+
+Every push to `master` rebuilds the site and deploys it to GitHub Pages through `.github/workflows/pages.yml`.
 
 > [!WARNING]
 > This is a personal project, so there may still be bugs I don't know about. Issues are welcome.
