@@ -117,7 +117,7 @@ impl canvas::Program<CanvasMessage> for StateMachine<'_> {
 
                 match self.state.active_tool() {
                     EditorTool::Arrow => {
-                        let now = std::time::Instant::now();
+                        let now = iced::time::Instant::now();
                         let (last_click_time, last_clicked_state, last_clicked_transition) =
                             match interaction.pending {
                                 Some(PendingTransition::ClickTracking {
@@ -290,7 +290,7 @@ impl canvas::Program<CanvasMessage> for StateMachine<'_> {
                         None
                     } else {
                         Some(PendingTransition::ClickTracking {
-                            last_click_time: std::time::Instant::now(),
+                            last_click_time: iced::time::Instant::now(),
                             last_clicked_state: Some(state_id),
                             last_clicked_transition: None,
                         })

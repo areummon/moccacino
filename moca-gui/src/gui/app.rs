@@ -1,8 +1,9 @@
 use iced::keyboard;
 use iced::widget::{column, container, horizontal_rule, stack};
+use iced::time::Instant;
 use iced::{Element, Event, Length, Size, Subscription, Task};
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use super::message::{Menu, Message};
 use super::settings::Settings;
