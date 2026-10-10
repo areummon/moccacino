@@ -18,7 +18,10 @@
         pkgs = import nixpkgs {
           inherit system overlays;
         };
-        craneLib = (crane.mkLib pkgs).overrideToolchain pkgs.rust-bin.nightly.latest.default;
+        rustToolchain = pkgs.rust-bin.nightly.latest.default.override {
+          targets = [ "wasm32-unknown-unknown" ];
+        };
+        craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
 
         buildInputs = with pkgs; [
           pkg-config
@@ -64,7 +67,7 @@
           };
           inherit buildInputs;
           nativeBuildInputs = with pkgs; [
-            rust-bin.nightly.latest.default
+            rustToolchain
             makeWrapper
           ];
           preBuild = ''
@@ -85,7 +88,8 @@
         devShells.default = with pkgs; mkShell rec {
           inherit buildInputs;
           nativeBuildInputs = [
-            rust-bin.nightly.latest.default
+            rustToolchain
+            trunk
             cargo-deny
             cargo-edit
             cargo-watch
