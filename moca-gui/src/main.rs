@@ -1,9 +1,11 @@
 mod gui;
+mod platform;
 mod tikz_export;
 pub mod state_machine;
 use gui::App;
 
 pub fn main() -> iced::Result {
+    platform::init();
     iced::application("Moccacino", App::update, App::view)
         .subscription(App::subscription)
         .theme(App::theme)
@@ -15,6 +17,6 @@ pub fn main() -> iced::Result {
         .default_font(gui::theme::UI)
         .exit_on_close_request(false)
         .window_size(iced::Size::new(1280.0, 820.0))
-        .antialiasing(true)
+        .antialiasing(!platform::IS_WEB)
         .run_with(App::new)
 }

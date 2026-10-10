@@ -1,8 +1,9 @@
 use iced::keyboard;
 use iced::widget::{column, container, horizontal_rule, stack};
+use iced::time::Instant;
 use iced::{Element, Event, Length, Size, Subscription, Task};
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use super::message::{Menu, Message};
 use super::settings::Settings;
@@ -247,7 +248,7 @@ impl App {
             }
             Message::LoadPathChanged(text) => self.load_path_changed(text),
             Message::LoadBrowseClicked => self.load_browse_clicked(),
-            Message::LoadBrowseResult { result } => self.load_browse_result(result),
+            Message::LoadBrowseResult { picked } => self.load_browse_result(picked),
             Message::LoadPathSubmitted => self.load_path_submitted(),
             Message::CancelLoadDialog => self.cancel_load_dialog(),
             Message::OpenSaveDialog => {

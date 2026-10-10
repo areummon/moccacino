@@ -1,6 +1,8 @@
 # Rust artifacts
 /target
 
+/dist
+
 # Scripts
 /scripts
 

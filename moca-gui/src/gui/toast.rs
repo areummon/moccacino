@@ -1,6 +1,7 @@
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
+use iced::time::Instant;
 use iced::widget::{button, column, container, row, Space};
 use iced::{Alignment, Element, Length, Task};
 

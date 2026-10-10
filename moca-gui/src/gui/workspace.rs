@@ -1,5 +1,6 @@
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
+use iced::time::Instant;
 use iced::Task;
 
 use super::app::CloseRequest;

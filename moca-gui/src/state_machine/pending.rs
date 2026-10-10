@@ -16,7 +16,7 @@ pub(crate) enum PendingTransition {
         cursor_start: Point,
     },
     ClickTracking {
-        last_click_time: std::time::Instant,
+        last_click_time: iced::time::Instant,
         last_clicked_state: Option<usize>,
         last_clicked_transition: Option<(usize, usize)>,
     },
