@@ -51,7 +51,7 @@ pub enum Message {
     LoadPathChanged(String),
     LoadBrowseClicked,
     LoadBrowseResult {
-        result: Result<(String, String), String>,
+        picked: Option<Result<(String, String), String>>,
     },
     LoadPathSubmitted,
     CancelLoadDialog,

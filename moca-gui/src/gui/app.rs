@@ -248,7 +248,7 @@ impl App {
             }
             Message::LoadPathChanged(text) => self.load_path_changed(text),
             Message::LoadBrowseClicked => self.load_browse_clicked(),
-            Message::LoadBrowseResult { result } => self.load_browse_result(result),
+            Message::LoadBrowseResult { picked } => self.load_browse_result(picked),
             Message::LoadPathSubmitted => self.load_path_submitted(),
             Message::CancelLoadDialog => self.cancel_load_dialog(),
             Message::OpenSaveDialog => {

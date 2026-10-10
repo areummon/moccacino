@@ -11,6 +11,7 @@ use super::dialogs::{LOAD_INPUT, SAVE_INPUT};
 use super::message::Message;
 use super::tab::TabMachine;
 use crate::gui::theme::Tone;
+use crate::platform;
 
 pub(crate) const LLM_PROMPT: &str = r#"You are given an image of one or more computational models (a state diagram of an automaton, a Turing machine, a pushdown automaton, a regular expression, or a context-free grammar).
 
@@ -65,6 +66,9 @@ Look at the attached image carefully (states, arrows, labels, initial arrow, dou
 
 impl super::app::App {
     pub(crate) fn open_load_dialog(&mut self) -> Task<Message> {
+        if platform::IS_WEB {
+            return self.load_browse_clicked();
+        }
         self.load_dialog_open = true;
         self.load_path_text.clear();
         self.load_dialog_error = None;
@@ -82,44 +86,48 @@ impl super::app::App {
             .add_filter("All files", &["*"])
             .pick_file();
         Task::future(async move {
-            match dialog.await {
+            let picked = match dialog.await {
                 Some(handle) => {
                     let file_name = handle.file_name();
                     let bytes = handle.read().await;
-                    match String::from_utf8(bytes) {
-                        Ok(text) => Message::LoadBrowseResult {
-                            result: Ok((file_name, text)),
-                        },
-                        Err(_) => Message::LoadBrowseResult {
-                            result: Err(format!("{file_name} is not valid UTF-8 text")),
-                        },
-                    }
+                    Some(match String::from_utf8(bytes) {
+                        Ok(text) => Ok((file_name, text)),
+                        Err(_) => Err(format!("{file_name} is not valid UTF-8 text")),
+                    })
                 }
-                None => Message::LoadBrowseResult {
-                    result: Err(
-                        "no file chosen (the system file dialog may be unavailable on this \
-                         system — type or paste the file path instead)"
-                            .to_string(),
-                    ),
-                },
-            }
+                None => None,
+            };
+            Message::LoadBrowseResult { picked }
         })
     }
 
     pub(crate) fn load_browse_result(
         &mut self,
-        result: Result<(String, String), String>,
+        picked: Option<Result<(String, String), String>>,
     ) -> Task<Message> {
-        match result {
-            Ok((file_name, text)) => {
+        match picked {
+            Some(Ok((file_name, text))) => {
                 self.load_dialog_open = false;
                 self.load_dialog_error = None;
                 self.entities_loaded(file_name, Ok(text))
             }
-            Err(message) => {
+            Some(Err(message)) if self.load_dialog_open => {
                 self.load_dialog_error = Some(message);
                 Task::none()
             }
+            Some(Err(message)) => {
+                self.error_message = Some(message);
+                Task::none()
+            }
+            None if self.load_dialog_open => {
+                self.load_dialog_error = Some(
+                    "no file chosen (the system file dialog may be unavailable on this \
+                     system — type or paste the file path instead)"
+                        .to_string(),
+                );
+                Task::none()
+            }
+            None => Task::none(),
         }
     }
 
@@ -207,8 +215,29 @@ impl super::app::App {
             }
         }
         if self.save_dialog_open {
+            if platform::IS_WEB {
+                return self.download_pending_save();
+            }
             return iced::widget::text_input::focus(SAVE_INPUT);
         }
+        Task::none()
+    }
+
+    fn download_pending_save(&mut self) -> Task<Message> {
+        let file_name = self.save_path_text.clone();
+        let Some(contents) = self.pending_save.take() else {
+            return Task::none();
+        };
+        match platform::download(&file_name, &contents) {
+            Ok(()) => {
+                self.mark_pending_save_done();
+                self.toast(Tone::Success, format!("Downloaded {file_name}"), None);
+            }
+            Err(error) => {
+                self.error_message = Some(format!("Cannot download {file_name}: {error}"));
+            }
+        }
+        self.close_save_dialog();
         Task::none()
     }
 
@@ -389,7 +418,7 @@ impl super::app::App {
             "LLM prompt copied",
             Some("Paste it into a vision-capable model together with a picture of a state diagram.".to_string()),
         );
-        crate::platform::copy_text(LLM_PROMPT.to_string())
+        platform::copy_text(LLM_PROMPT.to_string())
     }
 }
 
