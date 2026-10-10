@@ -269,12 +269,12 @@ impl FiniteAutomata {
                 label
                     .chars()
                     .map(Char)
-                    .reduce(|existing, node| Concat(Box::new(existing), Box::new(node)))
+                    .reduce(RegexAst::concat)
                     .expect("non-empty label")
             };
             match edges.get_mut(&(from, to)) {
                 Some(existing) => {
-                    *existing = Union(Box::new(std::mem::replace(existing, Epsilon)), Box::new(piece));
+                    *existing = RegexAst::union(std::mem::replace(existing, Epsilon), piece);
                 },
                 None => {
                     edges.insert((from, to), piece);
@@ -313,8 +313,7 @@ impl FiniteAutomata {
         let mut remaining: Vec<StateID> = reachable.iter().copied().collect();
         remaining.sort();
         for r in remaining {
-            let loop_ast = edges.get(&(r, r)).cloned();
-            let loop_star = loop_ast.map(|ast| Star(Box::new(ast)));
+            let loop_star = edges.get(&(r, r)).cloned().map_or(Epsilon, RegexAst::star);
             let mut into: Vec<StateID> = edges.keys().filter(|(_, to)| *to == r).map(|(from, _)| *from).collect();
             let mut out_of: Vec<StateID> = edges.keys().filter(|(from, _)| *from == r).map(|(_, to)| *to).collect();
             into.sort();
@@ -323,15 +322,9 @@ impl FiniteAutomata {
                 for q in out_of.iter().filter(|q| **q != r) {
                     let head = edges.get(&(*p, r)).cloned().expect("p->r exists");
                     let tail = edges.get(&(r, *q)).cloned().expect("r->q exists");
-                    let through = match &loop_star {
-                        Some(star) => Concat(
-                            Box::new(head),
-                            Box::new(Concat(Box::new(star.clone()), Box::new(tail))),
-                        ),
-                        None => Concat(Box::new(head), Box::new(tail)),
-                    };
-                    let merged = match edges.get(&(*p, *q)) {
-                        Some(direct) => Union(Box::new(direct.clone()), Box::new(through)),
+                    let through = RegexAst::concat(head, RegexAst::concat(loop_star.clone(), tail));
+                    let merged = match edges.remove(&(*p, *q)) {
+                        Some(direct) => RegexAst::union(direct, through),
                         None => through,
                     };
                     edges.insert((*p, *q), merged);
