@@ -99,8 +99,8 @@ cmd_up() {
     (cd "$EVID" && devshell env -u WAYLAND_DISPLAY \
         DISPLAY="$DISPLAY" XDG_CONFIG_HOME="$RUN/config" \
         DBUS_SESSION_BUS_ADDRESS="disabled:" RUST_BACKTRACE=1 \
-        sh -c 'export VK_DRIVER_FILES="$(printf %s "$VK_DRIVER_FILES" | tr : "\n" | grep lvp_icd)"; exec "$0"' "$BIN" \
-        >"$RUN/app.log" 2>&1) &
+        sh -c 'export VK_DRIVER_FILES="$(printf %s "$VK_DRIVER_FILES" | tr : "\n" | grep lvp_icd)"; exec "$0"' "$BIN"
+        ) >"$RUN/app.log" 2>&1 </dev/null &
     local app_pid=$!
 
     cat >"$RUN/state" <<EOF
