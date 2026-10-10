@@ -7,7 +7,7 @@ The user draws a machine on the canvas with JFLAP-style tools. They add states, 
 - `edit-add-state`: the State tool adds `q0`, `q1`, … on empty clicks. A new state becomes initial only while the tab has no initial state. Names are never reused after a delete; only `Clear` restarts the numbering at `q0`.
 - `edit-add-transition`: the Transition tool clicks a source, then a target, and the `New transition` dialog asks for a label (blank = ε).
 - `edit-final`: Shift+click with Select toggles an accepting state (double circle).
-- `edit-initial`: Alt+click with Select toggles the initial marker. Alt+click on a new state moves the marker there; Alt+click on the current initial state removes it and leaves the machine with no initial state (Save then fails with "has no initial state").
+- `edit-initial`: Alt+click with Select makes a state initial (arrow marker). It never clears the marker: Alt+click on the current initial state changes nothing.
 - `edit-rename`: double-click a state with Select to open `Rename state`.
 - `edit-label`: click a transition's label with Select to open `Transition labels`: one row per label, `Add label`, a delete icon per row, `Save`. Saving with every row cleared removes the edge.
 - `edit-move-pan`: drag a state to move it, or drag empty space to pan.
@@ -30,7 +30,7 @@ Preconditions:
 - **Add transition.** Run `$M key 3`, then `$M click 400 350` and `$M click 750 350`. The `New transition` dialog opens with focus in `Label`. Run `$M type a` and `$M key Return`. An edge labeled `a` appears, and the status bar reads `1 transition`.
 - **Mark accepting.** Run `$M key Escape` and `$M click 750 350 shift`. Run `$M move 1000 200`, then `$M shot dfa`. `q1` is drawn as a double circle.
 - **Proof (side effect).** Run `$M key ctrl+s`, `$M key ctrl+a`, `$M type "$EVID/edit.ce"`, and `$M key Return`. Then run `cat "$EVID/edit.ce"`. It shows `states: q0, q1`, `transitions: (q0, a) -> q1`, `initial: q0`, and `final: q1`.
-- **Toggle initial.** Run `$M click 750 350 alt` (marker moves to `q1`), then `$M click 750 350 alt` again: no state has the marker. Run `$M click 400 350 alt` to restore it on `q0`.
+- **Move initial.** Run `$M click 750 350 alt` (marker moves to `q1`), then `$M click 750 350 alt` again: `q1` keeps it. Run `$M click 400 350 alt` to move it back to `q0`.
 - **Rename and relabel.** Run `$M click 400 350 double`, `$M key ctrl+a`, `$M type s`, `$M key Return`: `q0` reads `s`. Run `$M click 575 334` (the `a` label pill): `Transition labels` opens with focus in the row. Run `$M key ctrl+a`, `$M type b`, `$M key Return`.
 - **Delete.** Run `$M key 4` and `$M click 750 350`. `q1` and its edge disappear, and the status bar reads `1 state · 0 transitions`. `$M key Tab` returns to Select.
 - **Clear.** Run `$M click 1225 82`, then `$M key 2` and `$M click 400 350`: the new state is `q0` again, with the initial arrow.
