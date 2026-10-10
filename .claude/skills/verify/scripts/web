@@ -1,0 +1,94 @@
+#!/usr/bin/env node
+import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import { spawn } from 'node:child_process';
+
+const [dist, outDir, actionsArg = '[]'] = process.argv.slice(2);
+if (!dist || !outDir) {
+  console.error('usage: web DIST_DIR OUT_DIR [ACTIONS_JSON]');
+  process.exit(2);
+}
+fs.mkdirSync(outDir, { recursive: true });
+const actions = JSON.parse(actionsArg);
+const types = { '.html': 'text/html', '.js': 'text/javascript', '.wasm': 'application/wasm', '.css': 'text/css' };
+
+const server = http.createServer((req, res) => {
+  const rel = decodeURIComponent(req.url.split('?')[0]).replace(/^\/moccacino/, '') || '/';
+  const file = path.join(dist, rel.endsWith('/') ? rel + 'index.html' : rel);
+  fs.readFile(file, (err, data) => {
+    if (err) { res.writeHead(404); res.end(); return; }
+    res.writeHead(200, { 'content-type': types[path.extname(file)] ?? 'application/octet-stream' });
+    res.end(data);
+  });
+}).listen(8765);
+
+const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'moca-web-chrome-'));
+const chrome = spawn('chromium', [
+  '--headless=new', '--remote-debugging-port=9333', `--user-data-dir=${profile}`,
+  '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--window-size=1280,820', 'about:blank',
+], { stdio: 'ignore' });
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+let targets;
+for (let i = 0; i < 50 && !targets; i++) {
+  await sleep(200);
+  targets = await fetch('http://127.0.0.1:9333/json').then((r) => r.json()).catch(() => undefined);
+}
+const page = targets.find((t) => t.type === 'page');
+const ws = new WebSocket(page.webSocketDebuggerUrl);
+await new Promise((r) => ws.addEventListener('open', r));
+let id = 0;
+const pending = new Map();
+const logs = [];
+ws.addEventListener('message', (ev) => {
+  const msg = JSON.parse(ev.data);
+  if (msg.id && pending.has(msg.id)) { pending.get(msg.id)(msg); pending.delete(msg.id); }
+  if (msg.method === 'Runtime.consoleAPICalled') logs.push(`console.${msg.params.type}: ${msg.params.args.map((a) => a.value ?? a.description).join(' ')}`);
+  if (msg.method === 'Runtime.exceptionThrown') logs.push(`exception: ${msg.params.exceptionDetails.exception?.description ?? msg.params.exceptionDetails.text}`);
+});
+const send = (method, params = {}) => new Promise((r) => { const n = ++id; pending.set(n, r); ws.send(JSON.stringify({ id: n, method, params })); });
+const shot = async (name) => {
+  const { result } = await send('Page.captureScreenshot', { format: 'png' });
+  fs.writeFileSync(path.join(outDir, `${name}.png`), Buffer.from(result.data, 'base64'));
+};
+const click = async (x, y, clickCount = 1) => {
+  for (const type of ['mouseMoved', 'mousePressed', 'mouseReleased']) {
+    await send('Input.dispatchMouseEvent', { type, x, y, button: 'left', clickCount });
+    await sleep(40);
+  }
+};
+const key = async (k) => {
+  await send('Input.dispatchKeyEvent', { type: 'keyDown', key: k, text: k.length === 1 ? k : undefined });
+  await send('Input.dispatchKeyEvent', { type: 'keyUp', key: k });
+};
+
+await send('Runtime.enable');
+await send('Page.enable');
+await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 820, deviceScaleFactor: 1, mobile: false });
+await send('Page.navigate', { url: 'http://127.0.0.1:8765/moccacino/' });
+await sleep(8000);
+await shot('00-loaded');
+
+let step = 1;
+for (const a of actions) {
+  if (a.cdp) logs.push(`cdp ${a.cdp[0]} => ${JSON.stringify((await send(a.cdp[0], a.cdp[1])).error ?? 'ok')}`);
+  if (a.click) await click(...a.click);
+  if (a.dbl) await click(...a.dbl, 2);
+  if (a.key) await key(a.key);
+  if (a.type) for (const ch of a.type) await key(ch);
+  if (a.eval) logs.push(`eval ${a.eval} => ${JSON.stringify((await send('Runtime.evaluate', { expression: a.eval, returnByValue: true })).result?.result?.value)}`);
+  if (a.reload) { await send('Page.reload'); await sleep(8000); }
+  await sleep(a.wait ?? 600);
+  if (a.shot) await shot(`${String(step++).padStart(2, '0')}-${a.shot}`);
+}
+
+console.log(logs.join('\n') || '(no console output)');
+ws.close();
+const exited = new Promise((r) => chrome.once('exit', r));
+chrome.kill();
+await exited;
+server.close();
+fs.rmSync(profile, { recursive: true, force: true });
+process.exit(logs.some((l) => l.startsWith('exception') || l.includes('panicked')) ? 1 : 0);

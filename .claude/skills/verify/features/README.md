@@ -36,5 +36,6 @@ Each feature file starts with an H1 and a paragraph that describes the behavior.
 - [Files (.ce)](./files.md): load a multi-entity `.ce` file and save a tab.
 - [Grammar tab](./grammar.md): parse, CYK check, leftmost derivation, and To CNF.
 - [Exports](./exports.md): LaTeX/TikZ, regular expression, and the LLM prompt, all to the clipboard.
+- [Web build](./web.md): the wasm build in headless Chromium (boot, file download, clipboard, persisted theme), driven by `scripts/web` instead of `moca`.
 
 Not mapped yet: unsaved-changes close confirmation (`ctrl+w` on a dirty tab), theme toggle, zoom/fit, tab rename (double-click a pill), and the shortcut sheet (`F1`).
