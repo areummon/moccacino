@@ -5,7 +5,7 @@ The Export menu turns the active machine into text the user pastes elsewhere: La
 ## Sub-features
 
 - `exp-latex`: **LaTeX / TikZ** opens the `LaTeX export` dialog with code (machine tabs: TikZ; grammar tabs: an `align*` block), and **Copy** (895, 608; the body scrolls, so the button never moves) puts it on the clipboard with the toast `LaTeX copied to the clipboard`. An empty canvas gives `Nothing to export: the canvas is empty.`
-- `exp-regex`: **Regular expression** (finite tabs only) opens `Equivalent regular expression` (state elimination, not simplified: `s -b-> q1` gives `εbε`), and **Copy** (804, 467) copies it with the toast `Regular expression copied`.
+- `exp-regex`: **Regular expression** (finite tabs only) opens `Equivalent regular expression` (state elimination with ε and ∅ simplified away: `s -b-> q1` gives `b`), and **Copy** (804, 467) copies it with the toast `Regular expression copied`.
 - `exp-llm`: **Copy LLM prompt** copies the prompt directly and shows the toast `LLM prompt copied`.
 
 ## How to get to it (user POV)
