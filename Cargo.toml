@@ -41,3 +41,7 @@ opt-level = 1
 
 [profile.dev.package."*"]
 opt-level = 3
+
+# iced 0.13 drops modifier changes on wasm (iced#2618, fixed upstream after 0.13); see vendor/iced_winit.
+[patch.crates-io]
+iced_winit = { path = "vendor/iced_winit" }
