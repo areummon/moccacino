@@ -53,6 +53,18 @@ impl Clipboard {
 
     /// Reads the current content of the [`Clipboard`] as text.
     pub fn read(&self, kind: Kind) -> Option<String> {
+        // moccacino patch: browsers expose pasted text only inside a `paste` event, so the page
+        // stores it in `window.moccacinoPaste` and replays Ctrl+V (see index.html).
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = kind;
+            let window = web_sys::window()?;
+            return js_sys::Reflect::get(&window, &"moccacinoPaste".into())
+                .ok()?
+                .as_string();
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
         match &self.state {
             State::Connected { clipboard, .. } => match kind {
                 Kind::Standard => clipboard.read().ok(),
@@ -64,6 +76,16 @@ impl Clipboard {
 
     /// Writes the given text contents to the [`Clipboard`].
     pub fn write(&mut self, kind: Kind, contents: String) {
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = kind;
+            if let Some(window) = web_sys::window() {
+                let _ = window.navigator().clipboard().write_text(&contents);
+            }
+            return;
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
         match &mut self.state {
             State::Connected { clipboard, .. } => {
                 let result = match kind {

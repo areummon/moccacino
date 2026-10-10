@@ -84,6 +84,9 @@ wayland-csd-adwaita = ["winit/wayland-csd-adwaita"]
 wayland-dlopen = ["winit/wayland-dlopen"]
 x11 = ["winit/x11"]
 
+[target.'cfg(target_arch = "wasm32")'.dependencies.js-sys]
+version = "0.3"
+
 [target.'cfg(target_arch = "wasm32")'.dependencies.wasm-bindgen-futures]
 version = "0.4"
 
@@ -93,6 +96,8 @@ features = [
     "Document",
     "Window",
     "HtmlCanvasElement",
+    "Navigator",
+    "Clipboard",
 ]
 
 [target.'cfg(target_os = "windows")'.dependencies.winapi]

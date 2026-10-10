@@ -9,6 +9,30 @@
       // wgpu 0.19 commits to WebGPU whenever navigator.gpu exists, even when no adapter is available
       // (blocklisted GPUs, headless), and iced 0.13 cannot pick a backend on the web. Force WebGL2.
       Object.defineProperty(navigator, "gpu", { value: undefined, configurable: true });
+
+      // iced reads the clipboard synchronously on Ctrl+V, but browsers only hand out pasted text in a
+      // `paste` event, which winit would cancel. Keep the real keystroke from winit, take the text from
+      // the paste event, then replay Ctrl+V; the patched iced_winit clipboard reads moccacinoPaste.
+      let replayingPaste = false;
+      addEventListener(
+        "keydown",
+        (event) => {
+          const isPaste = (event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "v";
+          if (isPaste && !replayingPaste) event.stopImmediatePropagation();
+        },
+        true,
+      );
+      addEventListener("paste", (event) => {
+        const canvas = document.querySelector("canvas");
+        if (!canvas) return;
+        event.preventDefault();
+        window.moccacinoPaste = event.clipboardData.getData("text/plain");
+        replayingPaste = true;
+        for (const type of ["keydown", "keyup"]) {
+          canvas.dispatchEvent(new KeyboardEvent(type, { key: "v", code: "KeyV", ctrlKey: true, bubbles: true, cancelable: true }));
+        }
+        replayingPaste = false;
+      });
     </script>
     <style>
       html,

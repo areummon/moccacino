@@ -4,8 +4,6 @@ pub(crate) use imp::*;
 mod imp {
     use std::path::PathBuf;
 
-    use iced::Task;
-
     pub(crate) const IS_WEB: bool = false;
 
     pub(crate) fn init() {}
@@ -30,10 +28,6 @@ mod imp {
         let _ = std::fs::write(path, text);
     }
 
-    pub(crate) fn copy_text<M>(text: String) -> Task<M> {
-        iced::clipboard::write(text)
-    }
-
     pub(crate) fn download(_file_name: &str, _contents: &str) -> Result<(), String> {
         unreachable!("native saves go through the save dialog; download is only reached when IS_WEB")
     }
@@ -41,7 +35,6 @@ mod imp {
 
 #[cfg(target_arch = "wasm32")]
 mod imp {
-    use iced::Task;
     use wasm_bindgen::{closure::Closure, JsCast, JsValue};
     use web_sys::{Blob, BlobPropertyBag, HtmlAnchorElement, Storage, Url};
 
@@ -70,13 +63,6 @@ mod imp {
         }
     }
 
-    // iced's clipboard is a no-op on wasm, so write through the async Clipboard API.
-    pub(crate) fn copy_text<M>(text: String) -> Task<M> {
-        if let Some(window) = web_sys::window() {
-            let _ = window.navigator().clipboard().write_text(&text);
-        }
-        Task::none()
-    }
 
     pub(crate) fn download(file_name: &str, contents: &str) -> Result<(), String> {
         let describe = |error: JsValue| format!("{error:?}");

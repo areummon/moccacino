@@ -418,7 +418,7 @@ impl super::app::App {
             "LLM prompt copied",
             Some("Paste it into a vision-capable model together with a picture of a state diagram.".to_string()),
         );
-        platform::copy_text(LLM_PROMPT.to_string())
+        iced::clipboard::write(LLM_PROMPT.to_string())
     }
 }
 
