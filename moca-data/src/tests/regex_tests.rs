@@ -356,3 +356,93 @@ fn regex_literal_epsilon_is_not_compiled_test() {
     assert_eq!(error.position, 1);
     assert!(regex::compile_str("aε").is_ok());
 }
+
+fn finite(states: u64, finals: &[u64], transitions: &[(u64, u64, &str)]) -> crate::finite_automata::FiniteAutomata {
+    let mut automata = crate::finite_automata::FiniteAutomata::new();
+    automata.add_n_states(states);
+    automata.make_initial(0);
+    for id in finals {
+        automata.make_final(*id);
+    }
+    for (from, to, label) in transitions {
+        automata.add_transition(*from, *to, label.to_string());
+    }
+    automata
+}
+
+#[test]
+fn fa_to_regex_drops_epsilon_padding_test() {
+    let single_b = finite(2, &[1], &[(0, 1, "b")]);
+    assert_eq!(single_b.to_regex().to_string(), "b");
+
+    let ends_with_b = finite(2, &[1], &[(0, 0, "a"), (0, 0, "b"), (0, 1, "b")]);
+    assert_eq!(ends_with_b.to_regex().to_string(), "(a|b)*b");
+}
+
+#[test]
+fn fa_to_regex_trivial_languages_test() {
+    let no_finals = finite(2, &[], &[(0, 1, "a"), (1, 0, "b")]);
+    assert_eq!(no_finals.to_regex().to_string(), "\u{2205}");
+
+    let only_epsilon = finite(1, &[0], &[]);
+    assert_eq!(only_epsilon.to_regex().to_string(), "ε");
+}
+
+#[test]
+fn fa_to_regex_simplified_language_agreement_test() {
+    let fixtures = [
+        finite(2, &[1], &[(0, 1, "b")]),
+        finite(2, &[0], &[(0, 1, "a"), (0, 0, "b"), (1, 0, "a"), (1, 1, "b")]),
+        finite(2, &[1], &[(0, 0, "a"), (0, 0, "b"), (0, 1, "b")]),
+        finite(3, &[2], &[(0, 1, "ε"), (1, 1, "a"), (1, 2, "ε"), (2, 2, "b"), (0, 2, "ab")]),
+        finite(3, &[0, 2], &[(0, 1, "a"), (1, 0, "ε"), (1, 2, "b"), (2, 2, "ε"), (2, 0, "a")]),
+        finite(1, &[0], &[(0, 0, "a"), (0, 0, "ε")]),
+    ];
+    for machine in &fixtures {
+        let rendered = machine.to_regex().to_string();
+        let compiled = regex::compile_str(&rendered)
+            .unwrap_or_else(|error| panic!("regex {rendered:?} failed to parse: {error}"));
+        for input in exhaustive_inputs(&['a', 'b'], 6) {
+            assert_eq!(
+                compiled.accepts(&input),
+                machine.accepts(&input),
+                "simplified regex {rendered:?} disagrees with its automaton on {input:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn regex_smart_constructors_preserve_language_test() {
+    let raw_star = |inner: &RegexAst| RegexAst::Star(Box::new(inner.clone()));
+    let operands = [
+        RegexAst::Empty,
+        RegexAst::Epsilon,
+        RegexAst::Char('a'),
+        RegexAst::Char('b'),
+        raw_star(&RegexAst::Char('a')),
+        raw_star(&raw_star(&RegexAst::Char('b'))),
+        raw_star(&RegexAst::Empty),
+        raw_star(&RegexAst::Epsilon),
+        RegexAst::Union(Box::new(RegexAst::Epsilon), Box::new(RegexAst::Char('a'))),
+    ];
+    let words = exhaustive_inputs(&['a', 'b'], 4);
+    let agree = |simplified: &RegexAst, raw: &RegexAst| {
+        for word in &words {
+            assert_eq!(
+                naive_accepts(simplified, word),
+                naive_accepts(raw, word),
+                "{simplified:?} and {raw:?} disagree on {word:?}"
+            );
+        }
+    };
+    for left in &operands {
+        agree(&RegexAst::star(left.clone()), &raw_star(left));
+        for right in &operands {
+            let raw_concat = RegexAst::Concat(Box::new(left.clone()), Box::new(right.clone()));
+            let raw_union = RegexAst::Union(Box::new(left.clone()), Box::new(right.clone()));
+            agree(&RegexAst::concat(left.clone(), right.clone()), &raw_concat);
+            agree(&RegexAst::union(left.clone(), right.clone()), &raw_union);
+        }
+    }
+}

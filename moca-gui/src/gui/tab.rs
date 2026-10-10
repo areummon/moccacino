@@ -399,11 +399,7 @@ impl Tab {
     }
 
     pub(crate) fn set_initial_state(&mut self, state_id: usize) {
-        if self.initial_state == Some(state_id) {
-            self.initial_state = None;
-        } else {
-            self.initial_state = Some(state_id);
-        }
+        self.initial_state = Some(state_id);
         self.state_machine.request_redraw();
     }
 

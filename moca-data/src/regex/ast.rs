@@ -10,6 +10,33 @@ pub enum RegexAst {
     Quest(Box<RegexAst>),
 }
 
+impl RegexAst {
+    pub fn concat(left: RegexAst, right: RegexAst) -> RegexAst {
+        match (left, right) {
+            (RegexAst::Empty, _) | (_, RegexAst::Empty) => RegexAst::Empty,
+            (RegexAst::Epsilon, other) | (other, RegexAst::Epsilon) => other,
+            (left, right) => RegexAst::Concat(Box::new(left), Box::new(right)),
+        }
+    }
+
+    pub fn union(left: RegexAst, right: RegexAst) -> RegexAst {
+        match (left, right) {
+            (RegexAst::Empty, other) | (other, RegexAst::Empty) => other,
+            (left, right) if left == right => left,
+            (RegexAst::Epsilon, star @ RegexAst::Star(_)) | (star @ RegexAst::Star(_), RegexAst::Epsilon) => star,
+            (left, right) => RegexAst::Union(Box::new(left), Box::new(right)),
+        }
+    }
+
+    pub fn star(inner: RegexAst) -> RegexAst {
+        match inner {
+            RegexAst::Empty | RegexAst::Epsilon => RegexAst::Epsilon,
+            star @ RegexAst::Star(_) => star,
+            inner => RegexAst::Star(Box::new(inner)),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Precedence {
     Union,

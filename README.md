@@ -68,7 +68,7 @@ Editing is tool-based, in the style of JFLAP:
 
 | Tool | Key | What it does |
 |---|---|---|
-| **Select** | `1` | Drag a state to move it, or drag empty space to pan. Double-click a state to rename it; click a transition to edit its label. `Shift`+click toggles accepting, `Alt`+click toggles initial. |
+| **Select** | `1` | Drag a state to move it, or drag empty space to pan. Double-click a state to rename it; click a transition to edit its label. `Shift`+click toggles accepting, `Alt`+click makes a state initial. |
 | **State** | `2` | Click empty space to add a state. |
 | **Transition** | `3` | Click the source state, then the target state. |
 | **Delete** | `4` | Click a state or transition to remove it. |
