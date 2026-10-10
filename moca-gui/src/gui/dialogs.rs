@@ -8,6 +8,7 @@ use super::app::CloseRequest;
 use super::tab::TabMachine;
 use super::widgets::{self, dialog_card, modal_layer, DIALOG_LG, DIALOG_MD, DIALOG_SM};
 use crate::gui::theme::{self, Family};
+use crate::platform;
 
 pub(crate) const EDIT_TEXT_INPUT: &str = "edit-text";
 pub(crate) const EDIT_LABEL_INPUT: &str = "edit-label";
@@ -156,8 +157,8 @@ impl super::app::App {
                     text("choose").size(12).style(theme::text_faint),
                     widgets::kbd("Enter"),
                     text("open").size(12).style(theme::text_faint),
-                    widgets::ghost("Quit", Some(Message::ExitApp)),
                 ]
+                .push_maybe((!platform::IS_WEB).then(|| widgets::ghost("Quit", Some(Message::ExitApp))))
                 .spacing(6)
                 .align_y(Alignment::Center),
             ]
