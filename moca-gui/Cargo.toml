@@ -9,3 +9,10 @@ indexmap = "2.10.0"
 rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "async-std"] }
 
 moca-data = { path = "../moca-data" }
+
+# The web build: WebGL2 (iced alone targets only WebGPU) and the browser APIs platform.rs uses.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+iced = { version = "0.13.1", features = ["webgl"] }
+js-sys = "0.3.77"
+wasm-bindgen = "0.2.100"
+web-sys = { version = "0.3.77", features = ["Window", "Document", "Storage", "Navigator", "Clipboard", "Blob", "BlobPropertyBag", "Url", "Node", "Element", "HtmlElement", "HtmlAnchorElement"] }

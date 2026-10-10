@@ -1,4 +1,5 @@
 mod gui;
+mod platform;
 mod tikz_export;
 pub mod state_machine;
 use gui::App;

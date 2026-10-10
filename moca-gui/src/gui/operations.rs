@@ -217,7 +217,7 @@ impl super::app::App {
     pub(crate) fn copy_regex_export(&mut self) -> Task<Message> {
         if let Some(code) = self.regex_export_code.clone() {
             self.toast(Tone::Success, "Regular expression copied", None);
-            return iced::clipboard::write(code);
+            return crate::platform::copy_text(code);
         }
         Task::none()
     }
@@ -225,7 +225,7 @@ impl super::app::App {
     pub(crate) fn copy_latex_export(&mut self) -> Task<Message> {
         if let Some(code) = self.latex_export_code.clone() {
             self.toast(Tone::Success, "LaTeX copied to the clipboard", None);
-            return iced::clipboard::write(code);
+            return crate::platform::copy_text(code);
         }
         Task::none()
     }

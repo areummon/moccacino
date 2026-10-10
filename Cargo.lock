@@ -2158,8 +2158,11 @@ version = "0.1.0"
 dependencies = [
  "iced",
  "indexmap",
+ "js-sys",
  "moca-data",
  "rfd",
+ "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]
@@ -2168,9 +2171,12 @@ version = "0.1.0"
 dependencies = [
  "iced",
  "indexmap",
+ "js-sys",
  "moca-data",
  "moca-gui",
  "rfd",
+ "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]
