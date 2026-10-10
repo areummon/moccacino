@@ -1,7 +1,6 @@
 # Rust artifacts
 /target
 
-# trunk web build output
 /dist
 
 # Scripts

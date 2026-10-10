@@ -20,11 +20,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Same nightly the flake pins, so CI builds what the devshell builds.
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: nightly-2025-07-14
-          targets: wasm32-unknown-unknown
+      - name: Install the toolchain from rust-toolchain.toml
+        run: rustup toolchain install
 
       - uses: Swatinem/rust-cache@v2
 

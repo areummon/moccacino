@@ -20,7 +20,6 @@ moca-data = { path = "./moca-data" }
 moca-gui = { path = "./moca-gui" }
 rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "async-std"] }
 
-# Without `webgl`, iced on the web targets WebGPU only.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 iced = { version = "0.13.1", features = ["webgl"] }
 console_error_panic_hook = "0.1.7"
