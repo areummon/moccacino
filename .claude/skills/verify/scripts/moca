@@ -87,10 +87,14 @@ cmd_up() {
         [[ -e "/tmp/.X11-unix/X$n" || -e "/tmp/.X$n-lock" ]] || break
     done
     DISPLAY=":$n"
-    Xvfb "$DISPLAY" -screen 0 1600x1000x24 -nolisten tcp >"$RUN/xvfb.log" 2>&1 &
+    Xvfb "$DISPLAY" -screen 0 1600x1000x24 -nolisten tcp -noreset >"$RUN/xvfb.log" 2>&1 &
     local xvfb_pid=$!
     for _ in $(seq 50); do [[ -e "/tmp/.X11-unix/X$n" ]] && break; sleep 0.1; done
     [[ -e "/tmp/.X11-unix/X$n" ]] || die "Xvfb did not start (see $RUN/xvfb.log)"
+    # Xvfb starts the pointer at the screen centre, which lands on a startup card;
+    # hovering a card selects it, so park the pointer outside the 1280x820 window
+    # (-noreset above keeps it there when this xdotool client disconnects).
+    DISPLAY="$DISPLAY" xdotool mousemove 1590 990 2>/dev/null || true
 
     # X11 backend (no WAYLAND_DISPLAY), lavapipe only: Xvfb has no DRI3, so
     # hardware Vulkan ICDs are skipped for a deterministic software renderer.

@@ -4,7 +4,7 @@ The user saves the active tab to a plain-text `.ce` file and loads `.ce` files t
 
 ## Sub-features
 
-- `file-load`: **Open .ce file…** loads the file. Each entity opens as a tab, and a toast reads `Loaded N entities from <file>`.
+- `file-load`: **Open .ce file…** loads the file. Each entity opens as a tab, and a toast reads `Loaded N entities from <file>` (`entity` when N is 1; a Warning toast adds `, skipped K` when some blocks fail to parse).
 - `file-save`: **Save tab as .ce…** writes the active tab to the typed path (`.ce` is appended when the path has no extension), the toast reads `Saved <path>`, and the tab's unsaved dot disappears. Machine tabs need at least one state, an initial state and a passing validation; grammar tabs save as `entity: grammar`.
 - `file-startup-open`: the startup picker's `Open a .ce file…` link (replaces the picker with a Finite `Automaton` tab, then opens the load dialog).
 - `file-browse`: the **Browse…** button uses the xdg portal file chooser. With D-Bus disabled on purpose, it fails into an inline red line in the dialog: `no file chosen (the system file dialog may be unavailable on this system — type or paste the file path instead)`.

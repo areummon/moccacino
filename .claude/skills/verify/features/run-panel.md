@@ -26,9 +26,9 @@ Preconditions:
 - A machine tab is active. Either draw one (see [canvas-editing](./canvas-editing.md)) or load `examples/demo.ce` (see [files](./files.md)), which opens `even-number-of-as` (DFA), `ends-with-b` (NFA), `anbn` (PDA), and `contains-a-zero` (TM).
 
 - **Load.** Run `$M click 285 725`, `$M type 110`, and `$M key Return`. The button reads `Reload`, and the badge reads `Running…` for every family.
-- **Step.** Run `$M click 640 600` to put focus on the canvas, then `$M key Right` once per step. The `state` and `steps` labels change, and the active state glows.
+- **Step.** Run `$M click 40 640` to put focus on the canvas, then `$M key Right` once per step. The `state` and `steps` labels change, and the active state glows.
 - **Play.** Run `$M key space`, then wait about 2 seconds (for example `sleep 2`). For the TM `contains-a-zero` with input `110`, the badge reads `Accepted` with `state found` and `steps 3`, the tape shows `1 1 1` with the head cell highlighted, and the control shows ▶, not a lit Pause.
-- **Reload starts paused.** Run `$M click 272 682` (the field of the grown TM dock), `MOCA_SETTLE=0.05 $M key Return`, then `sleep 1.5` and `$M shot reloaded`. The badge reads `Running…` with `steps 0`. Press `space` (after `$M click 640 600`) to play it again.
+- **Reload starts paused.** Run `$M click 272 682` (the field of the grown TM dock), `MOCA_SETTLE=0.05 $M key Return`, then `sleep 1.5` and `$M shot reloaded`. The badge reads `Running…` with `steps 0`. Press `space` (after `$M click 40 640`) to play it again.
 - **Verdict on a finite DFA.** For `q0 -a-> q1` with `q1` accepting and input `a`, one `Right` shows `Running… state q1 steps 1`. A second `Right` gives the verdict.
 - **Reset.** In the grown TM dock, run `$M click 472 682` (↺). The badge reads `Ready` and the button `Load`.
 - **Nondeterministic PDA.** On `anbn`, load `aabb`, `$M click 640 560`, `$M key space`, `sleep 4`: `Accepted`, `level 6`, `branches 1`, one lane reading `p2 [Z] ε`.
@@ -38,7 +38,7 @@ Preconditions:
 ## Gotchas
 
 - The dock grows after Load (ribbon, stack, or tape rows), which shifts its input and buttons up to about y 682–704. Re-shoot before you click dock buttons. Use `Return` in the field and the keys `Right`/`space` instead.
-- `Right` and `space` only act when the canvas has focus. After you type in the field, run `$M click 640 600` first. Otherwise `space` types a space into the input.
+- `Right` and `space` only act when the canvas has focus. After you type in the field, run `$M click 40 640` first. Otherwise `space` types a space into the input.
 - `Running…` is not a verdict, for every family. The accept check runs at the start of the next step without counting it: the TM reaches `state found steps 3` still `Running…`, and the next `Right` shows `Accepted` with `steps 3`.
 - `space` does nothing until a word is loaded.
 - An auto-play halt returns the control to ▶ (Play, disabled), and Load or Reload always starts the new run paused. A lit Pause icon next to a verdict badge, or a reloaded run that advances without `space`, is a regression.
