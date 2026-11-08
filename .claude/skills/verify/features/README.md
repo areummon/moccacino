@@ -14,7 +14,7 @@ This directory is the maintained source for verifying moccacino's user-facing be
 - Coordinates are window-relative pixels of the 1280×820 window.
 - Prefer keys over coordinates: tool keys `1`–`4`, `ctrl+o`/`ctrl+s`, `ctrl+Tab`, `Return` in fields.
 - `shot` an open menu before you click its lower items, because their positions move.
-- Click empty canvas (`$M click 640 600`) to move focus off a text field before you use the single-key shortcuts.
+- Click empty canvas at the bottom-left corner (`$M click 40 640`) to move focus off a text field before you use the single-key shortcuts.
 - Park the pointer (`$M move 1000 200`) before a proof shot.
 
 ## Proof and skip reporting

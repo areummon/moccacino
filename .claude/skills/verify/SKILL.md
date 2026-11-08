@@ -78,7 +78,7 @@ full-width layout: brand, menus and tabs on one header row). Each command waits
 Prefer keyboard handles over coordinates — they are stable across layout
 changes:
 
-- Startup picker: arrows move the highlight in the 2×2 grid, `Return` opens it (Finite is preselected), `Escape` quits the app.
+- Startup picker: arrows move the highlight in the 2×2 grid, `Return` opens it (Finite is preselected), `Escape` quits the app. Hovering a card also selects it, so a `$M move` across the picker changes what `Return` opens; `up` parks the pointer outside the window for that reason.
 - Tools: `1` Select, `2` State, `3` Transition, `4` Delete, `Escape` back to Select. Inert while a dialog is open or a text field has focus.
 - `ctrl+o` load dialog, `ctrl+s` save dialog, `ctrl+Tab`/`ctrl+shift+Tab` cycle tabs (in tab order), `ctrl+w` close tab, `ctrl+shift+l` theme, `f` fit view, `F1` shortcut sheet.
 - Run dock: `Return` in its input field = Load, `Right` = Step, `space` = Play/Pause (both only when the canvas, not a text field, has focus — click empty canvas first).
@@ -94,13 +94,13 @@ Fixed coordinates (1280×820, verified):
 | Export menu items: LaTeX/TikZ / Regular expression / Copy LLM prompt | 470 78 / 470 111 / 470 160 |
 | Operations: Check input… | 300 78 |
 | Run-dock input field (idle dock, every machine family) | 285 725 |
-| Empty canvas (safe spot to take focus off a text field) | 640 600 |
+| Empty canvas (bottom-left corner, outside fit-view content; takes focus off a text field) | 40 640 |
 
 The Operations menu's lower items move: a disabled item grows a reason
-subtitle (`Finite automata only`, `Already deterministic`, `Needs a DFA`), so
+subtitle (`Finite automata only`, `Already deterministic`, `Needs a DFA — convert first`, `The canvas is empty`), so
 **`shot` the open menu and read the positions before clicking** NFA → DFA,
-Minimize or Build from regex (seen at y 130/172/217 on a DFA, 233 for regex on
-a TM tab). Tab pills scroll when the active tab changes; switch tabs with
+Minimize or Build from regex (seen at y 123/173/218 on a DFA, NFA → DFA 123
+and Minimize 157 on an NFA, 233 for regex on a TM tab). Tab pills scroll when the active tab changes; switch tabs with
 `ctrl+Tab`, not by clicking pills.
 
 ## Evidence
