@@ -1,5 +1,5 @@
 use crate::finite_automata::FiniteAutomata;
-use crate::state::StateID;
+use crate::state::{StateID, EPSILON};
 use crate::state_machine::StateMachine;
 
 use super::ast::RegexAst;
@@ -18,36 +18,11 @@ pub fn compile(ast: &RegexAst) -> FiniteAutomata {
 }
 
 pub fn compile_str(pattern: &str) -> Result<FiniteAutomata, super::parser::ParseError> {
-    let ast = super::parser::parse(pattern)?;
-    if contains_literal_epsilon(&ast) {
-        let chars: Vec<char> = pattern.chars().collect();
-        let position = chars
-            .windows(2)
-            .position(|pair| pair == ['\\', 'ε'])
-            .unwrap_or(0);
-        return Err(super::parser::ParseError {
-            position,
-            message: "a literal 'ε' symbol cannot be compiled: automaton labels use ε for the empty word".to_string(),
-        });
-    }
-    Ok(compile(&ast))
-}
-
-fn contains_literal_epsilon(node: &RegexAst) -> bool {
-    match node {
-        RegexAst::Char(c) => *c == 'ε',
-        RegexAst::Empty | RegexAst::Epsilon => false,
-        RegexAst::Concat(left, right) | RegexAst::Union(left, right) => {
-            contains_literal_epsilon(left) || contains_literal_epsilon(right)
-        },
-        RegexAst::Star(inner) | RegexAst::Plus(inner) | RegexAst::Quest(inner) => {
-            contains_literal_epsilon(inner)
-        },
-    }
+    Ok(compile(&super::parser::parse(pattern)?))
 }
 
 fn add_epsilon(automata: &mut FiniteAutomata, from: StateID, to: StateID) {
-    automata.add_transition(from, to, "ε".to_string());
+    automata.add_transition(from, to, EPSILON.to_string());
 }
 
 fn build(node: &RegexAst, automata: &mut FiniteAutomata) -> Fragment {

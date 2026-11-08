@@ -6,7 +6,7 @@ use super::node::StateNode;
 use super::util::VectorExt;
 
 pub(crate) const LABEL_FONT_SIZE: f32 = 13.0;
-pub(crate) const LABEL_HEIGHT: f32 = 20.0;
+const LABEL_HEIGHT: f32 = 20.0;
 const LABEL_GAP: f32 = 3.0;
 const LABEL_CHAR_WIDTH: f32 = LABEL_FONT_SIZE * 0.6;
 const LABEL_PADDING_X: f32 = 8.0;
@@ -58,8 +58,8 @@ impl EdgeGeometry {
             let perpendicular = Vector::new(-delta.y, delta.x).unit();
             let midpoint = from.position + delta * 0.5;
             let control = midpoint + perpendicular * (delta.length() * 0.22).max(24.0);
-            let start = from.position + (control - from.position).unit() * from.radius;
-            let tip = to.position - (to.position - control).unit() * to.radius;
+            let start = from.position + (control - from.position).unit() * StateNode::RADIUS;
+            let tip = to.position - (to.position - control).unit() * StateNode::RADIUS;
             let shaft = Shaft::Quad { start, control, end: tip };
             EdgeGeometry {
                 shaft,
@@ -70,8 +70,8 @@ impl EdgeGeometry {
             }
         } else {
             let unit = delta.unit();
-            let start = from.position + unit * from.radius;
-            let tip = to.position - unit * to.radius;
+            let start = from.position + unit * StateNode::RADIUS;
+            let tip = to.position - unit * StateNode::RADIUS;
             EdgeGeometry {
                 shaft: Shaft::Line { start, end: tip },
                 tip,
@@ -86,7 +86,7 @@ impl EdgeGeometry {
         const SPREAD: f32 = 0.52;
         const LEAN: f32 = 0.42;
         let center = node.position;
-        let r = node.radius;
+        let r = StateNode::RADIUS;
         let axis = direction.y.atan2(direction.x);
         let polar = |angle: f32| Vector::new(angle.cos(), angle.sin());
         let start = center + polar(axis + SPREAD) * r;
@@ -121,6 +121,22 @@ impl EdgeGeometry {
             }
         }
         builder.build()
+    }
+
+    /// Everything this edge paints: the shaft's control hull (a Bézier never leaves it) and the label pills.
+    pub(crate) fn extent<'l>(&self, labels: impl IntoIterator<Item = &'l String>) -> Rectangle {
+        let hull: &[Point] = match &self.shaft {
+            Shaft::Line { start, end } => &[*start, *end],
+            Shaft::Quad { start, control, end } => &[*start, *control, *end],
+            Shaft::Cubic { start, c1, c2, end } => &[*start, *c1, *c2, *end],
+        };
+        let (mut min, mut max) = (hull[0], hull[0]);
+        for point in hull {
+            min = Point::new(min.x.min(point.x), min.y.min(point.y));
+            max = Point::new(max.x.max(point.x), max.y.max(point.y));
+        }
+        let shaft = Rectangle::new(min, Size::new(max.x - min.x, max.y - min.y)).expand(ARROW_HALF_WIDTH);
+        self.label_rects(labels).into_iter().fold(shaft, |extent, (rect, _)| extent.union(&rect))
     }
 
     pub(crate) fn arrowhead_path(&self) -> Path {
@@ -185,7 +201,7 @@ impl EdgeGeometry {
     }
 }
 
-pub(crate) fn label_width(label: &str) -> f32 {
+fn label_width(label: &str) -> f32 {
     (label.chars().count() as f32 * LABEL_CHAR_WIDTH + 2.0 * LABEL_PADDING_X).max(LABEL_HEIGHT)
 }
 

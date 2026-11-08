@@ -1,7 +1,7 @@
 use iced::keyboard;
 
-use crate::gui::theme::Family;
-use crate::state_machine::{self, EditorTool};
+use crate::family::Family;
+use crate::state_machine::{CanvasMessage, EditorTool};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Menu {
@@ -14,7 +14,7 @@ pub enum Menu {
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    Canvas(state_machine::CanvasMessage),
+    Canvas(CanvasMessage),
     SelectTool(EditorTool),
     KeyPressed {
         key: keyboard::Key,
@@ -25,18 +25,18 @@ pub enum Message {
     Clear,
     EditTextChanged(String),
     FinishEditing,
-    CancelEditing,
     ToggleMenu(Menu),
     CloseMenus,
     DismissModal,
+    CloseModal(Modal),
     Noop,
     ChooseStartupModule(usize),
+    StartupHover(usize),
     StartupOpenFile,
     ExitApp,
     WindowCloseRequested,
     ConfirmCloseDiscard,
     ConfirmCloseSave,
-    CancelClose,
     ToggleTheme,
     WindowResized(iced::Size),
     ToggleDock,
@@ -54,24 +54,20 @@ pub enum Message {
         picked: Option<Result<(String, String), String>>,
     },
     LoadPathSubmitted,
-    CancelLoadDialog,
     OpenSaveDialog,
     SavePathChanged(String),
     SaveBrowseClicked,
     SaveBrowseResult { result: Result<String, String> },
     SavePathSubmitted,
-    CancelSaveDialog,
     CopyLlmPrompt,
     CheckInput,
-    DfaToNfa,
+    NfaToDfa,
     Minimize,
     CheckInputTextChanged(String),
     SubmitCheckInput,
-    CancelCheckInput,
     OpenRegexDialog,
     RegexTextChanged(String),
     SubmitRegex,
-    CancelRegex,
     NewTab(Family),
     RemoveTab(usize),
     SwitchTab(usize),
@@ -89,18 +85,65 @@ pub enum Message {
     GrammarCheckWord,
     GrammarDerive,
     GrammarToCnf,
-    CloseError,
     OpenLatexExport,
-    CloseLatexExport,
     CopyLatexExport,
     OpenRegexExport,
-    CloseRegexExport,
     CopyRegexExport,
-    #[allow(dead_code)]
-    OpenEditTransition((usize, usize)),
     EditTransitionLabelChanged(usize, String),
     SaveEditTransitionLabels,
     DeleteEditTransitionLabel(usize),
     AddEditTransitionLabel,
-    CancelEditTransitionLabels,
+}
+
+impl Message {
+    pub(crate) fn may_change_content(&self) -> bool {
+        !matches!(
+            self,
+            Message::RunTick
+                | Message::ToastTick
+                | Message::KeyReleased(_)
+                | Message::Noop
+                | Message::StartupHover(_)
+                | Message::WindowResized(_)
+                | Message::Canvas(
+                    CanvasMessage::MoveState { .. }
+                        | CanvasMessage::Scrolled(_)
+                        | CanvasMessage::Zoomed { .. }
+                        | CanvasMessage::Viewport(_)
+                )
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Modal {
+    RenameState,
+    CheckInput,
+    BuildRegex,
+    Load,
+    Save,
+    LatexExport,
+    RegexExport,
+    NewTransition,
+    TransitionLabels,
+    Shortcuts,
+    Close,
+    Error,
+}
+
+impl Modal {
+    pub(crate) const STACK: [Modal; 12] = [
+        Modal::RenameState,
+        Modal::CheckInput,
+        Modal::BuildRegex,
+        Modal::Load,
+        Modal::Save,
+        Modal::LatexExport,
+        Modal::RegexExport,
+        Modal::NewTransition,
+        Modal::TransitionLabels,
+        Modal::Shortcuts,
+        Modal::Close,
+        Modal::Error,
+    ];
 }

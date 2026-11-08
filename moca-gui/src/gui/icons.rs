@@ -5,7 +5,8 @@ use iced::mouse;
 use iced::widget::canvas::{self, path, Frame, Geometry, LineCap, LineJoin, Path, Stroke};
 use iced::{Color, Element, Length, Point, Rectangle, Renderer, Size, Theme};
 
-use crate::gui::theme::{self, Family, Palette};
+use crate::theme::{self, Palette};
+use crate::family::Family;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Icon {
@@ -42,6 +43,7 @@ pub(crate) enum Ink {
     OnAccent,
     Success,
     Danger,
+    Warning,
 }
 
 impl Ink {
@@ -54,6 +56,7 @@ impl Ink {
             Ink::OnAccent => p.accent_text,
             Ink::Success => p.success,
             Ink::Danger => p.danger,
+            Ink::Warning => p.warning,
         }
     }
 }
@@ -71,7 +74,7 @@ pub(crate) fn icon<'a, Message: 'a>(icon: Icon, size: f32, ink: Ink) -> Element<
 }
 
 #[derive(Default)]
-pub(crate) struct IconCache {
+struct IconCache {
     cache: canvas::Cache,
     key: Cell<Option<(Icon, Ink, bool)>>,
 }
@@ -113,30 +116,30 @@ fn pen(color: Color, width: f32) -> Stroke<'static> {
         .with_line_join(LineJoin::Round)
 }
 
-fn polyline(points: &[(f32, f32)]) -> Path {
+fn through(points: &[(f32, f32)], closed: bool) -> Path {
     Path::new(|b| {
-        if let Some(&(x, y)) = points.first() {
-            b.move_to(Point::new(x, y));
+        for (index, &(x, y)) in points.iter().enumerate() {
+            if index == 0 {
+                b.move_to(Point::new(x, y));
+            } else {
+                b.line_to(Point::new(x, y));
+            }
         }
-        for &(x, y) in &points[1..] {
-            b.line_to(Point::new(x, y));
+        if closed {
+            b.close();
         }
     })
+}
+
+fn polyline(points: &[(f32, f32)]) -> Path {
+    through(points, false)
 }
 
 fn polygon(points: &[(f32, f32)]) -> Path {
-    Path::new(|b| {
-        if let Some(&(x, y)) = points.first() {
-            b.move_to(Point::new(x, y));
-        }
-        for &(x, y) in &points[1..] {
-            b.line_to(Point::new(x, y));
-        }
-        b.close();
-    })
+    through(points, true)
 }
 
-fn arc_into(b: &mut path::Builder, cx: f32, cy: f32, r: f32, start: f32, end: f32, first: bool) {
+pub(super) fn arc_into(b: &mut path::Builder, cx: f32, cy: f32, r: f32, start: f32, end: f32, first: bool) {
     const SEGMENTS: usize = 24;
     for i in 0..=SEGMENTS {
         let t = start + (end - start) * i as f32 / SEGMENTS as f32;

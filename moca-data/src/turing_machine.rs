@@ -1,8 +1,10 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
-use crate::state::{StateID, Input, State};
-use crate::state_machine::{Machine, MachineKind, StateMachine};
+use std::collections::{BTreeMap, HashSet};
+use std::fmt;
+use crate::state::StateID;
+use crate::state_machine::{Changed, Graph, Machine, ParsedLabels, StateMachine};
 
 pub const DEFAULT_MAX_STEPS: usize = 10_000;
+pub const DEFAULT_BLANK: char = '_';
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Direction {
@@ -18,29 +20,47 @@ pub struct TransitionOp {
     pub direction: Direction,
 }
 
-pub fn parse_transition(label: &str) -> Option<Vec<TransitionOp>> {
-    label.split(',').map(parse_segment).collect()
+impl TransitionOp {
+    pub fn parse(segment: &str) -> Option<Self> {
+        let (read, rest) = segment.split_once(';')?;
+        let (write, direction) = rest.split_once('/')?;
+        Self::from_fields(read, write, direction).ok()
+    }
+
+    pub fn from_fields(read: &str, write: &str, direction: &str) -> Result<Self, &'static str> {
+        let direction = match direction.to_uppercase().as_str() {
+            "L" => Direction::Left,
+            "R" => Direction::Right,
+            "S" => Direction::Stay,
+            _ => return Err("invalid direction (use L, R or S)"),
+        };
+        let symbol = |field| single_char(field).ok_or("read/write symbols must be single characters (use the blank symbol for empty cells)");
+        Ok(TransitionOp { read: symbol(read)?, write: symbol(write)?, direction })
+    }
 }
 
-fn parse_segment(segment: &str) -> Option<TransitionOp> {
-    let mut fields = segment.split(';');
-    let read = single_char(fields.next()?)?;
-    let rest = fields.next()?;
-    if fields.next().is_some() {
-        return None;
+impl Direction {
+    pub fn letter(self) -> char {
+        match self {
+            Direction::Left => 'L',
+            Direction::Right => 'R',
+            Direction::Stay => 'S',
+        }
     }
-    let mut halves = rest.split('/');
-    let write = single_char(halves.next()?)?;
-    let direction = match halves.next()?.to_uppercase().as_str() {
-        "L" => Direction::Left,
-        "R" => Direction::Right,
-        "S" => Direction::Stay,
-        _ => return None,
-    };
-    if halves.next().is_some() {
-        return None;
+}
+
+impl fmt::Display for TransitionOp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{};{}/{}", self.read, self.write, self.direction.letter())
     }
-    Some(TransitionOp { read, write, direction })
+}
+
+pub fn parse_transition(label: &str) -> Option<Vec<TransitionOp>> {
+    label.split(',').map(TransitionOp::parse).collect()
+}
+
+pub fn format_transition(ops: &[TransitionOp]) -> String {
+    ops.iter().map(TransitionOp::to_string).collect::<Vec<_>>().join(",")
 }
 
 fn single_char(field: &str) -> Option<char> {
@@ -51,7 +71,6 @@ fn single_char(field: &str) -> Option<char> {
     }
     Some(c)
 }
-
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Tape {
     cells: BTreeMap<i64, char>,
@@ -72,10 +91,6 @@ impl Tape {
         self.cells.get(&self.head).copied().unwrap_or(self.blank)
     }
 
-    pub fn get_blank(&self) -> char {
-        self.blank
-    }
-
     pub fn write(&mut self, c: char) {
         if c == self.blank {
             self.cells.remove(&self.head);
@@ -90,10 +105,6 @@ impl Tape {
             Direction::Right => self.head += 1,
             Direction::Stay => (),
         }
-    }
-
-    pub fn head_position(&self) -> i64 {
-        self.head
     }
 
     pub fn snapshot(&self, context: i64) -> (String, usize) {
@@ -140,25 +151,19 @@ pub enum RunOutcome {
 
 #[derive(Debug, Clone)]
 pub struct TuringMachine {
-    states_by_id: HashMap<StateID, State>,
-    initial_state_id: Option<StateID>,
-    final_states: HashSet<StateID>,
+    graph: Graph,
     blank_symbol: char,
-    deterministic: bool,
     tape_count: Option<usize>,
-    parsed: HashMap<StateID, Vec<(StateID, Vec<TransitionOp>)>>,
+    parsed: ParsedLabels<Vec<TransitionOp>>,
 }
 
 impl TuringMachine {
     pub fn new(blank_symbol: char) -> Self {
         TuringMachine {
-            states_by_id: HashMap::new(),
-            initial_state_id: None,
-            final_states: HashSet::new(),
+            graph: Graph::default(),
             blank_symbol,
-            deterministic: true,
             tape_count: None,
-            parsed: HashMap::new(),
+            parsed: ParsedLabels::default(),
         }
     }
 
@@ -166,59 +171,10 @@ impl TuringMachine {
         self.blank_symbol
     }
 
-    pub fn get_tape_count(&self) -> usize {
-        self.tape_count.unwrap_or(1)
-    }
-
-    fn rebuild_parsed_state(&mut self, state_id: StateID) {
-        match self.states_by_id.get(&state_id) {
-            Some(state) => {
-                let mut list: Vec<(StateID, Vec<TransitionOp>)> = Vec::new();
-                for (target, labels) in state.iter_by_transition() {
-                    for label in labels {
-                        if let Some(ops) = parse_transition(label) {
-                            list.push((*target, ops));
-                        }
-                    }
-                }
-                self.parsed.insert(state_id, list);
-            },
-            None => {
-                self.parsed.remove(&state_id);
-            },
-        }
-        self.refresh_determinism();
-    }
-
-    fn refresh_determinism(&mut self) {
-        self.deterministic = self.parsed.values().all(|transitions| {
-            transitions.iter().enumerate().all(|(index, (target, ops))| {
-                transitions[index + 1..].iter().all(|(other_target, other_ops)| {
-                    let same_reads = ops.len() == other_ops.len()
-                        && ops.iter().zip(other_ops.iter()).all(|(a, b)| a.read == b.read);
-                    let identical = target == other_target && ops == other_ops;
-                    !same_reads || identical
-                })
-            })
-        });
-        if self.parsed.values().all(Vec::is_empty) {
-            self.tape_count = None;
-        }
-    }
-
-    fn transitions_of(&self, state_id: &StateID) -> &[(StateID, Vec<TransitionOp>)] {
-        self.parsed
-            .get(state_id)
-            .map(Vec::as_slice)
-            .unwrap_or(&[])
-    }
-
     pub fn initial_configuration(&self, input: &str) -> Option<Configuration> {
-        let initial_id = self.initial_state_id?;
-        let count = self.get_tape_count();
-        let mut tapes = Vec::with_capacity(count);
-        tapes.push(Tape::new_with_input(input, self.blank_symbol));
-        for _ in 1..count {
+        let initial_id = self.graph.initial()?;
+        let mut tapes = vec![Tape::new_with_input(input, self.blank_symbol)];
+        for _ in 1..self.tape_count.unwrap_or(1) {
             tapes.push(Tape::new_with_input("", self.blank_symbol));
         }
         Some(Configuration {
@@ -227,6 +183,9 @@ impl TuringMachine {
         })
     }
 
+    /// The single successor of `config`. `None` covers both a halt (no transition applies) and an
+    /// ambiguity (several apply); `run` treats either as rejection, so only call it on machines
+    /// whose determinism flag is set, and use `step_all` to tell the two apart.
     pub fn step(&self, config: &Configuration) -> Option<Configuration> {
         let mut next_configurations = self.step_all(config);
         if next_configurations.len() == 1 {
@@ -236,7 +195,8 @@ impl TuringMachine {
     }
 
     pub fn step_all(&self, config: &Configuration) -> Vec<Configuration> {
-        self.transitions_of(&config.state_id)
+        self.parsed
+            .of(config.state_id)
             .iter()
             .filter(|(_, ops)| {
                 ops.len() == config.tapes.len()
@@ -258,10 +218,14 @@ impl TuringMachine {
             .collect()
     }
 
+    pub fn is_accepting(&self, config: &Configuration) -> bool {
+        self.graph.is_final(config.state_id)
+    }
+
     pub fn run(&self, input: &str, max_steps: usize) -> Option<RunOutcome> {
         let mut config = self.initial_configuration(input)?;
         for _ in 0..max_steps {
-            if self.final_states.contains(&config.state_id) {
+            if self.is_accepting(&config) {
                 return Some(RunOutcome::Accepted);
             }
             match self.step(&config) {
@@ -269,7 +233,7 @@ impl TuringMachine {
                 None => return Some(RunOutcome::Rejected),
             }
         }
-        if self.final_states.contains(&config.state_id) {
+        if self.is_accepting(&config) {
             return Some(RunOutcome::Accepted);
         }
         Some(RunOutcome::MaxStepsExceeded)
@@ -283,7 +247,7 @@ impl TuringMachine {
         for _ in 0..max_steps {
             let mut next_frontier: Vec<Configuration> = Vec::new();
             for config in frontier.drain(..) {
-                if self.final_states.contains(&config.state_id) {
+                if self.is_accepting(&config) {
                     return Some(RunOutcome::Accepted);
                 }
                 for next_config in self.step_all(&config) {
@@ -297,7 +261,7 @@ impl TuringMachine {
             }
             frontier = next_frontier;
         }
-        if frontier.iter().any(|config| self.final_states.contains(&config.state_id)) {
+        if frontier.iter().any(|config| self.is_accepting(config)) {
             return Some(RunOutcome::Accepted);
         }
         Some(RunOutcome::MaxStepsExceeded)
@@ -305,87 +269,36 @@ impl TuringMachine {
 }
 
 impl StateMachine for TuringMachine {
-    fn get_states_by_id_mut_ref(&mut self) -> &mut HashMap<StateID, State> {
-        &mut self.states_by_id
+    fn graph(&self) -> &Graph {
+        &self.graph
     }
 
-    fn get_states_by_id_ref(&self) -> &HashMap<StateID, State> {
-        &self.states_by_id
-    }
-
-    fn markers_mut(&mut self) -> (&mut HashMap<StateID, State>, &mut Option<StateID>, &mut HashSet<StateID>) {
-        (&mut self.states_by_id, &mut self.initial_state_id, &mut self.final_states)
+    fn graph_mut(&mut self) -> &mut Graph {
+        &mut self.graph
     }
 
     fn is_deterministic(&self) -> bool {
-        self.deterministic
+        self.parsed.no_conflicts(|(target, ops), (other_target, other_ops)| {
+            let same_reads = ops.len() == other_ops.len()
+                && ops.iter().zip(other_ops.iter()).all(|(a, b)| a.read == b.read);
+            let identical = target == other_target && ops == other_ops;
+            same_reads && !identical
+        })
     }
 
-    fn get_final_states(&self) -> &HashSet<StateID> {
-        &self.final_states
-    }
-
-    fn get_initial_state_id(&self) -> &Option<StateID> {
-        &self.initial_state_id
-    }
-
-    fn add_transition(&mut self, state_id1: StateID, state_id2: StateID, input: Input) {
-        if !self.states_by_id.contains_key(&state_id2) {
-            return;
-        }
-        let Some(state) = self.states_by_id.get_mut(&state_id1) else {
-            return;
+    fn transitions_changed(&mut self, changed: Changed) {
+        self.parsed.refresh(&self.graph, changed, parse_transition);
+        let still_used = |count: usize| self.parsed.all().any(|(_, ops)| ops.len() == count);
+        self.tape_count = match self.tape_count {
+            Some(count) if still_used(count) => Some(count),
+            _ => self.parsed.all().next().map(|(_, ops)| ops.len()),
         };
-        if self.tape_count.is_none() {
-            if let Some(ops) = parse_transition(&input) {
-                self.tape_count = Some(ops.len());
-            }
-        }
-        state.add_transition(state_id2, input);
-        self.rebuild_parsed_state(state_id1);
-    }
-
-    fn modify_input(
-        &mut self,
-        state_id: StateID,
-        state_transition_id: StateID,
-        old_input: &str,
-        new_input: Input,
-    ) {
-        if let Some(state) = self.states_by_id.get_mut(&state_id) {
-            state.modify_input(state_transition_id, old_input, new_input);
-        }
-        self.rebuild_parsed_state(state_id);
-    }
-
-    fn remove_transition(
-        &mut self,
-        state_id: StateID,
-        state_transition_id: StateID,
-        input: &str,
-    ) {
-        if let Some(state) = self.states_by_id.get_mut(&state_id) {
-            state.remove_transition(state_transition_id, input);
-        }
-        self.rebuild_parsed_state(state_id);
-    }
-
-    fn forget_state(&mut self, state_id: StateID) {
-        self.parsed.remove(&state_id);
-        for list in self.parsed.values_mut() {
-            list.retain(|(target, _)| *target != state_id);
-        }
-        self.refresh_determinism();
     }
 }
 
 impl Machine for TuringMachine {
-    fn kind(&self) -> MachineKind {
-        MachineKind::Turing
-    }
-
     fn accepts(&self, input: &str) -> bool {
-        let outcome = if self.deterministic {
+        let outcome = if self.is_deterministic() {
             self.run(input, DEFAULT_MAX_STEPS)
         } else {
             self.run_nondeterministic(input, DEFAULT_MAX_STEPS)
@@ -393,39 +306,20 @@ impl Machine for TuringMachine {
         matches!(outcome, Some(RunOutcome::Accepted))
     }
 
+    fn check_label(&self, label: &str) -> Result<(), String> {
+        match (parse_transition(label), self.tape_count) {
+            (None, _) => Err(format!(
+                "malformed transition label {label:?} (expected \"read;write/dir\" per tape, joined by commas)"
+            )),
+            (Some(ops), Some(expected)) if ops.len() != expected => Err(format!(
+                "inconsistent tape count: label {label:?} uses {} tape(s), but the machine has {expected}",
+                ops.len()
+            )),
+            _ => Ok(()),
+        }
+    }
+
     fn validate(&self) -> Result<(), String> {
-        if self.initial_state_id.is_none() {
-            return Err("The Turing machine has no initial state.".to_string());
-        }
-        let states = self.get_states_by_id_ref();
-        for (id, state) in states {
-            for (target, labels) in state.iter_by_transition() {
-                if !states.contains_key(target) {
-                    return Err(format!(
-                        "State {id} has a transition to nonexistent state {target}."
-                    ));
-                }
-                for label in labels {
-                    match parse_transition(label) {
-                        None => {
-                            return Err(format!(
-                                "State {id} has malformed transition label {label:?} (expected \"read;write/dir\" per tape, joined by commas)."
-                            ));
-                        },
-                        Some(ops) => {
-                            if let Some(expected) = self.tape_count {
-                                if ops.len() != expected {
-                                    return Err(format!(
-                                        "Label {:?} has {} tape segment(s), but the machine has {} tape(s).",
-                                        label, ops.len(), expected
-                                    ));
-                                }
-                            }
-                        },
-                    }
-                }
-            }
-        }
-        Ok(())
+        self.graph.validate_labels("Turing machine", |label| self.check_label(label))
     }
 }

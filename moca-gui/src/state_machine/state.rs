@@ -1,158 +1,138 @@
-use iced::widget::canvas::{self, Canvas};
-use iced::{Element, Fill, Point, Rectangle, Size, Vector};
-use std::collections::HashSet;
+use std::cell::Cell;
 
-use super::message::CanvasMessage;
+use iced::widget::canvas;
+use iced::{Point, Rectangle, Size, Vector};
+
 use super::node::StateNode;
-use super::program::StateMachine;
 use super::tool::EditorTool;
-use crate::gui::theme::Family;
 
-pub(crate) const MIN_ZOOM: f32 = 0.4;
-pub(crate) const MAX_ZOOM: f32 = 2.5;
+const MIN_ZOOM: f32 = 0.4;
+const MAX_ZOOM: f32 = 2.5;
 const FIT_MAX_ZOOM: f32 = 1.25;
 const CONTENT_MARGIN: f32 = 80.0;
 const CONTENT_MARGIN_TOP: f32 = 120.0;
 
 pub struct State {
-    pub(crate) cache: canvas::Cache,
+    /// The graph, split so edges stay under nodes. While a state is dragged both leave it
+    /// (and its edges) out, and the scene draws those few shapes fresh each frame.
+    pub(crate) edge_cache: canvas::Cache,
+    pub(crate) node_cache: canvas::Cache,
+    dragged: Option<usize>,
+    /// One viewport of dots; kept across pans and edits, rebuilt on zoom, resize or theme.
     pub(crate) grid_cache: canvas::Cache,
-    ctrl_pressed: bool,
-    shift_pressed: bool,
-    alt_pressed: bool,
+    /// World rectangle the cached scene covers; computed with the cache and cleared with it.
+    scene_extent: Cell<Option<Rectangle>>,
     tool: EditorTool,
     tool_before_temp_delete: EditorTool,
     scroll: Vector,
     zoom: f32,
-    pub next_id: usize,
 }
 
 impl Default for State {
     fn default() -> Self {
         Self {
-            cache: canvas::Cache::default(),
+            edge_cache: canvas::Cache::default(),
+            node_cache: canvas::Cache::default(),
+            dragged: None,
             grid_cache: canvas::Cache::default(),
-            ctrl_pressed: false,
-            shift_pressed: false,
-            alt_pressed: false,
+            scene_extent: Cell::new(None),
             tool: EditorTool::default(),
             tool_before_temp_delete: EditorTool::default(),
             scroll: Vector::new(0.0, 0.0),
             zoom: 1.0,
-            next_id: 0,
         }
     }
 }
 
-pub(crate) struct CanvasContext<'a> {
-    pub(crate) active_states: &'a HashSet<usize>,
-    pub(crate) family: Family,
-    pub(crate) interactive: bool,
-    pub(crate) known_viewport: Size,
-}
-
 impl State {
-    pub(crate) fn view<'a>(
-        &'a self,
-        states: &'a [StateNode],
-        transitions: &'a std::collections::HashMap<(usize, usize), indexmap::IndexSet<String>>,
-        initial_state: Option<usize>,
-        final_states: &'a HashSet<usize>,
-        context: CanvasContext<'a>,
-    ) -> Element<'a, CanvasMessage> {
-        Canvas::new(StateMachine {
-            state: self,
-            states,
-            transitions,
-            initial_state,
-            final_states,
-            active_states: context.active_states,
-            family: context.family,
-            interactive: context.interactive,
-            known_viewport: context.known_viewport,
-        })
-        .width(Fill)
-        .height(Fill)
-        .into()
-    }
-
-    pub fn scroll(&self) -> Vector {
+    pub(crate) fn scroll(&self) -> Vector {
         self.scroll
     }
 
-    pub fn set_scroll(&mut self, scroll: Vector) {
+    pub(crate) fn set_scroll(&mut self, scroll: Vector) {
         self.scroll = scroll;
-        self.grid_cache.clear();
     }
 
-    pub fn zoom(&self) -> f32 {
+    pub(crate) fn zoom(&self) -> f32 {
         self.zoom
     }
 
-    pub fn set_zoom(&mut self, zoom: f32) {
-        self.zoom = zoom.clamp(MIN_ZOOM, MAX_ZOOM);
-        self.grid_cache.clear();
+    pub(crate) fn set_zoom(&mut self, zoom: f32) {
+        let zoom = zoom.clamp(MIN_ZOOM, MAX_ZOOM);
+        if zoom != self.zoom {
+            self.zoom = zoom;
+            self.request_full_redraw();
+        }
+    }
+
+    pub(crate) fn to_world(&self, screen: Point) -> Point {
+        Point::new(screen.x / self.zoom + self.scroll.x, screen.y / self.zoom + self.scroll.y)
+    }
+
+    pub(crate) fn visible_world(&self, viewport: Size) -> Rectangle {
+        visible_world(self.zoom, self.scroll, viewport)
+    }
+
+    pub(crate) fn zoom_target(&self, factor: f32, anchor: Point, states: &[StateNode], viewport: Size) -> (f32, Vector) {
+        let new_zoom = (self.zoom * factor).clamp(MIN_ZOOM, MAX_ZOOM);
+        let world_anchor = self.to_world(anchor);
+        let unclamped = Vector::new(world_anchor.x - anchor.x / new_zoom, world_anchor.y - anchor.y / new_zoom);
+        (new_zoom, clamp_scroll(unclamped, states, viewport, new_zoom))
     }
 
     pub(crate) fn zoom_around(&mut self, factor: f32, anchor: Point, states: &[StateNode], viewport: Size) {
-        let (zoom, scroll) = zoom_target(self.zoom, self.scroll, factor, anchor, states, viewport);
-        self.zoom = zoom;
-        self.scroll = scroll;
-        self.cache.clear();
-        self.grid_cache.clear();
+        let (zoom, scroll) = self.zoom_target(factor, anchor, states, viewport);
+        self.set_zoom(zoom);
+        self.set_scroll(scroll);
     }
 
     pub(crate) fn fit_to(&mut self, states: &[StateNode], viewport: Size) {
         if states.is_empty() || viewport.width < 1.0 || viewport.height < 1.0 {
-            self.zoom = 1.0;
-            self.scroll = Vector::new(0.0, 0.0);
-            self.request_full_redraw();
+            self.set_zoom(1.0);
+            self.set_scroll(Vector::new(0.0, 0.0));
             return;
         }
         let bounds = content_bounds(states);
         let zoom = (viewport.width / bounds.width)
             .min(viewport.height / bounds.height)
             .clamp(MIN_ZOOM, FIT_MAX_ZOOM);
-        let visible = Size::new(viewport.width / zoom, viewport.height / zoom);
-        self.zoom = zoom;
-        self.scroll = Vector::new(
+        let visible = visible_world(zoom, Vector::new(0.0, 0.0), viewport);
+        self.set_zoom(zoom);
+        self.set_scroll(Vector::new(
             bounds.x - (visible.width - bounds.width) / 2.0,
             bounds.y - (visible.height - bounds.height) / 2.0,
-        );
-        self.request_full_redraw();
+        ));
     }
 
-    pub fn request_redraw(&mut self) {
-        self.cache.clear();
+    pub(crate) fn request_redraw(&mut self) {
+        self.edge_cache.clear();
+        self.node_cache.clear();
+        self.scene_extent.set(None);
+        self.dragged = None;
+    }
+
+    /// Redraw after `id` moved. The first move of a drag rebuilds the caches without it;
+    /// later moves of the same state reuse them.
+    pub(crate) fn redraw_moved(&mut self, id: usize) {
+        if self.dragged != Some(id) {
+            self.request_redraw();
+            self.dragged = Some(id);
+        }
+    }
+
+    pub(crate) fn dragged(&self) -> Option<usize> {
+        self.dragged
     }
 
     pub(crate) fn request_full_redraw(&mut self) {
-        self.cache.clear();
+        self.request_redraw();
         self.grid_cache.clear();
     }
 
-    pub fn set_ctrl_pressed(&mut self, pressed: bool) {
-        self.ctrl_pressed = pressed;
-    }
-
-    pub fn set_shift_pressed(&mut self, pressed: bool) {
-        self.shift_pressed = pressed;
-    }
-
-    pub fn set_alt_pressed(&mut self, pressed: bool) {
-        self.alt_pressed = pressed;
-    }
-
-    pub fn is_ctrl_pressed(&self) -> bool {
-        self.ctrl_pressed
-    }
-
-    pub fn is_shift_pressed(&self) -> bool {
-        self.shift_pressed
-    }
-
-    pub fn is_alt_pressed(&self) -> bool {
-        self.alt_pressed
+    pub(crate) fn scene_extent(&self, compute: impl FnOnce() -> Rectangle) -> Rectangle {
+        let extent = self.scene_extent.get().unwrap_or_else(compute);
+        self.scene_extent.set(Some(extent));
+        extent
     }
 
     pub(crate) fn active_tool(&self) -> EditorTool {
@@ -161,34 +141,29 @@ impl State {
 
     pub(crate) fn set_tool(&mut self, tool: EditorTool) {
         self.tool = tool;
-        self.cache.clear();
+        self.request_redraw();
     }
 
-    pub fn stash_tool(&mut self) {
+    pub(crate) fn stash_tool(&mut self) {
         if self.tool != EditorTool::Delete {
             self.tool_before_temp_delete = self.tool;
         }
     }
 
-    pub fn restore_tool(&mut self) {
-        self.tool = match self.tool_before_temp_delete {
+    pub(crate) fn restore_tool(&mut self) {
+        self.set_tool(match self.tool_before_temp_delete {
             EditorTool::Delete => EditorTool::Arrow,
             tool => tool,
-        };
-        self.cache.clear();
+        });
     }
 
-    pub fn is_deletion_mode(&self) -> bool {
+    pub(crate) fn is_deletion_mode(&self) -> bool {
         self.tool == EditorTool::Delete
     }
+}
 
-    pub fn get_current_next_id(&self) -> usize {
-        self.next_id
-    }
-
-    pub fn reset_id_counter(&mut self) {
-        self.next_id = 0;
-    }
+fn visible_world(zoom: f32, scroll: Vector, viewport: Size) -> Rectangle {
+    Rectangle::new(Point::new(scroll.x, scroll.y), Size::new(viewport.width / zoom, viewport.height / zoom))
 }
 
 pub(crate) fn content_bounds(states: &[StateNode]) -> Rectangle {
@@ -198,10 +173,10 @@ pub(crate) fn content_bounds(states: &[StateNode]) -> Rectangle {
     let (mut min_x, mut min_y) = (f32::MAX, f32::MAX);
     let (mut max_x, mut max_y) = (f32::MIN, f32::MIN);
     for state in states {
-        min_x = min_x.min(state.position.x - state.radius);
-        min_y = min_y.min(state.position.y - state.radius);
-        max_x = max_x.max(state.position.x + state.radius);
-        max_y = max_y.max(state.position.y + state.radius);
+        min_x = min_x.min(state.position.x - StateNode::RADIUS);
+        min_y = min_y.min(state.position.y - StateNode::RADIUS);
+        max_x = max_x.max(state.position.x + StateNode::RADIUS);
+        max_y = max_y.max(state.position.y + StateNode::RADIUS);
     }
     Rectangle::new(
         Point::new(min_x - CONTENT_MARGIN, min_y - CONTENT_MARGIN_TOP),
@@ -212,14 +187,14 @@ pub(crate) fn content_bounds(states: &[StateNode]) -> Rectangle {
     )
 }
 
-pub(crate) fn scroll_range(states: &[StateNode], viewport: Size, zoom: f32) -> ((f32, f32), (f32, f32)) {
+fn scroll_range(states: &[StateNode], viewport: Size, zoom: f32) -> ((f32, f32), (f32, f32)) {
     const KEEP_VISIBLE: f32 = 120.0;
     const UNBOUNDED: (f32, f32) = (-1.0e7, 1.0e7);
     if states.is_empty() {
         return (UNBOUNDED, UNBOUNDED);
     }
     let bounds = content_bounds(states);
-    let visible = Size::new(viewport.width / zoom, viewport.height / zoom);
+    let visible = visible_world(zoom, Vector::new(0.0, 0.0), viewport);
     let axis = |start: f32, length: f32, visible: f32| {
         let keep = KEEP_VISIBLE.min(length / 2.0).min(visible / 2.0);
         let lo = start + keep - visible;
@@ -235,21 +210,4 @@ pub(crate) fn scroll_range(states: &[StateNode], viewport: Size, zoom: f32) -> (
 pub(crate) fn clamp_scroll(scroll: Vector, states: &[StateNode], viewport: Size, zoom: f32) -> Vector {
     let ((x_lo, x_hi), (y_lo, y_hi)) = scroll_range(states, viewport, zoom);
     Vector::new(scroll.x.clamp(x_lo, x_hi), scroll.y.clamp(y_lo, y_hi))
-}
-
-pub(crate) fn zoom_target(
-    zoom: f32,
-    scroll: Vector,
-    factor: f32,
-    anchor: Point,
-    states: &[StateNode],
-    viewport: Size,
-) -> (f32, Vector) {
-    let new_zoom = (zoom * factor).clamp(MIN_ZOOM, MAX_ZOOM);
-    let world_anchor = Point::new(anchor.x / zoom + scroll.x, anchor.y / zoom + scroll.y);
-    let unclamped = Vector::new(
-        world_anchor.x - anchor.x / new_zoom,
-        world_anchor.y - anchor.y / new_zoom,
-    );
-    (new_zoom, clamp_scroll(unclamped, states, viewport, new_zoom))
 }

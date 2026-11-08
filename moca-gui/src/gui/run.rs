@@ -8,46 +8,25 @@ use iced::{Alignment, Element, Length};
 use moca_data::finite_automata::{FiniteAutomata, FiniteConfiguration};
 use moca_data::pushdown_automata::{PdaConfiguration, PushdownAutomata};
 use moca_data::state::StateID;
-use moca_data::state_machine::StateMachine;
 use moca_data::turing_machine::{Configuration, TuringMachine};
 
 use super::message::Message;
-use super::tab::TabMachine;
+use super::automaton::Automaton;
 use super::widgets::{self, text, CellSize, Outcome};
-use crate::gui::theme::{self, Family};
+use crate::theme;
+use crate::family::Family;
 
 const ND_LANES_VISIBLE: usize = 12;
 const STACK_VISIBLE_ENTRIES: usize = 14;
 const TAPE_CONTEXT: i64 = 12;
 const AMBIGUOUS_STEP: &str = "Ambiguous step: several transitions apply at once. The deterministic flag missed an ambiguity, so step-by-step running stops here.";
 
-pub(crate) trait RunConfig: Clone + Eq + Hash {
-    fn state(&self) -> StateID;
-}
-
-impl RunConfig for FiniteConfiguration {
-    fn state(&self) -> StateID {
-        self.state_id()
-    }
-}
-
-impl RunConfig for PdaConfiguration {
-    fn state(&self) -> StateID {
-        self.state_id()
-    }
-}
-
-impl RunConfig for Configuration {
-    fn state(&self) -> StateID {
-        self.state_id()
-    }
-}
-
 trait Runnable {
-    type Config: RunConfig;
+    type Config: Clone + Eq + Hash;
     fn start(&self, input: &str) -> Option<Self::Config>;
     fn accepts_at(&self, config: &Self::Config) -> bool;
     fn successors(&self, config: &Self::Config) -> Vec<Self::Config>;
+    fn state_of(config: &Self::Config) -> StateID;
 }
 
 impl Runnable for FiniteAutomata {
@@ -60,6 +39,9 @@ impl Runnable for FiniteAutomata {
     }
     fn successors(&self, config: &Self::Config) -> Vec<Self::Config> {
         self.step_all(config)
+    }
+    fn state_of(config: &Self::Config) -> StateID {
+        config.state_id()
     }
 }
 
@@ -74,6 +56,9 @@ impl Runnable for PushdownAutomata {
     fn successors(&self, config: &Self::Config) -> Vec<Self::Config> {
         self.step_all(config)
     }
+    fn state_of(config: &Self::Config) -> StateID {
+        config.state_id()
+    }
 }
 
 impl Runnable for TuringMachine {
@@ -82,27 +67,31 @@ impl Runnable for TuringMachine {
         self.initial_configuration(input)
     }
     fn accepts_at(&self, config: &Self::Config) -> bool {
-        self.get_final_states().contains(&config.state_id())
+        self.is_accepting(config)
     }
     fn successors(&self, config: &Self::Config) -> Vec<Self::Config> {
         self.step_all(config)
     }
+    fn state_of(config: &Self::Config) -> StateID {
+        config.state_id()
+    }
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct Trace<C> {
+struct Trace<M: Runnable> {
+    machine: M,
     input: String,
     branching: bool,
-    alive: Vec<C>,
-    visited: HashSet<C>,
+    alive: Vec<M::Config>,
+    visited: HashSet<M::Config>,
     count: u64,
     finished: Option<bool>,
 }
 
-impl<C: RunConfig> Trace<C> {
-    fn start<M: Runnable<Config = C>>(machine: &M, input: String, branching: bool) -> Option<Self> {
+impl<M: Runnable> Trace<M> {
+    fn start(machine: M, input: String, branching: bool) -> Option<Self> {
         let config = machine.start(&input)?;
         Some(Trace {
+            machine,
             input,
             branching,
             alive: vec![config.clone()],
@@ -112,17 +101,17 @@ impl<C: RunConfig> Trace<C> {
         })
     }
 
-    fn advance<M: Runnable<Config = C>>(&mut self, machine: &M) -> Result<(), &'static str> {
+    fn advance(&mut self) -> Result<(), &'static str> {
         if self.finished.is_some() {
             return Ok(());
         }
-        if self.alive.iter().any(|config| machine.accepts_at(config)) {
+        if self.alive.iter().any(|config| self.machine.accepts_at(config)) {
             self.finished = Some(true);
             return Ok(());
         }
         let mut next = Vec::new();
         for config in &self.alive {
-            for successor in machine.successors(config) {
+            for successor in self.machine.successors(config) {
                 if self.visited.insert(successor.clone()) {
                     next.push(successor);
                 }
@@ -144,38 +133,35 @@ impl<C: RunConfig> Trace<C> {
     }
 
     fn active_states(&self) -> HashSet<usize> {
-        self.alive.iter().map(|config| config.state() as usize).collect()
+        self.alive.iter().map(|config| M::state_of(config) as usize).collect()
     }
 }
 
-#[derive(Debug, Clone)]
-pub(crate) enum Run {
-    Finite(Trace<FiniteConfiguration>),
-    Pushdown(Trace<PdaConfiguration>),
-    Turing(Trace<Configuration>),
+enum Run {
+    Finite(Trace<FiniteAutomata>),
+    Pushdown(Trace<PushdownAutomata>),
+    Turing(Trace<TuringMachine>),
 }
 
 impl Run {
-    fn start(machine: &TabMachine, input: String) -> Option<Self> {
-        let branching = !machine.is_deterministic();
-        match machine {
-            TabMachine::Finite(finite) => Trace::start(finite, input, branching).map(Run::Finite),
-            TabMachine::Pushdown(pda) => Trace::start(pda, input, branching).map(Run::Pushdown),
-            TabMachine::Turing(turing) => Trace::start(turing, input, branching).map(Run::Turing),
-            TabMachine::Grammar(_) => None,
+    fn start(automaton: &Automaton, input: String) -> Option<Self> {
+        let branching = !automaton.is_deterministic();
+        match automaton {
+            Automaton::Finite(finite) => Trace::start(finite.clone(), input, branching).map(Run::Finite),
+            Automaton::Pushdown(pda) => Trace::start(pda.clone(), input, branching).map(Run::Pushdown),
+            Automaton::Turing(turing) => Trace::start(turing.clone(), input, branching).map(Run::Turing),
         }
     }
 
-    fn advance(&mut self, machine: &TabMachine) -> Result<(), &'static str> {
-        match (self, machine) {
-            (Run::Finite(trace), TabMachine::Finite(finite)) => trace.advance(finite),
-            (Run::Pushdown(trace), TabMachine::Pushdown(pda)) => trace.advance(pda),
-            (Run::Turing(trace), TabMachine::Turing(turing)) => trace.advance(turing),
-            _ => Ok(()),
+    fn advance(&mut self) -> Result<(), &'static str> {
+        match self {
+            Run::Finite(trace) => trace.advance(),
+            Run::Pushdown(trace) => trace.advance(),
+            Run::Turing(trace) => trace.advance(),
         }
     }
 
-    pub(crate) fn finished(&self) -> Option<bool> {
+    fn finished(&self) -> Option<bool> {
         match self {
             Run::Finite(trace) => trace.finished,
             Run::Pushdown(trace) => trace.finished,
@@ -183,7 +169,7 @@ impl Run {
         }
     }
 
-    pub(crate) fn active_states(&self) -> HashSet<usize> {
+    fn active_states(&self) -> HashSet<usize> {
         match self {
             Run::Finite(trace) => trace.active_states(),
             Run::Pushdown(trace) => trace.active_states(),
@@ -192,29 +178,48 @@ impl Run {
     }
 }
 
-impl super::app::App {
-    pub(crate) fn run_input_changed(&mut self, text: String) -> Task<Message> {
-        self.get_active_tab_mut().run_input = text;
-        Task::none()
+pub(crate) struct RunSession {
+    run: Run,
+    playing: bool,
+    fingerprint: u64,
+}
+
+impl RunSession {
+    pub(crate) fn active_states(&self) -> HashSet<usize> {
+        self.run.active_states()
     }
 
+    pub(crate) fn finished(&self) -> bool {
+        self.run.finished().is_some()
+    }
+
+    pub(crate) fn playing(&self) -> bool {
+        self.playing && !self.finished()
+    }
+
+    pub(crate) fn is_stale(&self, fingerprint: u64) -> bool {
+        self.fingerprint != fingerprint
+    }
+}
+
+impl super::app::App {
     pub(crate) fn run_load(&mut self) -> Task<Message> {
         let tab = self.get_active_tab_mut();
-        if tab.machine.is_grammar() {
-            return Task::none();
-        }
-        tab.sync_gui_to_machine();
-        let started = tab
-            .machine
-            .validate()
-            .and_then(|()| {
-                Run::start(&tab.machine, tab.run_input.clone())
-                    .ok_or_else(|| "The machine has no initial state.".to_string())
-            });
+        let input = tab.run_input.clone();
+        let automaton = match tab.automaton() {
+            Ok(automaton) => automaton,
+            Err(problem) => {
+                self.error_message = Some(problem);
+                return Task::none();
+            }
+        };
+        let started = automaton.validate().and_then(|()| {
+            Run::start(automaton, input).ok_or_else(|| "The machine has no initial state.".to_string())
+        });
         match started {
             Ok(run) => {
-                tab.run = Some(run);
-                tab.playing = false;
+                let fingerprint = tab.content_fingerprint();
+                tab.run = Some(RunSession { run, playing: false, fingerprint });
             }
             Err(problem) => self.error_message = Some(problem),
         }
@@ -222,28 +227,24 @@ impl super::app::App {
     }
 
     pub(crate) fn run_step(&mut self) -> Task<Message> {
-        let tab = self.get_active_tab_mut();
-        if let Some(Err(problem)) = tab.run.as_mut().map(|run| run.advance(&tab.machine)) {
-            self.error_message = Some(problem.to_string());
+        if let Some(session) = self.get_active_tab_mut().run.as_mut() {
+            if let Err(problem) = session.run.advance() {
+                session.playing = false;
+                self.error_message = Some(problem.to_string());
+            }
         }
         Task::none()
     }
 
     pub(crate) fn run_toggle_play(&mut self) -> Task<Message> {
-        let tab = self.get_active_tab_mut();
-        tab.playing = !tab.playing;
-        Task::none()
-    }
-
-    pub(crate) fn run_reset(&mut self) -> Task<Message> {
-        let tab = self.get_active_tab_mut();
-        tab.run = None;
-        tab.playing = false;
+        if let Some(session) = self.get_active_tab_mut().run.as_mut() {
+            session.playing = !session.playing;
+        }
         Task::none()
     }
 
     pub(crate) fn run_tick(&mut self) -> Task<Message> {
-        if self.run_tick_interval().is_some() {
+        if self.run_playing() {
             return self.run_step();
         }
         Task::none()
@@ -251,25 +252,17 @@ impl super::app::App {
 
     pub(crate) fn create_run_panel(&self) -> Element<'_, Message> {
         let tab = self.get_active_tab();
-        let family = tab.machine.family();
-        let (loaded, finished, playing) = tab.run_state();
+        let family = tab.family();
+        let loaded = tab.run.is_some();
+        let finished = tab.run.as_ref().is_some_and(RunSession::finished);
         let controls = row![
-            widgets::run_input(&tab.run_input, Message::RunInputChanged, Message::RunLoad, loaded),
-            widgets::run_controls(
-                playing,
-                loaded,
-                finished,
-                widgets::RunMessages {
-                    play: Message::RunTogglePlay,
-                    step: Message::RunStep,
-                    reset: Message::RunReset,
-                },
-            ),
+            widgets::run_input(&tab.run_input, loaded),
+            widgets::run_controls(self.run_playing(), loaded, finished),
         ]
         .spacing(10)
         .align_y(Alignment::Center);
 
-        let (status, body) = match &tab.run {
+        let (status, body) = match tab.run.as_ref().map(|session| &session.run) {
             None => (
                 widgets::outcome_chip(Outcome::Idle),
                 widgets::hint(idle_hint(family, tab.insight.deterministic)),
@@ -279,10 +272,10 @@ impl super::app::App {
             Some(Run::Turing(trace)) => (self.run_status(trace), self.tm_body(trace)),
         };
 
-        widgets::run_dock(family, family.title(), tab.dock_collapsed, self.dock_is_compact(), controls.into(), status, body)
+        widgets::run_dock(family, tab.dock_collapsed, self.dock_is_compact(), controls.into(), status, body)
     }
 
-    fn run_status<C: RunConfig>(&self, trace: &Trace<C>) -> Element<'_, Message> {
+    fn run_status<M: Runnable>(&self, trace: &Trace<M>) -> Element<'_, Message> {
         let chip = widgets::outcome_chip(Outcome::from_finished(trace.finished));
         let stats = if trace.branching {
             row![
@@ -293,36 +286,36 @@ impl super::app::App {
         } else {
             row![
                 chip,
-                widgets::stat("state", self.state_label(trace.alive[0].state())),
+                widgets::stat("state", self.state_label(M::state_of(&trace.alive[0]))),
                 widgets::stat("steps", trace.count.to_string()),
             ]
         };
         stats.spacing(12).align_y(Alignment::Center).into()
     }
 
-    fn lanes<'a, C: RunConfig>(
+    fn lanes<'a, M: Runnable>(
         &self,
-        trace: &'a Trace<C>,
-        lane_body: impl Fn(&'a C) -> Element<'a, Message>,
+        trace: &'a Trace<M>,
+        lane_body: impl Fn(&'a M::Config) -> Element<'a, Message>,
     ) -> Element<'a, Message> {
         let rows = trace
             .alive
             .iter()
             .take(ND_LANES_VISIBLE)
             .enumerate()
-            .map(|(index, config)| widgets::lane(index, self.state_label(config.state()), lane_body(config)))
+            .map(|(index, config)| widgets::lane(index, self.state_label(M::state_of(config)), lane_body(config)))
             .collect();
         widgets::lanes(rows, trace.alive.len().saturating_sub(ND_LANES_VISIBLE))
     }
 
-    fn finite_body<'a>(&self, trace: &'a Trace<FiniteConfiguration>) -> Element<'a, Message> {
+    fn finite_body<'a>(&self, trace: &'a Trace<FiniteAutomata>) -> Element<'a, Message> {
         if trace.branching {
             return self.lanes(trace, |config| widgets::ribbon(config.remaining_input(), 0, CellSize::Compact));
         }
         widgets::strip(widgets::ribbon(&trace.input, consumed(trace, trace.alive[0].remaining_input()), CellSize::Regular))
     }
 
-    fn pda_body<'a>(&self, trace: &'a Trace<PdaConfiguration>) -> Element<'a, Message> {
+    fn pda_body<'a>(&self, trace: &'a Trace<PushdownAutomata>) -> Element<'a, Message> {
         if trace.branching {
             return self.lanes(trace, |config| {
                 let stack_text = if config.stack().is_empty() {
@@ -331,7 +324,7 @@ impl super::app::App {
                     format!("[{}]", config.stack().join(" "))
                 };
                 row![
-                    text(stack_text).font(theme::MONO).size(12).style(theme::text_dim),
+                    text(stack_text).font(theme::MONO).size(theme::TEXT_SM).style(theme::text_dim),
                     widgets::ribbon(config.remaining_input(), 0, CellSize::Compact),
                 ]
                 .spacing(10)
@@ -358,7 +351,7 @@ impl super::app::App {
         .into()
     }
 
-    fn tm_body<'a>(&self, trace: &'a Trace<Configuration>) -> Element<'a, Message> {
+    fn tm_body<'a>(&self, trace: &'a Trace<TuringMachine>) -> Element<'a, Message> {
         if trace.branching {
             return self.lanes(trace, |config| {
                 let (window, head_offset) = config.tape().snapshot(TAPE_CONTEXT);
@@ -374,17 +367,14 @@ impl super::app::App {
         .into()
     }
 
-    pub(crate) fn state_label(&self, state_id: u64) -> String {
+    fn state_label(&self, state_id: StateID) -> String {
         self.get_active_tab()
-            .states
-            .iter()
-            .find(|node| node.id == state_id as usize)
-            .map(|node| node.label.to_string())
-            .unwrap_or_else(|| format!("q{state_id}"))
+            .node(state_id as usize)
+            .map_or_else(|| format!("q{state_id}"), |node| node.label.clone())
     }
 }
 
-fn consumed<C>(trace: &Trace<C>, remaining: &str) -> usize {
+fn consumed<M: Runnable>(trace: &Trace<M>, remaining: &str) -> usize {
     trace.input.chars().count() - remaining.chars().count()
 }
 

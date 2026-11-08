@@ -1,4 +1,4 @@
-use crate::gui::theme::ThemeMode;
+use crate::theme::ThemeMode;
 use crate::platform;
 
 #[derive(Debug, Clone, Copy, Default)]

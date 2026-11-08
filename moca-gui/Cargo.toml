@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-iced = { version = "0.13.1", features = ["canvas", "smol"] }
+iced = { version = "0.13.1", features = ["advanced", "canvas", "smol"] }
 indexmap = "2.10.0"
 rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "async-std"] }
 

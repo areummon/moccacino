@@ -1,10 +1,11 @@
+use super::{finite, turing, words};
 use crate::entity_file::{
     parse_entity_file, write_finite_entity, write_grammar_entity, write_pushdown_entity,
-    write_turing_entity, Entity,
+    write_turing_entity, Entity, LLM_PROMPT,
 };
 use crate::finite_automata::FiniteAutomata;
 use crate::grammar::Grammar;
-use crate::pushdown_automata::PushdownAutomata;
+use crate::pushdown_automata::{PdaOp, PushdownAutomata};
 use crate::state::{State, StateID};
 use crate::state_machine::{Machine, StateMachine};
 use crate::turing_machine::TuringMachine;
@@ -128,7 +129,7 @@ final: b
 ";
     let (entities, errors) = parse_entity_file(source);
     assert!(errors.is_empty(), "unexpected errors: {errors:?}");
-    assert_eq!(tm_of(&entities[0].entity).get_tape_count(), 2);
+    assert_eq!(tm_of(&entities[0].entity).initial_configuration("").unwrap().tapes().len(), 2);
 }
 
 #[test]
@@ -250,7 +251,7 @@ transitions: (q0, a, Z, Z) -> q0
 initial: q0
 ",
     );
-    assert!(message.contains("'blank:' is only valid"), "message: {message}");
+    assert!(message.contains("'blank:' is not valid for Pushdown entities"), "message: {message}");
 
     let (entities, errors) = parse_entity_file(
         "\
@@ -444,7 +445,7 @@ fn entity_file_save_load_tm_roundtrip_test() {
     assert_eq!(entities.len(), 1);
     let loaded = tm_of(&entities[0].entity);
     assert_eq!(loaded.get_blank_symbol(), '□');
-    assert_eq!(loaded.get_tape_count(), 2);
+    assert_eq!(loaded.initial_configuration("").unwrap().tapes().len(), 2);
     assert_eq!(
         machine_triples(loaded.get_states_by_id_ref()),
         machine_triples(tm.get_states_by_id_ref())
@@ -511,18 +512,6 @@ fn demo_file_entities_match_their_names_test() {
     let (entities, errors) = parse_entity_file(&source);
     assert!(errors.is_empty(), "demo.ce parses cleanly: {errors:?}");
 
-    let words = |alphabet: &[char]| {
-        let mut all = vec![String::new()];
-        let mut frontier = vec![String::new()];
-        for _ in 0..6 {
-            frontier = frontier
-                .iter()
-                .flat_map(|word| alphabet.iter().map(move |c| format!("{word}{c}")))
-                .collect();
-            all.extend(frontier.iter().cloned());
-        }
-        all
-    };
     fn is_anbn(word: &str) -> bool {
         let half = word.len() / 2;
         word.len() % 2 == 0 && word[..half].chars().all(|c| c == 'a') && word[half..].chars().all(|c| c == 'b')
@@ -539,7 +528,7 @@ fn demo_file_entities_match_their_names_test() {
     assert_eq!(entities.len(), specs.len());
     for (named, (name, alphabet, expected)) in entities.iter().zip(specs) {
         assert_eq!(named.name, name);
-        for word in words(alphabet) {
+        for word in words(alphabet, 6) {
             let accepted = match &named.entity {
                 Entity::Finite(machine) => machine.accepts(&word),
                 Entity::Pushdown(machine) => machine.accepts(&word),
@@ -549,4 +538,146 @@ fn demo_file_entities_match_their_names_test() {
             assert_eq!(accepted, expected(&word), "{name} on {word:?}");
         }
     }
+}
+
+#[test]
+fn llm_prompt_example_parses_test() {
+    let example = LLM_PROMPT
+        .split_once("EXAMPLE FILE\n")
+        .and_then(|(_, rest)| rest.split_once("\n\nTASK"))
+        .map(|(example, _)| example)
+        .expect("the prompt carries an example block");
+    let (entities, errors) = parse_entity_file(example);
+    assert!(errors.is_empty(), "the prompt's example must load: {errors:?}");
+    let names: Vec<&str> = entities.iter().map(|named| named.name.as_str()).collect();
+    assert_eq!(names, ["anbn", "abb", "anbn"]);
+    let pda = pda_of(&entities[0].entity);
+    for (word, expected) in [("ab", true), ("aabb", true), ("aab", false), ("", false), ("ba", false)] {
+        assert_eq!(Machine::accepts(pda, word), expected, "pda on {word:?}");
+    }
+    for word in words(&['a', 'b'], 5) {
+        assert_eq!(finite_of(&entities[1].entity).accepts(&word), word.ends_with("abb"), "regex on {word:?}");
+    }
+}
+
+#[test]
+fn entity_file_documented_aliases_test() {
+    let (entities, errors) = parse_entity_file(
+        "\
+entity: re
+regex: a
+entity: automaton
+transitions: (p, a) -> q
+initial: p
+final: q
+",
+    );
+    assert!(errors.is_empty(), "{errors:?}");
+    assert!(finite_of(&entities[0].entity).accepts("a"));
+    assert!(finite_of(&entities[1].entity).accepts("a"));
+}
+
+#[test]
+fn entity_file_grammar_error_reports_its_own_line_test() {
+    let (_, errors) = parse_entity_file(
+        "\
+entity: grammar
+productions: S -> a T
+# a comment between the production lines
+productions: T b
+",
+    );
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors[0].line, 4);
+}
+
+#[test]
+fn entity_file_writers_refuse_labels_that_would_drift_test() {
+    let tm = turing('_', 1, &[], &[(0, 0, "a;b;c/R")]);
+    assert!(write_turing_entity("e", &tm).is_err(), "a;b;c/R is not a turing label");
+
+    let mut pda = PushdownAutomata::new("Z".to_string());
+    pda.add_state_with_id_label(0, "q0");
+    pda.make_initial(0);
+    pda.add_transition(0, 0, "a;Z/a,,b".to_string());
+    assert!(write_pushdown_entity("e", &pda).is_err(), "an empty push segment must not become ε");
+
+    let fa = finite(2, &[1], &[(0, 1, " a")]);
+    assert!(write_finite_entity("e", &fa).is_err(), "a padded symbol must not be trimmed on save");
+
+    let fa = finite(2, &[1], &[(0, 1, "a(")]);
+    assert!(write_finite_entity("e", &fa).is_err());
+}
+
+#[test]
+fn entity_file_pda_labels_round_trip_by_meaning_test() {
+    let mut pda = PushdownAutomata::new("Z".to_string());
+    pda.add_n_states(2);
+    pda.make_initial(0);
+    pda.make_final(1);
+    for label in ["ε", ";Z/AB", "a;ε/X,ε", "b;A/AB,C", "ε;Z/Z"] {
+        pda.add_transition(0, 1, label.to_string());
+    }
+    let text = write_pushdown_entity("p", &pda).expect("serializable");
+    let (entities, errors) = parse_entity_file(&text);
+    assert!(errors.is_empty(), "{errors:?}\n{text}");
+    let ops = |machine: &PushdownAutomata| -> BTreeSet<String> {
+        machine
+            .get_states_by_id_ref()
+            .values()
+            .flat_map(|state| state.labels().map(|(_, label)| PdaOp::parse(label).unwrap().to_string()))
+            .collect()
+    };
+    assert_eq!(ops(pda_of(&entities[0].entity)), ops(&pda));
+}
+
+#[test]
+fn entity_file_grammar_writer_preserves_language_test() {
+    let mut grammar = Grammar::new("S");
+    grammar.add_variable("B");
+    grammar.add_production("S", &["a", "B"]);
+    grammar.add_production("S", &["c"]);
+    let text = write_grammar_entity("g", &grammar).unwrap();
+    assert_eq!(text, "entity: grammar\nname: g\nproductions: S -> c");
+    let (entities, errors) = parse_entity_file(&text);
+    assert!(errors.is_empty(), "{errors:?}");
+    assert!(!grammar_of(&entities[0].entity).generate("a"));
+}
+
+#[test]
+fn entity_file_parentheses_inside_a_tuple_are_rejected_test() {
+    let message = first_error_message(
+        "\
+entity: pda
+transitions: (q0, ε, Z, PZ) -> q0, (q0, (, P, PP) -> q0, (q0, ), P, ε) -> q1
+initial: q0
+",
+    );
+    assert!(message.contains("reserved"), "message: {message}");
+}
+
+#[test]
+fn entity_file_reports_machine_label_problems_on_their_line_test() {
+    let source = "\
+entity: tm
+states: a, b
+transitions: (a, 0, 1, R) -> b
+transitions: (a, 1, 1, R, _, _, S) -> b
+initial: a
+";
+    let (_, errors) = parse_entity_file(source);
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert_eq!(errors[0].line, 4);
+    assert!(errors[0].message.contains("inconsistent tape count"), "{errors:?}");
+
+    let source = "\
+entity: pda
+states: a
+transitions: (a, x;y, Z, A) -> a
+initial: a
+";
+    let (_, errors) = parse_entity_file(source);
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert_eq!(errors[0].line, 3);
+    assert!(errors[0].message.contains("malformed transition label"), "{errors:?}");
 }

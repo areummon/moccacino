@@ -1,113 +1,82 @@
 use iced::Task;
 
-use crate::state_machine;
-use crate::tikz_export;
-
-use moca_data::state_machine::MachineKind;
+use moca_data::finite_automata::FiniteAutomata;
+use moca_data::state_machine::StateMachine;
 
 use super::dialogs::{CHECK_INPUT, REGEX_INPUT};
 use super::message::Message;
-use super::tab::TabMachine;
-use crate::gui::theme::Tone;
+use super::automaton::Automaton;
+use super::tab::Tab;
+use crate::theme::Tone;
+use crate::tikz_export;
 
 impl super::app::App {
     pub(crate) fn open_check_input(&mut self) -> Task<Message> {
         self.open_menu = None;
-        let tab = self.get_active_tab_mut();
-        tab.check_input_dialog_open = true;
-        tab.check_input_text.clear();
+        self.get_active_tab_mut().check_input = Some(String::new());
         iced::widget::text_input::focus(CHECK_INPUT)
     }
 
-    pub(crate) fn dfa_to_nfa(&mut self) -> Task<Message> {
-        self.open_menu = None;
-
-        if self.get_active_tab().machine.is_grammar() {
-            return self.reject_operation_for_grammar("convert");
-        }
-
-        self.get_active_tab_mut().sync_gui_to_machine();
-
-        match self.get_active_tab().machine.to_dfa() {
-            Some(machine) => self.open_machine_in_new_tab("DFA".to_string(), machine),
-            None => self.reject_non_finite("convert", "The automaton is already deterministic."),
-        }
+    pub(crate) fn nfa_to_dfa(&mut self) -> Task<Message> {
+        self.finite_operation("DFA", "convert", |finite| {
+            if finite.is_deterministic() {
+                Err("Cannot convert: The automaton is already deterministic.".to_string())
+            } else {
+                Ok(finite.to_dfa())
+            }
+        })
     }
 
     pub(crate) fn minimize(&mut self) -> Task<Message> {
+        self.finite_operation("Minimized", "minimize", |finite| {
+            if finite.is_deterministic() {
+                Ok(finite.minimize())
+            } else {
+                Err("Cannot minimize: The automaton must be deterministic.".to_string())
+            }
+        })
+    }
+
+    fn finite_operation(
+        &mut self,
+        tab_name: &str,
+        verb: &str,
+        operation: impl Fn(&FiniteAutomata) -> Result<FiniteAutomata, String>,
+    ) -> Task<Message> {
         self.open_menu = None;
-
-        if self.get_active_tab().machine.is_grammar() {
-            return self.reject_operation_for_grammar("minimize");
+        match self.get_active_tab_mut().finite(verb).and_then(operation) {
+            Ok(result) => self.open_in_new_tab(Tab::from_automaton(tab_name.to_string(), Automaton::Finite(result))),
+            Err(problem) => {
+                self.error_message = Some(problem);
+                Task::none()
+            }
         }
-
-        self.get_active_tab_mut().sync_gui_to_machine();
-
-        match self.get_active_tab().machine.minimized() {
-            Some(machine) => self.open_machine_in_new_tab("Minimized".to_string(), machine),
-            None => self.reject_non_finite("minimize", "The automaton must be deterministic."),
-        }
-    }
-
-    fn reject_non_finite(&mut self, verb: &str, finite_reason: &str) -> Task<Message> {
-        let holder = match self.get_active_tab().machine.machine_kind() {
-            Some(MachineKind::Turing) => Some("a Turing machine"),
-            Some(MachineKind::Pushdown) => Some("a pushdown automaton"),
-            _ => None,
-        };
-        self.error_message = Some(match holder {
-            Some(holder) => format!("Cannot {verb}: the tab holds {holder}, not a finite automaton."),
-            None => format!("Cannot {verb}: {finite_reason}"),
-        });
-        Task::none()
-    }
-
-    pub(crate) fn check_input_text_changed(&mut self, text: String) -> Task<Message> {
-        self.get_active_tab_mut().check_input_text = text;
-        Task::none()
     }
 
     pub(crate) fn submit_check_input(&mut self) -> Task<Message> {
-        let input = self.get_active_tab().check_input_text.clone();
-        self.get_active_tab_mut().sync_gui_to_machine();
-        if let Err(problem) = self.get_active_tab().machine.validate() {
-            self.error_message = Some(problem);
-            return Task::none();
+        let tab = self.get_active_tab_mut();
+        let input = tab.check_input.clone().unwrap_or_default();
+        match tab.accepts(&input) {
+            Ok(accepted) => {
+                tab.check_input = None;
+                let shown = if input.is_empty() { "ε (empty word)".to_string() } else { format!("'{input}'") };
+                let (tone, verdict) = if accepted { (Tone::Success, "accepted") } else { (Tone::Danger, "rejected") };
+                self.toast(tone, format!("{shown} is {verdict}"), None);
+            }
+            Err(problem) => self.error_message = Some(problem),
         }
-        let result = self.get_active_tab().machine.accepts(&input);
-        self.get_active_tab_mut().check_input_dialog_open = false;
-        let shown = if input.is_empty() { "ε (empty word)".to_string() } else { format!("'{input}'") };
-        let (tone, verdict) = if result { (Tone::Success, "accepted") } else { (Tone::Danger, "rejected") };
-        self.toast(tone, format!("{shown} is {verdict}"), None);
-        Task::none()
-    }
-
-    pub(crate) fn cancel_check_input(&mut self) -> Task<Message> {
-        self.get_active_tab_mut().check_input_dialog_open = false;
         Task::none()
     }
 
     pub(crate) fn open_regex_dialog(&mut self) -> Task<Message> {
         self.open_menu = None;
-        let tab = self.get_active_tab_mut();
-        tab.regex_dialog_open = true;
-        tab.regex_text.clear();
+        self.get_active_tab_mut().regex_input = Some(String::new());
         iced::widget::text_input::focus(REGEX_INPUT)
     }
 
-    pub(crate) fn regex_text_changed(&mut self, text: String) -> Task<Message> {
-        self.get_active_tab_mut().regex_text = text;
-        Task::none()
-    }
-
-    pub(crate) fn cancel_regex(&mut self) -> Task<Message> {
-        self.get_active_tab_mut().regex_dialog_open = false;
-        Task::none()
-    }
-
     pub(crate) fn submit_regex(&mut self) -> Task<Message> {
-        let pattern = self.get_active_tab().regex_text.trim().to_string();
-
+        let tab = self.get_active_tab_mut();
+        let pattern = tab.regex_input.as_deref().unwrap_or_default().trim().to_string();
         let machine = match moca_data::regex::compile_str(&pattern) {
             Ok(machine) => machine,
             Err(error) => {
@@ -115,9 +84,7 @@ impl super::app::App {
                 return Task::none();
             }
         };
-
-        self.get_active_tab_mut().regex_dialog_open = false;
-
+        tab.regex_input = None;
         let tab_name = if pattern.chars().count() > 18 {
             format!("Regex: {}...", pattern.chars().take(15).collect::<String>())
         } else if pattern.is_empty() {
@@ -125,108 +92,43 @@ impl super::app::App {
         } else {
             format!("Regex: {pattern}")
         };
-        self.open_machine_in_new_tab(tab_name, TabMachine::Finite(machine))
+        self.open_in_new_tab(Tab::from_automaton(tab_name, Automaton::Finite(machine)))
     }
 
     pub(crate) fn open_latex_export(&mut self) -> Task<Message> {
         self.open_menu = None;
-        if matches!(self.get_active_tab().machine, TabMachine::Grammar(_)) {
-            let source = self.get_active_tab().grammar_text.clone();
-            return match moca_data::grammar::parse_grammar(&source) {
-                Ok(grammar) => {
-                    if grammar.productions().is_empty() {
-                        self.error_message =
-                            Some("Cannot export: the grammar has no productions.".to_string());
-                        return Task::none();
-                    }
-                    self.latex_export_code = Some(tikz_export::export_grammar_to_latex(&grammar));
-                    self.latex_export_dialog_open = true;
-                    Task::none()
-                }
-                Err(error) => {
-                    self.error_message = Some(format!("Cannot export the grammar: {error}"));
-                    Task::none()
-                }
-            };
-        }
-
-        if self.get_active_tab().states.is_empty() && self.get_active_tab().transitions.is_empty() {
-            self.error_message = Some("Nothing to export: the canvas is empty.".to_string());
-            return Task::none();
-        }
-
-        let mut export_transitions = Vec::new();
-        for (&(from, to), labels) in &self.get_active_tab().transitions {
-            for label in labels {
-                export_transitions.push(state_machine::Transition {
-                    from_state_id: from,
-                    to_state_id: to,
-                    from_point: iced::Point::ORIGIN,
-                    to_point: iced::Point::ORIGIN,
-                    label: label.clone(),
-                });
+        let tab = self.get_active_tab();
+        let code = match tab.grammar() {
+            Some(editor) => editor
+                .parse()
+                .map(|grammar| tikz_export::export_grammar_to_latex(&grammar))
+                .map_err(|problem| format!("Cannot export: {problem}")),
+            None if tab.states.is_empty() && tab.transitions.is_empty() => {
+                Err("Nothing to export: the canvas is empty.".to_string())
             }
+            None => Ok(tikz_export::export_to_tikz(&tab.states, &tab.transitions, tab.initial_state, &tab.final_states)),
+        };
+        match code {
+            Ok(code) => self.latex_export = Some(code),
+            Err(problem) => self.error_message = Some(problem),
         }
-        let code = tikz_export::export_to_tikz(
-            &self.get_active_tab().states,
-            &export_transitions,
-            self.get_active_tab().initial_state,
-            &self.get_active_tab().final_states,
-        );
-        self.latex_export_code = Some(code);
-        self.latex_export_dialog_open = true;
-        Task::none()
-    }
-
-    pub(crate) fn close_latex_export(&mut self) -> Task<Message> {
-        self.latex_export_dialog_open = false;
-        self.latex_export_code = None;
         Task::none()
     }
 
     pub(crate) fn open_regex_export(&mut self) -> Task<Message> {
         self.open_menu = None;
+        match self.get_active_tab_mut().finite("export a regex") {
+            Ok(finite) => self.regex_export = Some(finite.to_regex().to_string()),
+            Err(problem) => self.error_message = Some(problem),
+        }
+        Task::none()
+    }
 
-        if !matches!(
-            self.get_active_tab().machine,
-            TabMachine::Finite(_)
-        ) {
-            self.error_message = Some(
-                "Cannot export a regex: the tab must hold a finite automaton.".to_string(),
-            );
+    pub(crate) fn copy_export(&mut self, code: Option<String>, confirmation: &str) -> Task<Message> {
+        let Some(code) = code else {
             return Task::none();
-        }
-
-        self.get_active_tab_mut().sync_gui_to_machine();
-
-        let expression = match &self.get_active_tab().machine {
-            TabMachine::Finite(finite) => finite.to_regex().to_string(),
-            _ => return Task::none(),
         };
-        self.regex_export_code = Some(expression);
-        self.regex_export_dialog_open = true;
-        Task::none()
-    }
-
-    pub(crate) fn close_regex_export(&mut self) -> Task<Message> {
-        self.regex_export_dialog_open = false;
-        self.regex_export_code = None;
-        Task::none()
-    }
-
-    pub(crate) fn copy_regex_export(&mut self) -> Task<Message> {
-        if let Some(code) = self.regex_export_code.clone() {
-            self.toast(Tone::Success, "Regular expression copied", None);
-            return iced::clipboard::write(code);
-        }
-        Task::none()
-    }
-
-    pub(crate) fn copy_latex_export(&mut self) -> Task<Message> {
-        if let Some(code) = self.latex_export_code.clone() {
-            self.toast(Tone::Success, "LaTeX copied to the clipboard", None);
-            return iced::clipboard::write(code);
-        }
-        Task::none()
+        self.toast(Tone::Success, confirmation, None);
+        iced::clipboard::write(code)
     }
 }

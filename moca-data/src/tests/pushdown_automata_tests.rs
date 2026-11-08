@@ -1,52 +1,25 @@
-use crate::pushdown_automata::PushdownAutomata;
-use crate::state_machine::StateMachine;
+use super::pushdown as pda;
+use crate::pushdown_automata::{PdaOp, PushdownAutomata};
+use crate::state_machine::{Machine, StateMachine};
+
+fn build_anbn_pda() -> PushdownAutomata {
+    pda(3, &[2], &[(0, 0, "a;Z/AZ"), (0, 0, "a;A/AA"), (0, 1, "ε"), (1, 1, "b;A/ε"), (1, 2, "ε;Z/Z")])
+}
 
 #[test]
 fn check_input_dpa_test() {
-    let mut pushdown_automata = PushdownAutomata::new("Z".to_string());
-    pushdown_automata.add_n_states(3);
-    pushdown_automata.make_initial(0);
-    pushdown_automata.make_final(2);
-    pushdown_automata.add_transition(0, 0, "0;Z/AZ".to_string());
-    pushdown_automata.add_transition(0, 0, "0;A/AA".to_string());
-    pushdown_automata.add_transition(0, 1, "ε".to_string());
-    pushdown_automata.add_transition(1, 1, "1;A/ε".to_string());
-    pushdown_automata.add_transition(1, 2, "ε;Z/Z".to_string());
-    assert!(!pushdown_automata.check_input("0"));
-    assert!(!pushdown_automata.check_input("001"));
-    assert!(!pushdown_automata.check_input("001111"));
-    assert!(!pushdown_automata.check_input("0001111"));
-    assert!(!pushdown_automata.check_input("sy"));
-    assert!(pushdown_automata.check_input("01"));
-    assert!(pushdown_automata.check_input("00001111"));
-    assert!(pushdown_automata.check_input(""));
-    let mut pushdown_automaton = PushdownAutomata::new("Z".to_string());
-    pushdown_automaton.add_n_states(3);
-    pushdown_automaton.make_initial(0);
-    pushdown_automaton.make_final(2);
-    pushdown_automaton.add_transition(0, 0, "a;Z/AZ".to_string());
-    pushdown_automaton.add_transition(0, 0, "a;A/AA".to_string());
-    pushdown_automaton.add_transition(0, 1, "ε".to_string());
-    pushdown_automaton.add_transition(1, 1, "b;A/ε".to_string());
-    pushdown_automaton.add_transition(1, 2, "ε;Z/Z".to_string());
-    assert!(pushdown_automaton.check_input("ab"));
-    assert!(pushdown_automaton.check_input(""));
-    assert!(pushdown_automaton.check_input("aabb"));
-    assert!(pushdown_automaton.check_input("aaabbb"));
-    assert!(!pushdown_automaton.check_input("aab"));
-    assert!(!pushdown_automaton.check_input("ba"));
-    assert!(!pushdown_automaton.check_input("abb"));
-    assert!(!pushdown_automaton.check_input("sy"));
+    let anbn = build_anbn_pda();
+    for (input, expected) in [
+        ("", true), ("ab", true), ("aabb", true), ("aaabbb", true),
+        ("a", false), ("aab", false), ("ba", false), ("abb", false), ("aaabbbb", false), ("sy", false),
+    ] {
+        assert_eq!(anbn.check_input(input), expected, "on {input:?}");
+    }
 }
 
 #[test]
 fn remove_state_cleans_bookkeeping_test() {
-    let mut pushdown_automata = PushdownAutomata::new("Z".to_string());
-    pushdown_automata.add_n_states(3);
-    pushdown_automata.make_initial(0);
-    pushdown_automata.make_final(1);
-    pushdown_automata.add_transition(0, 1, "a;Z/a".to_string());
-    pushdown_automata.add_transition(1, 2, "b;a/Z".to_string());
+    let mut pushdown_automata = pda(3, &[1], &[(0, 1, "a;Z/a"), (1, 2, "b;a/Z")]);
     pushdown_automata.remove_state(1);
     assert!(pushdown_automata.get_final_states().is_empty());
     let start = pushdown_automata.initial_configuration("a").unwrap();
@@ -55,62 +28,42 @@ fn remove_state_cleans_bookkeeping_test() {
 
 #[test]
 fn machine_validate_test() {
-    use crate::state_machine::{Machine, MachineKind};
-    let mut pushdown_automata = PushdownAutomata::new("Z".to_string());
-    pushdown_automata.add_n_states(2);
-    pushdown_automata.make_initial(0);
-    pushdown_automata.make_final(1);
-    pushdown_automata.add_transition(0, 1, "a;Z/a".to_string());
-    assert_eq!(pushdown_automata.kind(), MachineKind::Pushdown);
-    assert!(pushdown_automata.validate().is_ok());
+    let mut pushdown_automata = pda(2, &[1], &[(0, 1, "a;Z/a")]);
+    assert_eq!(pushdown_automata.validate(), Ok(()));
     assert!(pushdown_automata.accepts("a"));
     assert!(!pushdown_automata.accepts("aa"));
 
     pushdown_automata.remove_state(0);
-    assert!(pushdown_automata.validate().is_err());
+    assert_eq!(pushdown_automata.validate(), Err("The pushdown automaton has no initial state.".to_string()));
 }
 
-use std::collections::{HashSet, VecDeque};
-use crate::pushdown_automata::PdaConfiguration;
-use crate::state_machine::Machine;
-
-fn build_anbn_pda() -> PushdownAutomata {
-    let mut pda = PushdownAutomata::new("Z".to_string());
-    pda.add_n_states(3);
-    pda.make_initial(0);
-    pda.make_final(2);
-    pda.add_transition(0, 0, "a;Z/AZ".to_string());
-    pda.add_transition(0, 0, "a;A/AA".to_string());
-    pda.add_transition(0, 1, "ε".to_string());
-    pda.add_transition(1, 1, "b;A/ε".to_string());
-    pda.add_transition(1, 2, "ε;Z/Z".to_string());
-    pda
-}
-
-fn accepts_by_stepping(pda: &PushdownAutomata, input: &str, max_visited: usize, max_stack_depth: usize) -> bool {
-    let initial = match pda.initial_configuration(input) {
-        Some(config) => config,
-        None => return false,
-    };
-    let mut visited: HashSet<PdaConfiguration> = HashSet::new();
-    let mut worklist: VecDeque<PdaConfiguration> = VecDeque::from([initial]);
-    while let Some(current) = worklist.pop_front() {
-        if !visited.insert(current.clone()) {
-            continue;
-        }
-        if visited.len() > max_visited {
-            return false;
-        }
-        if pda.is_accepting(&current) {
-            return true;
-        }
-        for next in pda.step_all(&current) {
-            if next.stack().len() <= max_stack_depth {
-                worklist.push_back(next);
-            }
-        }
+#[test]
+fn pda_label_codec_round_trip_test() {
+    let op = PdaOp::parse("a;Z/AZ").unwrap();
+    assert_eq!(op, PdaOp { read: Some("a".into()), pop: Some("Z".into()), push_entries: vec!["Z".into(), "A".into()] });
+    assert_eq!(PdaOp::parse("ε").unwrap(), PdaOp::parse("ε;ε/ε").unwrap());
+    assert_eq!(PdaOp::parse(";/").unwrap(), PdaOp::parse("ε;ε/ε").unwrap());
+    for (label, rendered) in [
+        ("a;Z/AZ", "a;Z/AZ"),
+        ("a;Z/A,Z", "a;Z/AZ"),
+        ("ε", "ε;ε/ε"),
+        ("b;Top/Top,ε", "b;Top/Top,ε"),
+        ("c;A/S,x,Top", "c;A/S,x,Top"),
+        ("x/y;A/ε", "x/y;A/ε"),
+    ] {
+        let op = PdaOp::parse(label).unwrap();
+        assert_eq!(op.to_string(), rendered, "rendering {label:?}");
+        assert_eq!(PdaOp::parse(rendered).unwrap(), op, "re-parsing {rendered:?}");
     }
-    false
+    assert_eq!(PdaOp::parse("a;Z/x,,y"), Err("empty push segment"));
+    assert!(PdaOp::parse("a;b;c/d").is_err());
+    assert!(PdaOp::is_reserved_symbol("a,b") && PdaOp::is_reserved_symbol("ε") && !PdaOp::is_reserved_symbol("ab"));
+}
+
+#[test]
+fn pda_equivalent_labels_do_not_conflict_test() {
+    let pda = pda(2, &[], &[(0, 1, "ε"), (0, 1, "ε;ε/ε")]);
+    assert!(pda.is_deterministic(), "a bare ε and ε;ε/ε are the same move");
 }
 
 #[test]
@@ -155,32 +108,19 @@ fn pda_configuration_stepping_test() {
 }
 
 #[test]
-fn pda_step_check_input_parity_test() {
+fn pda_check_input_language_test() {
     let anbn = build_anbn_pda();
 
-    let mut branching = PushdownAutomata::new("Z".to_string());
-    branching.add_n_states(4);
-    branching.make_initial(0);
-    branching.make_final(3);
-    branching.add_transition(0, 1, "a;Z/P".to_string());
-    branching.add_transition(0, 2, "a;Z/Q".to_string());
-    branching.add_transition(1, 1, "b;P/ε".to_string());
-    branching.add_transition(2, 2, "c;Q/ε".to_string());
-    branching.add_transition(1, 3, "ε;Z/Z".to_string());
-    branching.add_transition(2, 3, "ε;Z/Z".to_string());
+    let branching = pda(4, &[3], &[
+        (0, 1, "a;Z/PZ"), (0, 2, "a;Z/QZ"), (1, 1, "b;P/ε"), (2, 2, "c;Q/ε"), (1, 3, "ε;Z/Z"), (2, 3, "ε;Z/Z"),
+    ]);
     assert!(!branching.is_deterministic());
 
-    for pda in [&anbn, &branching] {
-        for input in [
-            "", "a", "ab", "abb", "ac", "acc", "aa", "aba", "b", "c", "abc",
-            "aab", "abbc", "aabb",
-        ] {
-            let expected = pda.check_input(input);
-            assert_eq!(
-                accepts_by_stepping(pda, input, 150_000, 4096),
-                expected,
-                "stepping parity broken on {input:?}"
-            );
+    let inputs = ["", "a", "ab", "abb", "ac", "acc", "aa", "aba", "b", "c", "abc", "aab", "abbc", "aabb"];
+    for (machine, accepted) in [(&anbn, &["", "ab", "aabb"][..]), (&branching, &["ab", "ac"][..])] {
+        for input in inputs {
+            let expected = accepted.contains(&input);
+            assert_eq!(machine.check_input(input), expected, "check_input on {input:?}");
         }
     }
 }
@@ -288,7 +228,6 @@ fn pda_epsilon_pop_fires_on_nonempty_stack_test() {
 
 #[test]
 fn pda_malformed_label_does_not_panic_test() {
-    use crate::state_machine::Machine;
     let mut pda = PushdownAutomata::new("Z".to_string());
     pda.add_n_states(2);
     pda.make_initial(0);

@@ -1,11 +1,15 @@
 
-use crate::state_machine::{StateNode, Transition};
+use std::collections::{HashMap, HashSet};
+
+use indexmap::IndexSet;
 use moca_data::grammar::Grammar;
-use std::collections::HashSet;
+use moca_data::state::EPSILON;
+
+use crate::state_machine::StateNode;
 
 pub fn export_to_tikz(
     states: &[StateNode],
-    transitions: &[Transition],
+    transitions: &HashMap<(usize, usize), IndexSet<String>>,
     initial_state: Option<usize>,
     final_states: &HashSet<usize>,
 ) -> String {
@@ -24,10 +28,8 @@ pub fn export_to_tikz(
     let height = (max_y - min_y).max(1.0);
     let scale = 5.0 / width.max(height);
 
-    let mut id_to_name = std::collections::HashMap::new();
-    for (i, s) in states.iter().enumerate() {
-        id_to_name.insert(s.id, format!("q{i}"));
-    }
+    let id_to_name: HashMap<usize, String> =
+        states.iter().enumerate().map(|(i, s)| (s.id, format!("q{i}"))).collect();
 
     let mut tikz = String::new();
     tikz.push_str("% Paste this into your LaTeX document\n");
@@ -38,97 +40,61 @@ pub fn export_to_tikz(
     for s in states {
         let x = (s.position.x - min_x) * scale;
         let y = (s.position.y - min_y) * scale;
-        let name = id_to_name.get(&s.id).unwrap();
-        let is_initial = initial_state == Some(s.id);
-        let is_final = final_states.contains(&s.id);
         let mut style = String::from("state");
-        if is_initial {
+        if initial_state == Some(s.id) {
             style.push_str(", initial");
         }
-        if is_final {
+        if final_states.contains(&s.id) {
             style.push_str(", accepting");
-        }
-        let mut latex_label = s.label.to_string();
-        if let Some((_prefix, _digits)) = latex_label.split_once(|c: char| c.is_ascii_digit()) {
-            let idx = s.label.chars().position(|c| c.is_ascii_digit()).unwrap_or(0);
-            let (prefix, digits) = s.label.split_at(idx);
-            if !digits.is_empty() {
-                if digits.len() == 1 {
-                    latex_label = format!("{prefix}_{digits}");
-                } else {
-                    latex_label = format!("{prefix}_{{{digits}}}");
-                }
-            }
         }
         tikz.push_str(&format!(
             "  \\node[{}] ({}) at ({:.2}, {:.2}) {{${}$}};\n",
             style,
-            name,
+            id_to_name[&s.id],
             x,
             -y,
-            latex_label
+            state_label(&s.label)
         ));
     }
 
-    let mut transition_groups: std::collections::HashMap<(usize, usize), Vec<String>> = std::collections::HashMap::new();
-
-    for t in transitions {
-        let key = (t.from_state_id, t.to_state_id);
-        let mut label = t.label.to_string();
-        if label.trim() == "ε" {
-            label = String::from("$\\varepsilon$");
-        }
-        transition_groups.entry(key).or_default().push(label);
-    }
-
-    for ((from_id, to_id), labels) in &transition_groups {
-        let from = id_to_name.get(from_id).unwrap();
-        let to = id_to_name.get(to_id).unwrap();
-
-        if from_id == to_id {
-            if labels.len() == 1 {
-                tikz.push_str(&format!(
-                    "  \\path[->] ({}) edge[loop above] node{{{}}} ({});\n",
-                    from, labels[0], to
-                ));
-            } else {
-                tikz.push_str(&format!(
-                    "  \\path[->] ({}) edge[loop above] node[align=center]{{{}}} ({});\n",
-                    from, labels.join("\\\\"), to
-                ));
-            }
+    let mut edges: Vec<(&(usize, usize), &IndexSet<String>)> = transitions.iter().collect();
+    edges.sort_unstable_by_key(|(pair, _)| **pair);
+    for (&(from_id, to_id), labels) in edges {
+        let (Some(from), Some(to)) = (id_to_name.get(&from_id), id_to_name.get(&to_id)) else { continue };
+        let shape = if from_id == to_id {
+            "[loop above]"
+        } else if transitions.contains_key(&(to_id, from_id)) {
+            "[bend left]"
         } else {
-            let has_reverse = transition_groups.contains_key(&(*to_id, *from_id));
-
-            if has_reverse {
-                if labels.len() == 1 {
-                    tikz.push_str(&format!(
-                        "  \\path[->] ({}) edge[bend left] node{{{}}} ({}) ;\n",
-                        from, labels[0], to
-                    ));
-                } else {
-                    tikz.push_str(&format!(
-                        "  \\path[->] ({}) edge[bend left] node[align=center]{{{}}} ({}) ;\n",
-                        from, labels.join("\\\\"), to
-                    ));
-                }
-            } else if labels.len() == 1 {
-                tikz.push_str(&format!(
-                    "  \\path[->] ({}) edge node{{{}}} ({}) ;\n",
-                    from, labels[0], to
-                ));
-            } else {
-                tikz.push_str(&format!(
-                    "  \\path[->] ({}) edge node[align=center]{{{}}} ({}) ;\n",
-                    from, labels.join("\\\\"), to
-                ));
-            }
-        }
+            ""
+        };
+        let align = if labels.len() > 1 { "[align=center]" } else { "" };
+        let text: Vec<String> = labels.iter().map(|label| edge_label(label)).collect();
+        tikz.push_str(&format!("  \\path[->] ({from}) edge{shape} node{align}{{{}}} ({to});\n", text.join("\\\\")));
     }
 
     tikz.push_str("\\end{tikzpicture}\n");
     tikz.push_str("\\end{center}\n");
     tikz
+}
+
+fn state_label(label: &str) -> String {
+    match label.find(|c: char| c.is_ascii_digit()) {
+        Some(index) => {
+            let (prefix, digits) = label.split_at(index);
+            let prefix = escape_latex(prefix);
+            if digits.len() == 1 {
+                format!("{prefix}_{digits}")
+            } else {
+                format!("{prefix}_{{{}}}", escape_latex(digits))
+            }
+        }
+        None => escape_latex(label),
+    }
+}
+
+fn edge_label(label: &str) -> String {
+    format!("${}$", escape_latex(label.trim()).replace(EPSILON, "\\varepsilon "))
 }
 
 fn escape_latex(symbol: &str) -> String {
@@ -157,7 +123,7 @@ fn latex_symbol(symbol: &str) -> String {
 }
 
 pub fn export_grammar_to_latex(grammar: &Grammar) -> String {
-    let variables: Vec<String> = grammar.nonterminals().iter().cloned().collect();
+    let variables: Vec<String> = grammar.nonterminals().cloned().collect();
     let terminals: Vec<String> = grammar.terminals().into_iter().collect();
 
     let mut latex = String::new();

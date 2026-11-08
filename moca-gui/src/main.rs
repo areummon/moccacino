@@ -1,4 +1,6 @@
-mod gui;
+mod family;
+pub(crate) mod gui;
+mod theme;
 mod platform;
 mod tikz_export;
 pub mod state_machine;
@@ -14,9 +16,9 @@ pub fn main() -> iced::Result {
         .font(include_bytes!("../assets/fonts/Nunito-Bold.ttf").as_slice())
         .font(include_bytes!("../assets/fonts/JetBrainsMono-Regular.ttf").as_slice())
         .font(include_bytes!("../assets/fonts/DejaVuSans.ttf").as_slice())
-        .default_font(gui::theme::UI)
+        .default_font(theme::UI)
         .exit_on_close_request(false)
-        .window_size(iced::Size::new(1280.0, 820.0))
+        .window_size(gui::metrics::DEFAULT_WINDOW)
         .antialiasing(!platform::IS_WEB)
         .run_with(App::new)
 }

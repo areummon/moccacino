@@ -1,6 +1,4 @@
 
-use crate::gui::icons::Icon;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum EditorTool {
     #[default]
@@ -20,24 +18,6 @@ impl EditorTool {
             EditorTool::State => "State",
             EditorTool::Transition => "Transition",
             EditorTool::Delete => "Delete",
-        }
-    }
-
-    pub(crate) fn icon(self) -> Icon {
-        match self {
-            EditorTool::Arrow => Icon::Select,
-            EditorTool::State => Icon::State,
-            EditorTool::Transition => Icon::Transition,
-            EditorTool::Delete => Icon::Delete,
-        }
-    }
-
-    pub(crate) fn shortcut(self) -> &'static str {
-        match self {
-            EditorTool::Arrow => "1",
-            EditorTool::State => "2",
-            EditorTool::Transition => "3",
-            EditorTool::Delete => "4",
         }
     }
 

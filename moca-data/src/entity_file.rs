@@ -1,11 +1,63 @@
 use crate::finite_automata::FiniteAutomata;
 use crate::grammar::{parse_grammar, Grammar};
-use crate::pushdown_automata::PushdownAutomata;
+use crate::pushdown_automata::{PdaOp, PushdownAutomata, DEFAULT_STACK};
 use crate::regex;
-use crate::state::{State, StateID};
+use crate::state::{is_epsilon, StateID, EPSILON};
 use crate::state_machine::{Machine, StateMachine};
-use crate::turing_machine::TuringMachine;
+use crate::turing_machine::{parse_transition, TransitionOp, TuringMachine, DEFAULT_BLANK};
 use std::collections::{HashMap, HashSet};
+
+pub const LLM_PROMPT: &str = r#"You are given an image of one or more computational models (a state diagram of an automaton, a Turing machine, a pushdown automaton, a regular expression, or a context-free grammar).
+
+Transcribe what you see into a `.ce` file with the exact syntax below, then output ONLY the file contents (no explanations, no code fences).
+
+SYNTAX
+- One entity per block, each block starts with `entity: <kind>` where kind is one of:
+  dfa | nfa | fa | automata | automaton | finite | tm | turing | pda | pushdown | regex | re | grammar | cfg
+- Optional `name: <label>` line right after `entity:`.
+- Lines starting with `#` are comments. Blank lines are ignored.
+- State lists and finals are comma-separated. Multiple `transitions:` / `productions:` lines accumulate.
+- State names and transition symbols cannot contain `(`, `)` or `,`: the file format reserves them.
+
+TRANSITION SYNTAX (different per family - use the right one!)
+- dfa/nfa/fa/automata/finite:  (from, symbol) -> to
+    symbols may be single characters; use ε for epsilon moves.
+- pda/pushdown:  (from, input, pop, push...) -> to
+    input read, stack symbol popped, then the stack symbols pushed; when several are pushed, the FIRST listed one ends on top. Use ε for no-ops.
+    Example: (q0, a, Z, A, Z) -> q1   (read a, pop Z, push Z back and A on top of it)
+- tm/turing:  (from, read, write, dir[, read, write, dir...]) -> to
+    one (read, write, dir) group per tape; dir is L, R or S.
+    Example single tape: (q0, 0, 1, R) -> q1
+    Example two tapes:   (q0, 0, 1, R, _, _, S) -> q1
+- regex: a line `regex: <pattern>` with operators | * + ? and ε.
+- grammar: `productions: <lhs> -> body | body` lines; ε is an empty body.
+
+COMMON KEYS
+- `states: a, b, c` (machines only, optional: states named in transitions are added automatically)
+- `initial: <state>` (machines only)
+- `final: <state>, <state>` also accepts `finals:` / `halt:` / `final/halt:` (machines only)
+- `blank: <char>` (turing only, default _)
+- `stack: <symbol>` (pushdown only, default Z)
+
+EXAMPLE FILE
+# A pushdown automaton, a regex and a grammar, together in one file
+entity: pda
+name: anbn
+states: q0, q1, q2
+transitions: (q0, a, Z, A, Z) -> q0, (q0, a, A, A, A) -> q0, (q0, b, A, ε) -> q1, (q1, b, A, ε) -> q1, (q1, ε, Z, Z) -> q2
+initial: q0
+final: q2
+
+entity: regex
+name: abb
+regex: (a|b)*abb
+
+entity: grammar
+name: anbn
+productions: S -> a S b | ε
+
+TASK
+Look at the attached image carefully (states, arrows, labels, initial arrow, double circles for accepting states, stack/tape annotations) and produce the matching `.ce` file. Use short state names exactly as drawn or numbered q0, q1, ... if unlabeled. Output only the .ce file contents."#;
 
 #[derive(Debug)]
 pub enum Entity {
@@ -29,29 +81,56 @@ pub struct EntityError {
 }
 
 #[derive(Clone, Copy, PartialEq)]
-enum Kind {
-    Turing,
-    Pushdown,
+enum Family {
     Finite,
+    Pushdown,
+    Turing,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Kind {
+    Machine(Family),
     Regex,
     Grammar,
 }
 
 fn resolve_kind(alias: &str) -> Option<(Kind, &'static str)> {
     match alias {
-        "tm" | "turing" => Some((Kind::Turing, "TM")),
-        "pda" | "pushdown" => Some((Kind::Pushdown, "Pushdown")),
-        "dfa" => Some((Kind::Finite, "DFA")),
-        "nfa" => Some((Kind::Finite, "NFA")),
-        "fa" | "automata" | "automaton" | "finite" => Some((Kind::Finite, "FA")),
+        "tm" | "turing" => Some((Kind::Machine(Family::Turing), "TM")),
+        "pda" | "pushdown" => Some((Kind::Machine(Family::Pushdown), "Pushdown")),
+        "dfa" => Some((Kind::Machine(Family::Finite), "DFA")),
+        "nfa" => Some((Kind::Machine(Family::Finite), "NFA")),
+        "fa" | "automata" | "automaton" | "finite" => Some((Kind::Machine(Family::Finite), "FA")),
         "regex" | "re" => Some((Kind::Regex, "Regex")),
         "grammar" | "cfg" => Some((Kind::Grammar, "Grammar")),
         _ => None,
     }
 }
 
-fn normalize_final_key(key: &str) -> bool {
-    matches!(key, "final" | "finals" | "halt" | "final/halt" | "final_halt")
+fn canonical_key(key: &str) -> Option<&'static str> {
+    match key {
+        "name" => Some("name"),
+        "states" => Some("states"),
+        "transitions" => Some("transitions"),
+        "initial" => Some("initial"),
+        "final" | "finals" | "halt" | "final/halt" | "final_halt" => Some("final"),
+        "blank" => Some("blank"),
+        "stack" => Some("stack"),
+        "regex" => Some("regex"),
+        "productions" => Some("productions"),
+        _ => None,
+    }
+}
+
+fn allows(kind: Kind, key: &str) -> bool {
+    match key {
+        "states" | "transitions" | "initial" | "final" => matches!(kind, Kind::Machine(_)),
+        "blank" => kind == Kind::Machine(Family::Turing),
+        "stack" => kind == Kind::Machine(Family::Pushdown),
+        "regex" => kind == Kind::Regex,
+        "productions" => kind == Kind::Grammar,
+        _ => true,
+    }
 }
 
 pub fn parse_entity_file(source: &str) -> (Vec<NamedEntity>, Vec<EntityError>) {
@@ -124,27 +203,22 @@ type BlockError = (String, usize, String);
 
 #[derive(Default)]
 struct Interner {
-    ids: HashMap<String, u64>,
-    next_id: u64,
+    ids: HashMap<String, StateID>,
+    next_id: StateID,
 }
 
 impl Interner {
-    fn intern(&mut self, label: &str) -> Option<u64> {
+    fn intern(&mut self, label: &str) -> Option<StateID> {
         let trimmed = label.trim();
         if trimmed.is_empty() {
             return None;
         }
         let next_id = &mut self.next_id;
-        Some(
-            *self
-                .ids
-                .entry(trimmed.to_string())
-                .or_insert_with(|| {
-                    let id = *next_id;
-                    *next_id += 1;
-                    id
-                }),
-        )
+        Some(*self.ids.entry(trimmed.to_string()).or_insert_with(|| {
+            let id = *next_id;
+            *next_id += 1;
+            id
+        }))
     }
 }
 
@@ -201,21 +275,86 @@ fn parse_transition_tuple(tuple: &str) -> Result<(String, Vec<String>, String), 
     if inner.is_empty() {
         return Err(format!("missing states in '{trimmed}'"));
     }
-    let parts: Vec<String> = inner.split(',').map(|part| part.trim().to_string()).collect();
-    Ok((parts[0].clone(), parts, target.to_string()))
+    if inner.contains(['(', ')']) || target.contains(['(', ')']) {
+        return Err(format!("'(' and ')' are reserved by the .ce format, found in '{trimmed}'"));
+    }
+    let mut parts = split_csv(inner);
+    let from = parts.remove(0);
+    Ok((from, parts, target.to_string()))
 }
 
-fn normalize_epsilon(component: &str) -> String {
-    let trimmed = component.trim();
-    if trimmed.is_empty() {
-        "ε".to_string()
+fn normalize_epsilon(component: &str) -> &str {
+    if component.is_empty() {
+        EPSILON
     } else {
-        trimmed.to_string()
+        component
     }
 }
 
 fn split_csv(value: &str) -> Vec<String> {
     value.split(',').map(|part| part.trim().to_string()).collect()
+}
+
+fn label_from_parts(family: Family, parts: &[String]) -> Result<String, String> {
+    match family {
+        Family::Finite => match parts {
+            [symbol] => Ok(normalize_epsilon(symbol).to_string()),
+            _ => Err(format!(
+                "finite transitions take exactly 2 parts (from, symbol), found {} part(s)",
+                parts.len() + 1
+            )),
+        },
+        Family::Pushdown => {
+            let (read, pop, push) = match parts {
+                [read, pop, push @ ..] if !push.is_empty() => (read, pop, push),
+                _ => {
+                    return Err(format!(
+                        "pushdown transitions take at least 4 parts (from, input, pop, push), found {} part(s)",
+                        parts.len() + 1
+                    ))
+                },
+            };
+            let push: Vec<&str> = push.iter().map(|part| normalize_epsilon(part)).collect();
+            Ok(format!("{};{}/{}", normalize_epsilon(read), normalize_epsilon(pop), push.join(",")))
+        }
+        Family::Turing => {
+            if parts.is_empty() || !parts.len().is_multiple_of(3) {
+                return Err(format!(
+                    "turing transitions take (from, read, write, dir) groups of 4, 7, 10... parts, found {} part(s)",
+                    parts.len() + 1
+                ));
+            }
+            let ops = parts
+                .chunks(3)
+                .map(|group| {
+                    let (read, write, direction) = (&group[0], &group[1], &group[2]);
+                    TransitionOp::from_fields(read, write, direction)
+                        .map_err(|problem| format!("turing group ({read}, {write}, {direction}): {problem}"))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(crate::turing_machine::format_transition(&ops))
+        }
+    }
+}
+
+fn single_value(entry: &Option<(usize, String)>, header_line: usize, default: &str) -> (usize, String) {
+    entry
+        .as_ref()
+        .map(|(line, value)| (*line, value.trim().to_string()))
+        .unwrap_or((header_line, default.to_string()))
+}
+
+#[derive(Default)]
+struct BlockFields {
+    name: Option<String>,
+    states: Vec<String>,
+    transitions: Vec<(usize, String)>,
+    initial: Option<(usize, String)>,
+    finals: Vec<String>,
+    blank: Option<(usize, String)>,
+    stack: Option<(usize, String)>,
+    regex: Option<(usize, String)>,
+    productions: Vec<(usize, String)>,
 }
 
 fn build_block(
@@ -236,123 +375,44 @@ fn build_block(
         .iter()
         .find(|(_, key, _)| key == "name")
         .map(|(_, _, value)| value.clone())
-        .unwrap_or_default();
-    let fallback = fallback_name.to_string();
-    let error_name = || {
-        if !declared_name.is_empty() {
-            declared_name.clone()
-        } else {
-            fallback.clone()
-        }
-    };
-    let err = move |line: usize, message: String| -> BlockError { (error_name(), line, message) };
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| fallback_name.to_string());
+    let err = |line: usize, message: String| -> BlockError { (declared_name.clone(), line, message) };
 
-    let mut name: Option<String> = None;
-    let mut states: Vec<String> = Vec::new();
-    let mut transitions: Vec<(usize, String)> = Vec::new();
-    let mut initial: Option<(usize, String)> = None;
-    let mut finals: Vec<String> = Vec::new();
-    let mut blank: Option<(usize, String)> = None;
-    let mut stack: Option<(usize, String)> = None;
-    let mut regex_pattern: Option<(usize, String)> = None;
-    let mut productions: Vec<(usize, String)> = Vec::new();
-
+    let mut fields = BlockFields::default();
     for (line, key, value) in entries {
-        if key == "name" {
-            if name.is_none() && !value.is_empty() {
-                name = Some(value.clone());
-            }
-        } else if key == "states" {
-            if matches!(kind, Kind::Regex | Kind::Grammar) {
-                return Err(err(
-                    *line,
-                    format!("'states:' is not valid for {fallback_name} entities"),
-                ));
-            }
-            states.extend(split_csv(value));
-        } else if key == "transitions" {
-            if matches!(kind, Kind::Regex | Kind::Grammar) {
-                return Err(err(
-                    *line,
-                    format!(
-                        "'transitions:' is not valid for {fallback_name} entities"
-                    ),
-                ));
-            }
-            transitions.push((*line, value.clone()));
-        } else if key == "initial" {
-            if matches!(kind, Kind::Regex | Kind::Grammar) {
-                return Err(err(
-                    *line,
-                    format!(
-                        "'initial:' is not valid for {fallback_name} entities"
-                    ),
-                ));
-            }
-            if initial.is_none() {
-                initial = Some((*line, value.clone()));
-            }
-        } else if normalize_final_key(key) {
-            if matches!(kind, Kind::Regex | Kind::Grammar) {
-                return Err(err(
-                    *line,
-                    format!("'{key}:' is not valid for {fallback_name} entities"),
-                ));
-            }
-            finals.extend(split_csv(value));
-        } else if key == "blank" {
-            if !matches!(kind, Kind::Turing) {
-                return Err(err(
-                    *line,
-                    "'blank:' is only valid for turing machine entities".to_string(),
-                ));
-            }
-            if blank.is_none() {
-                blank = Some((*line, value.clone()));
-            }
-        } else if key == "stack" {
-            if !matches!(kind, Kind::Pushdown) {
-                return Err(err(
-                    *line,
-                    "'stack:' is only valid for pushdown entities".to_string(),
-                ));
-            }
-            if stack.is_none() {
-                stack = Some((*line, value.clone()));
-            }
-        } else if key == "regex" {
-            if !matches!(kind, Kind::Regex) {
-                return Err(err(
-                    *line,
-                    "'regex:' is only valid for regex entities".to_string(),
-                ));
-            }
-            if regex_pattern.is_none() {
-                regex_pattern = Some((*line, value.clone()));
-            }
-        } else if key == "productions" {
-            if !matches!(kind, Kind::Grammar) {
-                return Err(err(
-                    *line,
-                    "'productions:' is only valid for grammar entities".to_string(),
-                ));
-            }
-            productions.push((*line, value.clone()));
-        } else if key.is_empty() {
-            return Err(err(
-                *line,
-                "expected 'key: value' lines inside an entity block".to_string(),
-            ));
-        } else {
-            return Err(err(*line, format!("unknown key '{key}:'")));
+        if key.is_empty() {
+            return Err(err(*line, "expected 'key: value' lines inside an entity block".to_string()));
+        }
+        let canonical = canonical_key(key).ok_or_else(|| err(*line, format!("unknown key '{key}:'")))?;
+        if !allows(kind, canonical) {
+            return Err(err(*line, format!("'{key}:' is not valid for {fallback_name} entities")));
+        }
+        let first = |slot: &mut Option<(usize, String)>| {
+            slot.get_or_insert_with(|| (*line, value.clone()));
+        };
+        match canonical {
+            "name" => {
+                if fields.name.is_none() && !value.is_empty() {
+                    fields.name = Some(value.clone());
+                }
+            },
+            "states" => fields.states.extend(split_csv(value)),
+            "transitions" => fields.transitions.push((*line, value.clone())),
+            "initial" => first(&mut fields.initial),
+            "final" => fields.finals.extend(split_csv(value)),
+            "blank" => first(&mut fields.blank),
+            "stack" => first(&mut fields.stack),
+            "regex" => first(&mut fields.regex),
+            _ => fields.productions.push((*line, value.clone())),
         }
     }
 
-    let name = name.unwrap_or_else(|| fallback_name.to_string());
-
     let entity = match kind {
         Kind::Regex => {
-            let (line, pattern) = regex_pattern
+            let (line, pattern) = fields
+                .regex
+                .clone()
                 .ok_or_else(|| err(header_line, "missing 'regex:'".to_string()))?;
             if pattern.is_empty() {
                 return Err(err(line, "empty 'regex:' value".to_string()));
@@ -362,86 +422,68 @@ fn build_block(
             Entity::Finite(automaton)
         }
         Kind::Grammar => {
-            if productions.is_empty() {
+            let Some(&(first_line, _)) = fields.productions.first() else {
                 return Err(err(header_line, "missing 'productions:'".to_string()));
-            }
-            let first_line = productions[0].0;
-            let source = productions
+            };
+            let source = fields
+                .productions
                 .iter()
-                .map(|(_, value)| value.clone())
+                .map(|(_, value)| value.as_str())
                 .collect::<Vec<_>>()
                 .join("\n");
             let grammar = parse_grammar(&source).map_err(|error| {
-                err(
-                    first_line + error.line - 1,
-                    format!("invalid grammar: {}", error.message),
-                )
+                let line = error
+                    .line
+                    .checked_sub(1)
+                    .and_then(|index| fields.productions.get(index))
+                    .map_or(first_line, |(line, _)| *line);
+                err(line, format!("invalid grammar: {}", error.message))
             })?;
-            if grammar.productions().is_empty() {
-                return Err(err(first_line, "grammar has no productions".to_string()));
-            }
             Entity::Grammar(grammar)
         }
-        Kind::Finite | Kind::Pushdown | Kind::Turing => {
-            build_machine(kind, header_line, &blank, &stack, &states, &transitions, &initial, &finals, &err)?
+        Kind::Machine(Family::Finite) => {
+            Entity::Finite(build_machine(FiniteAutomata::new(), Family::Finite, header_line, &fields, &err)?)
+        }
+        Kind::Machine(Family::Pushdown) => {
+            let (line, symbol) = single_value(&fields.stack, header_line, DEFAULT_STACK);
+            if symbol.is_empty() {
+                return Err(err(line, "empty 'stack:' value".to_string()));
+            }
+            let machine = PushdownAutomata::new(symbol);
+            Entity::Pushdown(build_machine(machine, Family::Pushdown, header_line, &fields, &err)?)
+        }
+        Kind::Machine(Family::Turing) => {
+            let (line, blank) = single_value(&fields.blank, header_line, &DEFAULT_BLANK.to_string());
+            let mut chars = blank.chars();
+            let (Some(blank), None) = (chars.next(), chars.next()) else {
+                return Err(err(line, "'blank:' must be a single character".to_string()));
+            };
+            Entity::Turing(build_machine(TuringMachine::new(blank), Family::Turing, header_line, &fields, &err)?)
         }
     };
 
     Ok(NamedEntity {
-        name,
+        name: fields.name.unwrap_or_else(|| fallback_name.to_string()),
         entity,
     })
 }
 
-fn build_machine(
-    kind: Kind,
+fn build_machine<M: StateMachine + Machine>(
+    mut machine: M,
+    family: Family,
     header_line: usize,
-    blank: &Option<(usize, String)>,
-    stack: &Option<(usize, String)>,
-    states: &[String],
-    transitions: &[(usize, String)],
-    initial: &Option<(usize, String)>,
-    finals: &[String],
+    fields: &BlockFields,
     err: &dyn Fn(usize, String) -> BlockError,
-) -> Result<Entity, BlockError> {
-    let blank_symbol = if matches!(kind, Kind::Turing) {
-        let (line, value) = blank
-            .as_ref()
-            .map(|(line, value)| (*line, value.clone()))
-            .unwrap_or((header_line, "_".to_string()));
-        let trimmed = value.trim();
-        if trimmed.chars().count() != 1 {
-            return Err(err(line, "'blank:' must be a single character".to_string()));
-        }
-        trimmed.chars().next().unwrap()
-    } else {
-        '_'
-    };
-
-    let stack_symbol = if matches!(kind, Kind::Pushdown) {
-        let (line, value) = stack
-            .as_ref()
-            .map(|(line, value)| (*line, value.clone()))
-            .unwrap_or((header_line, "Z".to_string()));
-        let trimmed = value.trim();
-        if trimmed.is_empty() {
-            return Err(err(line, "empty 'stack:' value".to_string()));
-        }
-        trimmed.to_string()
-    } else {
-        String::new()
-    };
-
+) -> Result<M, BlockError> {
     let mut interner = Interner::default();
-    for label in states {
+    for label in &fields.states {
         interner
             .intern(label)
             .ok_or_else(|| err(header_line, "empty state name in 'states:'".to_string()))?;
     }
 
-    let mut assembled: Vec<(u64, u64, String)> = Vec::new();
-    let mut tape_count: Option<usize> = None;
-    for (line, raw) in transitions {
+    let mut assembled: Vec<(usize, StateID, StateID, String)> = Vec::new();
+    for (line, raw) in &fields.transitions {
         for tuple in split_tuples(raw) {
             let (from, parts, to) =
                 parse_transition_tuple(&tuple).map_err(|message| err(*line, message))?;
@@ -451,158 +493,35 @@ fn build_machine(
             let to_id = interner
                 .intern(&to)
                 .ok_or_else(|| err(*line, "empty state name in transition".to_string()))?;
-            let label = match kind {
-                Kind::Finite => {
-                    if parts.len() != 2 {
-                        return Err(err(
-                            *line,
-                            format!(
-                                "finite transitions take exactly 2 parts (from, symbol), found {} part(s)",
-                                parts.len()
-                            ),
-                        ));
-                    }
-                    normalize_epsilon(&parts[1])
-                }
-                Kind::Pushdown => {
-                    if parts.len() < 4 {
-                        return Err(err(
-                            *line,
-                            format!(
-                                "pushdown transitions take at least 4 parts (from, input, pop, push), found {} part(s)",
-                                parts.len()
-                            ),
-                        ));
-                    }
-                    let push = parts[3..]
-                        .iter()
-                        .map(|part| normalize_epsilon(part))
-                        .collect::<Vec<_>>()
-                        .join(",");
-                    format!(
-                        "{};{}/{}",
-                        normalize_epsilon(&parts[1]),
-                        normalize_epsilon(&parts[2]),
-                        push
-                    )
-                }
-                Kind::Turing => {
-                    if parts.len() < 4 || !(parts.len() - 1).is_multiple_of(3) {
-                        return Err(err(
-                            *line,
-                            format!(
-                                "turing transitions take (from, read, write, dir) groups of 4, 7, 10... parts, found {} part(s)",
-                                parts.len()
-                            ),
-                        ));
-                    }
-                    let tapes = (parts.len() - 1) / 3;
-                    match tape_count {
-                        Some(existing) if existing != tapes => {
-                            return Err(err(
-                                *line,
-                                format!(
-                                    "inconsistent tape count: this transition uses {tapes}, earlier ones use {existing}"
-                                ),
-                            ));
-                        }
-                        None => tape_count = Some(tapes),
-                        _ => {}
-                    }
-                    let mut pieces = Vec::new();
-                    for group in parts[1..].chunks(3) {
-                        let read = group[0].trim();
-                        let write = group[1].trim();
-                        let direction = group[2].trim().to_ascii_uppercase();
-                        if read.is_empty() || write.is_empty() {
-                            return Err(err(
-                                *line,
-                                "turing read/write symbols cannot be empty (use the blank symbol)".to_string(),
-                            ));
-                        }
-                        if !matches!(direction.as_str(), "L" | "R" | "S") {
-                            return Err(err(
-                                *line,
-                                format!(
-                                    "invalid direction '{}' (use L, R or S)",
-                                    group[2].trim()
-                                ),
-                            ));
-                        }
-                        pieces.push(format!("{read};{write}/{direction}"));
-                    }
-                    pieces.join(",")
-                }
-                Kind::Regex | Kind::Grammar => unreachable!(),
-            };
-            assembled.push((from_id, to_id, label));
+            let label = label_from_parts(family, &parts).map_err(|message| err(*line, message))?;
+            assembled.push((*line, from_id, to_id, label));
         }
     }
 
-    let (initial_line, initial_value) = initial
+    let (initial_line, initial_value) = fields
+        .initial
         .as_ref()
-        .map(|(line, value)| (*line, value.clone()))
         .ok_or_else(|| err(header_line, "missing 'initial:'".to_string()))?;
-    let initial_trimmed = initial_value.trim();
-    if initial_trimmed.is_empty() || initial_trimmed.contains(',') {
-        return Err(err(
-            initial_line,
-            "'initial:' must be a single state name".to_string(),
-        ));
-    }
     let initial_id = interner
-        .intern(initial_trimmed)
-        .ok_or_else(|| err(initial_line, "empty state name in 'initial:'".to_string()))?;
-    let mut final_ids = Vec::new();
-    for label in finals {
-        if label.trim().is_empty() {
-            continue;
-        }
-        let id = interner
-            .intern(label)
-            .ok_or_else(|| err(header_line, "empty state name in finals".to_string()))?;
-        final_ids.push(id);
+        .intern(initial_value)
+        .filter(|_| !initial_value.contains(','))
+        .ok_or_else(|| err(*initial_line, "'initial:' must be a single state name".to_string()))?;
+    let final_ids: Vec<StateID> = fields.finals.iter().filter_map(|label| interner.intern(label)).collect();
+
+    for (label, &id) in &interner.ids {
+        machine.add_state_with_id_label(id, label);
     }
-
-    let report_validation = |machine_problem: String| -> BlockError {
-        let line = transitions.first().map(|(line, _)| *line).unwrap_or(header_line);
-        err(line, machine_problem)
-    };
-
-    let populate = |machine: &mut dyn StateMachine| {
-        for (label, &id) in &interner.ids {
-            machine.add_state_with_id_label(id, label);
-        }
-        for (from, to, label) in assembled {
-            machine.add_transition(from, to, label);
-        }
-        machine.make_initial(initial_id);
-        for id in final_ids {
-            machine.make_final(id);
-        }
-    };
-    let entity = match kind {
-        Kind::Finite => {
-            let mut machine = FiniteAutomata::new();
-            populate(&mut machine);
-            Machine::validate(&machine).map_err(report_validation)?;
-            Entity::Finite(machine)
-        }
-        Kind::Pushdown => {
-            let mut machine = PushdownAutomata::new(stack_symbol);
-            populate(&mut machine);
-            Machine::validate(&machine).map_err(report_validation)?;
-            Entity::Pushdown(machine)
-        }
-        Kind::Turing => {
-            let mut machine = TuringMachine::new(blank_symbol);
-            populate(&mut machine);
-            Machine::validate(&machine).map_err(report_validation)?;
-            Entity::Turing(machine)
-        }
-        Kind::Regex | Kind::Grammar => unreachable!(),
-    };
-    Ok(entity)
+    for (_, from, to, label) in &assembled {
+        machine.add_transition(*from, *to, label.clone());
+    }
+    for (line, _, _, label) in &assembled {
+        machine.check_label(label).map_err(|problem| err(*line, problem))?;
+    }
+    machine.make_initial(initial_id);
+    for id in final_ids {
+        machine.make_final(id);
+    }
+    Ok(machine)
 }
 
 fn entity_header(kind_alias: &str, name: &str) -> String {
@@ -615,87 +534,101 @@ fn entity_header(kind_alias: &str, name: &str) -> String {
     format!("entity: {kind_alias}\nname: {name}")
 }
 
-fn check_tuple_component(component: &str, role: &str, allow_comma: bool) -> Result<String, String> {
-    let trimmed = component.trim();
-    for c in trimmed.chars() {
-        let reserved = match c {
-            ',' => !allow_comma,
-            '(' | ')' | '\n' | '\r' => true,
-            _ => false,
-        };
-        if reserved {
-            return Err(format!(
-                "{role} '{trimmed}' uses '{c}' which the .ce format reserves for its structure"
-            ));
-        }
-    }
-    Ok(trimmed.to_string())
+fn has_reserved_char(text: &str) -> Option<char> {
+    text.chars().find(|c| matches!(c, ',' | '(' | ')' | '\n' | '\r'))
 }
 
-fn write_machine_block<F>(
+fn storable_parts(family: Family, label: &str) -> Result<Vec<String>, String> {
+    let parts = label_parts(family, label)?;
+    let unstorable = |reason: String| format!("transition label '{label}' cannot be saved: {reason}");
+    if let Some(c) = parts.iter().find_map(|part| has_reserved_char(part).filter(|c| *c != ',')) {
+        return Err(unstorable(format!("'{c}' is reserved by the .ce format")));
+    }
+    let reread = split_csv(&parts.join(", "));
+    let rebuilt = label_from_parts(family, &reread).map_err(unstorable)?;
+    let same_meaning = match family {
+        Family::Finite => rebuilt == label || (is_epsilon(label) && is_epsilon(&rebuilt)),
+        Family::Pushdown => PdaOp::parse(label).ok() == PdaOp::parse(&rebuilt).ok(),
+        Family::Turing => parse_transition(label) == parse_transition(&rebuilt),
+    };
+    if !same_meaning {
+        return Err(unstorable(format!("it would load back as '{rebuilt}'")));
+    }
+    Ok(parts)
+}
+
+fn label_parts(family: Family, label: &str) -> Result<Vec<String>, String> {
+    let malformed = |shape: &str| format!("malformed transition label '{label}' (expected {shape})");
+    match family {
+        Family::Finite => Ok(vec![normalize_epsilon(label).to_string()]),
+        Family::Pushdown => {
+            PdaOp::parse(label).map_err(|_| malformed("'input;pop/push'"))?;
+            if label == EPSILON {
+                return Ok(vec![EPSILON.to_string(); 3]);
+            }
+            let (read, stack) = label.split_once(';').ok_or_else(|| malformed("'input;pop/push'"))?;
+            let (pop, push) = stack.split_once('/').ok_or_else(|| malformed("'input;pop/push'"))?;
+            Ok([read, pop]
+                .into_iter()
+                .chain(push.split(','))
+                .map(|part| normalize_epsilon(part).to_string())
+                .collect())
+        }
+        Family::Turing => {
+            let shape = "'read;write/dir' per tape, joined by commas";
+            let ops = parse_transition(label).ok_or_else(|| malformed(shape))?;
+            Ok(ops
+                .iter()
+                .flat_map(|op| [op.read.to_string(), op.write.to_string(), op.direction.letter().to_string()])
+                .collect())
+        }
+    }
+}
+
+fn write_machine_block<M: StateMachine>(
+    family: Family,
     kind_alias: &str,
+    noun: &str,
     name: &str,
-    empty_message: &str,
-    no_initial_message: &str,
-    states: &HashMap<StateID, State>,
-    initial: Option<StateID>,
-    finals: &HashSet<u64>,
+    machine: &M,
     extra_header_key: Option<String>,
-    label_to_parts: F,
-) -> Result<String, String>
-where
-    F: Fn(&str) -> Result<Vec<String>, String>,
-{
+) -> Result<String, String> {
+    let states = machine.get_states_by_id_ref();
     if states.is_empty() {
-        return Err(empty_message.to_string());
+        return Err(format!("the {noun} has no states"));
     }
     let mut ids: Vec<StateID> = states.keys().copied().collect();
     ids.sort_unstable();
-    let mut labels: Vec<String> = Vec::with_capacity(ids.len());
+    let mut name_of: HashMap<StateID, String> = HashMap::new();
     let mut seen: HashSet<String> = HashSet::new();
     for id in &ids {
-        let label = check_tuple_component(&states[id].name, "state name", false)?;
+        let label = states[id].name.trim().to_string();
+        if let Some(c) = has_reserved_char(&label) {
+            return Err(format!("state name '{label}' uses '{c}' which the .ce format reserves for its structure"));
+        }
         if label.is_empty() {
             return Err(format!("state {id} has an empty name"));
         }
         if !seen.insert(label.clone()) {
             return Err(format!("state name '{label}' is used more than once"));
         }
-        labels.push(label);
+        name_of.insert(*id, label);
     }
-    let name_of: HashMap<StateID, &String> =
-        ids.iter().copied().zip(labels.iter()).collect();
-    let initial_id = initial.ok_or_else(|| no_initial_message.to_string())?;
-    if !states.contains_key(&initial_id) {
-        return Err(format!("initial state {initial_id} is missing"));
-    }
+    let initial_id = machine.get_initial_state_id().ok_or_else(|| format!("the {noun} has no initial state"))?;
 
     let mut text = entity_header(kind_alias, name);
     text.push_str("\nstates: ");
-    text.push_str(&labels.join(", "));
+    text.push_str(&ids.iter().map(|id| name_of[id].as_str()).collect::<Vec<_>>().join(", "));
 
-    let mut triples: Vec<(StateID, StateID, String)> = Vec::new();
-    for (from_id, state) in states {
-        for (to_id, inputs) in state.iter_by_transition() {
-            for label in inputs {
-                triples.push((*from_id, *to_id, label.clone()));
-            }
-        }
-    }
+    let mut triples: Vec<(StateID, StateID, &str)> = machine.graph().labels().collect();
     triples.sort();
     for (from_id, to_id, label) in triples {
-        let parts = label_to_parts(&label)?;
-        let from_label = name_of.get(&from_id).ok_or_else(|| {
-            format!("transition leaves state {from_id}, which is missing")
-        })?;
-        let to_label = name_of.get(&to_id).ok_or_else(|| {
-            format!("transition targets state {to_id}, which is missing")
-        })?;
+        let parts = storable_parts(family, label)?;
         text.push_str(&format!(
             "\ntransitions: ({}, {}) -> {}",
-            from_label,
+            name_of[&from_id],
             parts.join(", "),
-            to_label
+            name_of[&to_id]
         ));
     }
     if let Some(extra) = extra_header_key {
@@ -703,17 +636,10 @@ where
         text.push_str(&extra);
     }
     text.push_str(&format!("\ninitial: {}", name_of[&initial_id]));
-    let mut final_ids: Vec<StateID> = finals
-        .iter()
-        .filter(|id| states.contains_key(id))
-        .copied()
-        .collect();
+    let mut final_ids: Vec<StateID> = machine.get_final_states().iter().copied().collect();
     final_ids.sort_unstable();
     if !final_ids.is_empty() {
-        let final_labels: Vec<String> = final_ids
-            .iter()
-            .map(|id| name_of[id].clone())
-            .collect();
+        let final_labels: Vec<&str> = final_ids.iter().map(|id| name_of[id].as_str()).collect();
         text.push_str(&format!("\nfinal: {}", final_labels.join(", ")));
     }
     Ok(text)
@@ -721,115 +647,19 @@ where
 
 pub fn write_finite_entity(name: &str, fa: &FiniteAutomata) -> Result<String, String> {
     let alias = if fa.is_deterministic() { "dfa" } else { "nfa" };
-    write_machine_block(
-        alias,
-        name,
-        "the finite automaton has no states",
-        "the finite automaton has no initial state",
-        fa.get_states_by_id_ref(),
-        *fa.get_initial_state_id(),
-        fa.get_final_states(),
-        None,
-        |label| {
-            let symbol = check_tuple_component(label, "transition symbol", false)?;
-            Ok(vec![if symbol.is_empty() {
-                "ε".to_string()
-            } else {
-                symbol
-            }])
-        },
-    )
+    write_machine_block(Family::Finite, alias, "finite automaton", name, fa, None)
 }
 
 pub fn write_pushdown_entity(name: &str, pda: &PushdownAutomata) -> Result<String, String> {
     let stack_symbol = pda.get_initial_stack_symbol();
-    let extra = if stack_symbol == "Z" {
-        None
-    } else {
-        Some(format!("stack: {stack_symbol}"))
-    };
-    write_machine_block(
-        "pda",
-        name,
-        "the pushdown automaton has no states",
-        "the pushdown automaton has no initial state",
-        pda.get_states_by_id_ref(),
-        *pda.get_initial_state_id(),
-        pda.get_final_states(),
-        extra,
-        |label| {
-            if label == "ε" {
-                return Ok(vec![
-                    "ε".to_string(),
-                    "ε".to_string(),
-                    "ε".to_string(),
-                ]);
-            }
-            let malformed =
-                || format!("malformed pushdown label '{label}' (expected 'input;pop/push')");
-            let (input, rest) = label.split_once(';').ok_or_else(malformed)?;
-            let (pop, push) = rest.split_once('/').ok_or_else(malformed)?;
-            let input = check_tuple_component(input, "pushdown input symbol", false)?;
-            let pop = check_tuple_component(pop, "pushdown popped symbol", false)?;
-            let push = check_tuple_component(push, "pushdown pushed symbols", true)?;
-            let to_epsilon = |component: String| {
-                if component.is_empty() {
-                    "ε".to_string()
-                } else {
-                    component
-                }
-            };
-            Ok(vec![to_epsilon(input), to_epsilon(pop), to_epsilon(push)])
-        },
-    )
+    let extra = (stack_symbol != DEFAULT_STACK).then(|| format!("stack: {stack_symbol}"));
+    write_machine_block(Family::Pushdown, "pda", "pushdown automaton", name, pda, extra)
 }
 
 pub fn write_turing_entity(name: &str, tm: &TuringMachine) -> Result<String, String> {
     let blank = tm.get_blank_symbol();
-    let extra = if blank == '_' {
-        None
-    } else {
-        Some(format!("blank: {blank}"))
-    };
-    write_machine_block(
-        "tm",
-        name,
-        "the turing machine has no states",
-        "the turing machine has no initial state",
-        tm.get_states_by_id_ref(),
-        *tm.get_initial_state_id(),
-        tm.get_final_states(),
-        extra,
-        |label| {
-            let mut parts = Vec::new();
-            for group in label.split(',') {
-                let malformed = || {
-                    format!(
-                        "malformed turing tape group '{group}' in label '{label}' (expected 'read;write/dir')"
-                    )
-                };
-                let (read, rest) = group.split_once(';').ok_or_else(malformed)?;
-                let (write, dir) = rest.split_once('/').ok_or_else(malformed)?;
-                let read = check_tuple_component(read, "turing read symbol", false)?;
-                let write = check_tuple_component(write, "turing write symbol", false)?;
-                if read.is_empty() || write.is_empty() {
-                    return Err(format!(
-                        "turing read/write symbols cannot be empty in label '{label}' (use the blank symbol)"
-                    ));
-                }
-                let dir = dir.trim().to_ascii_uppercase();
-                if !matches!(dir.as_str(), "L" | "R" | "S") {
-                    return Err(format!(
-                        "invalid direction '{dir}' in label '{label}' (use L, R or S)"
-                    ));
-                }
-                parts.push(read);
-                parts.push(write);
-                parts.push(dir);
-            }
-            Ok(parts)
-        },
-    )
+    let extra = (blank != DEFAULT_BLANK).then(|| format!("blank: {blank}"));
+    write_machine_block(Family::Turing, "tm", "turing machine", name, tm, extra)
 }
 
 pub fn write_grammar_entity(name: &str, grammar: &Grammar) -> Result<String, String> {
@@ -837,17 +667,9 @@ pub fn write_grammar_entity(name: &str, grammar: &Grammar) -> Result<String, Str
         return Err("the grammar has no productions".to_string());
     }
     let mut text = entity_header("grammar", name);
-    let start = grammar.start_symbol();
-    let others = grammar.nonterminals().iter().filter(|variable| *variable != start);
-    for variable in std::iter::once(start).chain(others.map(String::as_str)) {
-        let Some(bodies) = grammar.productions_of(variable).filter(|bodies| !bodies.is_empty()) else {
-            continue;
-        };
-        let alternatives: Vec<String> = bodies
-            .iter()
-            .map(|body| if body.is_empty() { "ε".to_string() } else { body.join(" ") })
-            .collect();
-        text.push_str(&format!("\nproductions: {} -> {}", variable, alternatives.join(" | ")));
+    for line in grammar.to_string().lines() {
+        text.push_str("\nproductions: ");
+        text.push_str(line);
     }
     Ok(text)
 }

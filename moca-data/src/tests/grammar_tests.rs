@@ -1,83 +1,13 @@
 use std::collections::HashSet;
 
 use crate::grammar::{self, Grammar, ParseError};
+use super::words;
 use crate::state_machine::{Machine, StateMachine};
 
 const BALANCED_PARENS: &str = "S -> a S b\nS -> S S\nS -> ε";
 const ANBN: &str = "S -> a S b | ε";
 const UNIT_CHAINS: &str = "S -> T | c\nT -> U\nU -> a b a";
 const USELESS_DECORATION: &str = "S -> T | c\nT -> U\nU -> a b a\nV -> V W\nW -> x";
-
-fn naive_accepts(grammar: &Grammar, input: &str, max_steps: usize) -> bool {
-    use std::collections::VecDeque;
-    let mut queue: VecDeque<Vec<String>> = VecDeque::from([vec![
-        grammar.start_symbol().to_string(),
-    ]]);
-    let mut visited: HashSet<Vec<String>> = HashSet::new();
-    let mut steps_left = max_steps;
-
-    while let Some(form) = queue.pop_front() {
-        let is_terminal_form = form
-            .iter()
-            .all(|symbol| !grammar.nonterminals().contains(symbol));
-        if is_terminal_form {
-            if form.concat() == input {
-                return true;
-            }
-            continue;
-        }
-        let position = match form
-            .iter()
-            .position(|symbol| grammar.nonterminals().contains(symbol))
-        {
-            Some(found) => found,
-            None => continue,
-        };
-        let variable = form[position].clone();
-        let bodies: Vec<Vec<String>> = grammar
-            .productions_of(&variable)
-            .cloned()
-            .unwrap_or_default();
-        for body in bodies {
-            if steps_left == 0 {
-                return false;
-            }
-            steps_left -= 1;
-            let mut next = form.clone();
-            next.splice(position..position + 1, body.iter().cloned());
-            if !visited.insert(next.clone()) {
-                continue;
-            }
-            if next.iter().all(|symbol| !grammar.nonterminals().contains(symbol)) {
-                if next.concat() == input {
-                    return true;
-                }
-                continue;
-            }
-            queue.push_back(next);
-        }
-    }
-    false
-}
-
-fn alphabet_inputs(alphabet: &[char], max_len: usize) -> Vec<String> {
-    let mut inputs = vec![String::new()];
-    for _ in 0..max_len {
-        let mut next = Vec::new();
-        for input in &inputs {
-            for c in alphabet {
-                let mut longer = input.clone();
-                longer.push(*c);
-                next.push(longer);
-            }
-        }
-        inputs.append(&mut next);
-    }
-    inputs.retain(|input| input.chars().count() <= max_len);
-    inputs.sort();
-    inputs.dedup();
-    inputs
-}
 
 fn enumerate_accepted(grammar: &Grammar, max_len: usize, max_steps: usize) -> HashSet<String> {
     use std::cmp::Reverse;
@@ -87,13 +17,13 @@ fn enumerate_accepted(grammar: &Grammar, max_len: usize, max_steps: usize) -> Ha
     }
     let var_count = |form: &[String]| {
         form.iter()
-            .filter(|symbol| grammar.nonterminals().contains(*symbol))
+            .filter(|symbol| grammar.is_variable(symbol))
             .count()
     };
     let terminal_length_bound = |form: &[String]| -> usize {
         form.iter()
             .map(|symbol| {
-                if grammar.nonterminals().contains(symbol) {
+                if grammar.is_variable(symbol) {
                     0
                 } else {
                     symbol.chars().count()
@@ -123,7 +53,7 @@ fn enumerate_accepted(grammar: &Grammar, max_len: usize, max_steps: usize) -> Ha
         }
         let position = form
             .iter()
-            .position(|symbol| grammar.nonterminals().contains(symbol))
+            .position(|symbol| grammar.is_variable(symbol))
             .expect("non-terminal form holds a variable");
         let variable = form[position].clone();
         let bodies: Vec<Vec<String>> = grammar
@@ -177,7 +107,7 @@ fn validate_chain(
         };
         let mut replaced_any = false;
         for index in range {
-            if grammar.nonterminals().contains(&before[index]) {
+            if grammar.is_variable(&before[index]) {
                 let variable = before[index].clone();
                 let bodies = grammar.productions_of(&variable).cloned().unwrap_or_default();
                 let mut valid_replacement = false;
@@ -218,8 +148,8 @@ fn concatenate(symbols: &[String]) -> String {
 
 fn assert_cnf_shape(grammar: &Grammar) {
     for (variable, body) in grammar.productions() {
-        let ok = (body.len() == 1 && !grammar.nonterminals().contains(&body[0]))
-            || (body.len() == 2 && body.iter().all(|s| grammar.nonterminals().contains(s)))
+        let ok = (body.len() == 1 && !grammar.is_variable(&body[0]))
+            || (body.len() == 2 && body.iter().all(|s| grammar.is_variable(s)))
             || (body.is_empty() && variable == grammar.start_symbol());
         assert!(
             ok,
@@ -232,7 +162,7 @@ fn assert_cnf_shape(grammar: &Grammar) {
 fn grammar_parse_basic_test() {
     let grammar = grammar::parse_grammar(BALANCED_PARENS).unwrap();
     assert_eq!(grammar.start_symbol(), "S");
-    assert_eq!(grammar.nonterminals().len(), 1);
+    assert_eq!(grammar.nonterminals().count(), 1);
     let terminals = grammar.terminals();
     assert!(terminals.contains("a") && terminals.contains("b"));
     assert_eq!(terminals.len(), 2);
@@ -241,7 +171,7 @@ fn grammar_parse_basic_test() {
 
     let grammar = grammar::parse_grammar("S -> a\nS -> b\nA -> a").unwrap();
     assert_eq!(grammar.start_symbol(), "S");
-    assert_eq!(grammar.nonterminals().len(), 2);
+    assert_eq!(grammar.nonterminals().count(), 2);
     assert_eq!(grammar.productions_of("S").unwrap().len(), 2);
 }
 
@@ -261,7 +191,7 @@ fn grammar_parse_errors_test() {
     }
 
     let error = grammar::parse_grammar("broken").unwrap_err();
-    assert_eq!(error.to_string(), format!("{} (line {})", error.message, error.line));
+    assert_eq!(error.to_string(), "missing '->' in \"broken\" (line 1)");
 }
 
 #[test]
@@ -318,15 +248,6 @@ fn grammar_derivation_chain_validity_test() {
 }
 
 #[test]
-fn grammar_derivation_extreme_position_test() {
-    let grammar = grammar::parse_grammar(BALANCED_PARENS).unwrap();
-    let chain = grammar.derive_leftmost("abab", 1000).unwrap();
-    assert!(chain.len() >= 2);
-    assert_eq!(chain[0], vec!["S".to_string()]);
-    assert_ne!(chain[1], vec!["S".to_string()]);
-}
-
-#[test]
 fn grammar_derivation_negative_and_budget_test() {
     let grammar = grammar::parse_grammar(BALANCED_PARENS).unwrap();
     assert_eq!(grammar.derive_leftmost("aab", 10_000), None);
@@ -343,7 +264,7 @@ fn grammar_membership_agreement_test() {
     for source in sources {
         let grammar = grammar::parse_grammar(source).unwrap();
         let accepted = enumerate_accepted(&grammar, 6, 500_000);
-        for input in alphabet_inputs(&['a', 'b'], 6) {
+        for input in words(&['a', 'b'], 6) {
             let expected = accepted.contains(&input);
             let cyk_result = grammar.generate(&input);
             assert_eq!(
@@ -360,7 +281,7 @@ fn grammar_derivation_membership_agreement_test() {
     for source in sources {
         let grammar = grammar::parse_grammar(source).unwrap();
         let accepted_short = enumerate_accepted(&grammar, 4, 100_000);
-        for input in alphabet_inputs(&['a', 'b'], 4) {
+        for input in words(&['a', 'b'], 4) {
             assert_eq!(
                 grammar.derive_leftmost(&input, 50_000).is_some(),
                 accepted_short.contains(&input),
@@ -399,7 +320,7 @@ fn grammar_cnf_language_preservation_test() {
         let grammar = grammar::parse_grammar(source).unwrap();
         let cnf = grammar.to_chomsky_normal_form();
         let accepted = enumerate_accepted(&grammar, 6, 500_000);
-        for input in alphabet_inputs(&['a', 'b'], 6) {
+        for input in words(&['a', 'b'], 6) {
             assert_eq!(
                 cnf.generate(&input),
                 accepted.contains(&input),
@@ -414,9 +335,8 @@ fn grammar_cnf_language_preservation_test() {
 fn grammar_cnf_useless_symbol_removal_test() {
     let grammar = grammar::parse_grammar(USELESS_DECORATION).unwrap();
     let cnf = grammar.to_chomsky_normal_form();
-    assert!(!cnf.nonterminals().contains("V"));
-    assert!(!cnf.nonterminals().contains("W"));
-    assert!(naive_accepts(&grammar, "aba", 20_000));
+    assert!(!cnf.is_variable("V"));
+    assert!(!cnf.is_variable("W"));
     assert!(cnf.generate("aba"));
     assert!(cnf.generate("c"));
 }
@@ -449,7 +369,7 @@ fn grammar_right_linear_to_finite_automata_test() {
     let grammar = grammar::parse_grammar(source).unwrap();
     let automata = grammar.to_finite_automata().unwrap();
     let accepted = enumerate_accepted(&grammar, 5, 100_000);
-    for input in alphabet_inputs(&['a', 'b'], 5) {
+    for input in words(&['a', 'b'], 5) {
         assert_eq!(
             automata.accepts(&input),
             accepted.contains(&input),
@@ -463,7 +383,7 @@ fn grammar_right_linear_to_finite_automata_test() {
     even.add_production("O", &["a", "E"]);
     even.add_production("O", &["a"]);
     let automata = even.to_finite_automata().unwrap();
-    for input in alphabet_inputs(&['a', 'x'], 6) {
+    for input in words(&['a', 'x'], 6) {
         let only_a = input.chars().all(|c| c == 'a');
         let count = input.chars().filter(|c| *c == 'a').count();
         assert_eq!(
@@ -509,7 +429,7 @@ fn grammar_fa_to_right_linear_roundtrip_test() {
     assert_eq!(grammar.start_symbol().chars().next(), Some('S'));
 
     let rebuilt = grammar.to_finite_automata().unwrap();
-    for input in alphabet_inputs(&['a', 'b'], 8) {
+    for input in words(&['a', 'b'], 8) {
         let odd_count = input.chars().filter(|c| *c == 'a').count() % 2 == 1;
         assert_eq!(
             automata.accepts(&input),
@@ -547,7 +467,7 @@ fn grammar_fa_to_right_linear_roundtrip_test() {
 fn pda_matches_enumeration(grammar: &Grammar, max_len: usize) {
     let pda = grammar.to_pushdown_automata().expect("PDA construction");
     let accepted = enumerate_accepted(grammar, max_len, 200_000);
-    for input in alphabet_inputs(&['a', 'b'], max_len) {
+    for input in words(&['a', 'b'], max_len) {
         assert_eq!(
             pda.check_input(&input),
             accepted.contains(&input),
@@ -612,27 +532,10 @@ fn grammar_to_pda_multichar_language_agreement_test() {
     grammar.add_production("T", &["c"]);
     let pda = grammar.to_pushdown_automata().unwrap();
 
-    let mut accepted: HashSet<String> = HashSet::new();
-    let token_inputs: Vec<Vec<String>> = (1..=3usize)
-        .flat_map(|pairs| {
-            (0..=pairs)
-                .map(move |t| {
-                    let mut tokens = vec!["ab".to_string(); pairs];
-                    tokens.push("c".to_string());
-                    let _ = t;
-                    tokens
-                })
-                .collect::<Vec<_>>()
-        })
-        .collect();
-    for tokens in token_inputs {
-        accepted.insert(tokens.concat());
-    }
-    assert!(accepted.contains("abc"));
-    assert!(accepted.contains("ababc"));
+    let accepted: HashSet<&str> = HashSet::from(["abc", "ababc", "abababc"]);
 
-    for input in alphabet_inputs(&['a', 'b', 'c'], 7) {
-        let expected = accepted.contains(&input);
+    for input in words(&['a', 'b', 'c'], 7) {
+        let expected = accepted.contains(input.as_str());
         assert_eq!(
             pda.check_input(&input),
             expected,
@@ -719,4 +622,38 @@ fn grammar_derivation_length_pruning_test() {
     let grammar = grammar::parse_grammar("S -> S S | a").expect("valid grammar");
     assert!(grammar.derive_leftmost("aaaa", 2_000).is_some());
     assert!(grammar.derive_leftmost("aaab", 2_000).is_none());
+}
+
+#[test]
+fn grammar_display_keeps_bodiless_variables_out_of_the_language_test() {
+    let mut grammar = Grammar::new("S");
+    grammar.add_variable("B");
+    grammar.add_production("S", &["a", "B"]);
+    grammar.add_production("S", &["c"]);
+    assert_eq!(grammar.to_string(), "S -> c\n");
+    let reparsed = grammar::parse_grammar(&grammar.to_string()).unwrap();
+    assert!(reparsed.generate("c"));
+    assert!(!reparsed.generate("a"), "a bodiless B must not come back as B -> ε");
+
+    let mut empty_start = Grammar::new("S");
+    empty_start.add_variable("B");
+    empty_start.add_production("S", &["B"]);
+    empty_start.add_production("T", &["t"]);
+    assert_eq!(empty_start.to_string(), "S -> S\nT -> t\n");
+    let reparsed = grammar::parse_grammar(&empty_start.to_string()).unwrap();
+    assert_eq!(reparsed.start_symbol(), "S");
+    assert!(!reparsed.generate("t"));
+}
+
+#[test]
+fn grammar_to_pda_labels_use_the_pushdown_codec_test() {
+    let grammar = grammar::parse_grammar("S -> a S b | ε").unwrap();
+    let pda = grammar.to_pushdown_automata().unwrap();
+    let mut labels: Vec<&str> = pda
+        .get_states_by_id_ref()
+        .values()
+        .flat_map(|state| state.labels().map(|(_, label)| label))
+        .collect();
+    labels.sort();
+    assert_eq!(labels, ["a;a/ε", "b;b/ε", "ε;S/aSb", "ε;S/ε", "ε;Z/SZ", "ε;Z/Z"]);
 }

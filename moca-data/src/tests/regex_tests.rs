@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 
+use super::{finite, words};
 use crate::regex::{self, RegexAst};
 use crate::state_machine::{Machine, StateMachine};
 
@@ -63,29 +64,12 @@ fn naive_accepts(ast: &RegexAst, text: &str) -> bool {
     endpoints(ast, &chars, 0).contains(&chars.len())
 }
 
-fn exhaustive_inputs(alphabet: &[char], max_len: usize) -> Vec<String> {
-    let mut inputs = vec![String::new()];
-    for _ in 0..max_len {
-        let mut next = Vec::new();
-        for input in &inputs {
-            for c in alphabet {
-                let mut longer = input.clone();
-                longer.push(*c);
-                next.push(longer);
-            }
-        }
-        inputs.append(&mut next);
-    }
-    inputs.retain(|s| s.chars().count() <= max_len);
-    inputs
-}
-
 #[test]
 fn regex_parse_valid_test() {
     for pattern in [
         "", "a", "ε", "ab", "a*", "(a)", "(a|b)*abb", "a|b|c", "a+", "a?",
         "\\*", "\\\\", "\\(a\\)", "(a|)+", "|a", "()", "a**", "a*?", "abc",
-        "((a))", "ε*", "\\ε",
+        "((a))", "ε*",
     ] {
         assert!(regex::parse(pattern).is_ok(), "pattern {pattern:?} should parse");
     }
@@ -152,7 +136,7 @@ fn regex_compile_agrees_with_naive_matcher_test() {
             Machine::validate(&automata).is_ok(),
             "compiled automaton for {pattern:?} must be valid"
         );
-        for input in exhaustive_inputs(alphabet, 6) {
+        for input in words(alphabet, 6) {
             let expected = naive_accepts(&ast, &input);
             let actual = automata.accepts(&input);
             assert_eq!(
@@ -265,62 +249,21 @@ fn regex_display_precedence_test() {
     }
 }
 
-fn build_odd_a_dfa() -> crate::finite_automata::FiniteAutomata {
-    use crate::state_machine::StateMachine;
-    let mut automata = crate::finite_automata::FiniteAutomata::new();
-    automata.add_n_states(2);
-    automata.make_initial(0);
-    automata.make_final(1);
-    automata.add_transition(0, 1, "a".to_string());
-    automata.add_transition(0, 0, "b".to_string());
-    automata.add_transition(1, 0, "a".to_string());
-    automata.add_transition(1, 1, "b".to_string());
-    automata
-}
-
 fn build_abb_nfa() -> crate::finite_automata::FiniteAutomata {
-    use crate::state_machine::StateMachine;
-    let mut automata = crate::finite_automata::FiniteAutomata::new();
-    automata.add_n_states(11);
-    automata.make_initial(0);
-    automata.make_final(10);
-    automata.add_transition(0, 1, "ε".to_string());
-    automata.add_transition(0, 7, "ε".to_string());
-    automata.add_transition(1, 2, "a".to_string());
-    automata.add_transition(2, 3, "ε".to_string());
-    automata.add_transition(3, 4, "b".to_string());
-    automata.add_transition(4, 5, "ε".to_string());
-    automata.add_transition(5, 1, "ε".to_string());
-    automata.add_transition(5, 6, "ε".to_string());
-    automata.add_transition(6, 7, "ε".to_string());
-    automata.add_transition(7, 8, "a".to_string());
-    automata.add_transition(8, 9, "b".to_string());
-    automata.add_transition(9, 10, "b".to_string());
-    automata
+    finite(11, &[10], &[
+        (0, 1, "ε"), (0, 7, "ε"), (1, 2, "a"), (2, 3, "ε"), (3, 4, "b"), (4, 5, "ε"),
+        (5, 1, "ε"), (5, 6, "ε"), (6, 7, "ε"), (7, 8, "a"), (8, 9, "b"), (9, 10, "b"),
+    ])
 }
 
 #[test]
 fn fa_to_regex_language_agreement_test() {
     use crate::finite_automata::FiniteAutomata;
-    use crate::state_machine::StateMachine;
 
-    let mut odd = build_odd_a_dfa();
+    let odd = finite(3, &[1, 2], &[(0, 1, "a"), (0, 0, "b"), (1, 0, "a"), (1, 1, "b"), (2, 2, "a")]);
     let abb = build_abb_nfa();
-
-    let mut reject_all = FiniteAutomata::new();
-    reject_all.add_n_states(1);
-    reject_all.make_initial(0);
-    reject_all.add_transition(0, 0, "a".to_string());
-
-    let mut accept_all = FiniteAutomata::new();
-    accept_all.add_n_states(1);
-    accept_all.make_initial(0);
-    accept_all.make_final(0);
-    accept_all.add_transition(0, 0, "a".to_string());
-
-    odd.add_state();
-    odd.add_transition(2, 2, "a".to_string());
-    odd.make_final(2);
+    let reject_all = finite(1, &[], &[(0, 0, "a")]);
+    let accept_all = finite(1, &[0], &[(0, 0, "a")]);
 
     let fixtures: Vec<&FiniteAutomata> = vec![&odd, &abb, &reject_all, &accept_all];
     for machine in &fixtures {
@@ -328,7 +271,7 @@ fn fa_to_regex_language_agreement_test() {
         let rendered = format!("{ast}");
         let compiled = regex::compile_str(&rendered)
             .unwrap_or_else(|error| panic!("eliminated regex {rendered:?} failed to parse: {error}"));
-        for input in exhaustive_inputs(&['a', 'b'], 6) {
+        for input in words(&['a', 'b'], 6) {
             assert_eq!(
                 compiled.accepts(&input),
                 machine.accepts(&input),
@@ -337,9 +280,7 @@ fn fa_to_regex_language_agreement_test() {
         }
     }
 
-    assert!(!abb.to_regex().to_string().is_empty());
-    let reject_text = reject_all.to_regex().to_string();
-    assert!(!regex::compile_str(&reject_text).unwrap().accepts("a"));
+    assert_eq!(reject_all.to_regex().to_string(), "\u{2205}");
 }
 
 #[test]
@@ -351,23 +292,10 @@ fn fa_to_regex_empty_machine_test() {
 
 #[test]
 fn regex_literal_epsilon_is_not_compiled_test() {
-    assert!(regex::parse("a\\ε").is_ok());
-    let error = regex::compile_str("a\\ε").expect_err("literal ε cannot be compiled");
+    let error = regex::parse("a\\ε").expect_err("a literal ε is rejected while parsing");
     assert_eq!(error.position, 1);
+    assert_eq!(regex::compile_str("a\\ε").unwrap_err(), error);
     assert!(regex::compile_str("aε").is_ok());
-}
-
-fn finite(states: u64, finals: &[u64], transitions: &[(u64, u64, &str)]) -> crate::finite_automata::FiniteAutomata {
-    let mut automata = crate::finite_automata::FiniteAutomata::new();
-    automata.add_n_states(states);
-    automata.make_initial(0);
-    for id in finals {
-        automata.make_final(*id);
-    }
-    for (from, to, label) in transitions {
-        automata.add_transition(*from, *to, label.to_string());
-    }
-    automata
 }
 
 #[test]
@@ -402,7 +330,7 @@ fn fa_to_regex_simplified_language_agreement_test() {
         let rendered = machine.to_regex().to_string();
         let compiled = regex::compile_str(&rendered)
             .unwrap_or_else(|error| panic!("regex {rendered:?} failed to parse: {error}"));
-        for input in exhaustive_inputs(&['a', 'b'], 6) {
+        for input in words(&['a', 'b'], 6) {
             assert_eq!(
                 compiled.accepts(&input),
                 machine.accepts(&input),
@@ -426,9 +354,9 @@ fn regex_smart_constructors_preserve_language_test() {
         raw_star(&RegexAst::Epsilon),
         RegexAst::Union(Box::new(RegexAst::Epsilon), Box::new(RegexAst::Char('a'))),
     ];
-    let words = exhaustive_inputs(&['a', 'b'], 4);
+    let inputs = words(&['a', 'b'], 4);
     let agree = |simplified: &RegexAst, raw: &RegexAst| {
-        for word in &words {
+        for word in &inputs {
             assert_eq!(
                 naive_accepts(simplified, word),
                 naive_accepts(raw, word),

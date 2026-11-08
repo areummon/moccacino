@@ -4,7 +4,7 @@ use iced::{Point, Vector};
 
 use super::edge::EdgeGeometry;
 use super::node::StateNode;
-use super::program::StateMachine;
+use super::canvas::StateMachine;
 use super::util::VectorExt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,14 +61,14 @@ impl StateMachine<'_> {
             .states
             .iter()
             .rev()
-            .find(|node| (point - node.position).length() <= node.radius)
+            .find(|node| (point - node.position).length() <= StateNode::RADIUS)
         {
             return Some(Hit::State(node.id));
         }
         self.find_transition_at_point(point).map(Hit::Transition)
     }
 
-    pub(crate) fn find_transition_at_point(&self, point: Point) -> Option<(usize, usize)> {
+    fn find_transition_at_point(&self, point: Point) -> Option<(usize, usize)> {
         let node_by_id = self.node_by_id();
         self.transitions.iter().find_map(|(&(from, to), labels)| {
             let geometry = self.edge_geometry(&node_by_id, from, to)?;

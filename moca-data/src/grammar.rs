@@ -1,5 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
+use crate::finite_automata::FiniteAutomata;
+use crate::pushdown_automata::{PdaOp, PushdownAutomata, DEFAULT_STACK};
+use crate::state::{is_epsilon, EPSILON};
+use crate::state_machine::StateMachine;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParseError {
@@ -17,7 +21,6 @@ impl std::error::Error for ParseError {}
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Grammar {
-    nonterminals: BTreeSet<String>,
     productions: BTreeMap<String, Vec<Vec<String>>>,
     start_symbol: String,
 }
@@ -36,8 +39,12 @@ impl Grammar {
         &self.start_symbol
     }
 
-    pub fn nonterminals(&self) -> &BTreeSet<String> {
-        &self.nonterminals
+    pub fn nonterminals(&self) -> impl Iterator<Item = &String> {
+        self.productions.keys()
+    }
+
+    pub fn is_variable(&self, symbol: &str) -> bool {
+        self.productions.contains_key(symbol)
     }
 
     pub fn terminals(&self) -> BTreeSet<String> {
@@ -45,7 +52,7 @@ impl Grammar {
         for bodies in self.productions.values() {
             for body in bodies {
                 for symbol in body {
-                    if !self.nonterminals.contains(symbol) {
+                    if !self.is_variable(symbol) {
                         terminals.insert(symbol.clone());
                     }
                 }
@@ -69,7 +76,7 @@ impl Grammar {
     }
 
     pub fn add_variable(&mut self, name: &str) {
-        self.nonterminals.insert(name.to_string());
+        self.productions.entry(name.to_string()).or_default();
         if self.start_symbol.is_empty() {
             self.start_symbol = name.to_string();
         }
@@ -82,14 +89,6 @@ impl Grammar {
             .entry(variable.to_string())
             .or_default()
             .push(body);
-    }
-
-    fn production_table(&self) -> ProductionTable {
-        let mut table = self.productions.clone();
-        for variable in &self.nonterminals {
-            table.entry(variable.clone()).or_default();
-        }
-        table
     }
 
     pub fn contains_epsilon(&self) -> bool {
@@ -120,19 +119,19 @@ impl Grammar {
         let initial = Node { parent: None, form: vec![self.start_symbol.clone()] };
         let var_count = |form: &[String]| {
             form.iter()
-                .filter(|symbol| self.nonterminals.contains(*symbol))
+                .filter(|symbol| self.is_variable(symbol))
                 .count()
         };
         let mut nodes: Vec<Node> = vec![initial];
         let mut seen: HashSet<String> = HashSet::from([form_key(&nodes[0].form)]);
         let mut heap: std::collections::BinaryHeap<Reverse<(usize, usize)>> =
             std::collections::BinaryHeap::from([Reverse((1, 0))]);
-        let nullable = nullable_from_table(&self.production_table());
+        let nullable = nullable_from_table(&self.productions);
         let input_length = input.chars().count();
         let minimum_length = |form: &[String]| -> usize {
             form.iter()
                 .map(|symbol| {
-                    if !self.nonterminals.contains(symbol) {
+                    if !self.is_variable(symbol) {
                         symbol.chars().count()
                     } else if nullable.contains(symbol) {
                         0
@@ -207,9 +206,9 @@ impl Grammar {
     }
 
     pub fn to_chomsky_normal_form(&self) -> Grammar {
-        let mut productions = self.production_table();
+        let mut productions = self.productions.clone();
         let mut counter = 0usize;
-        let mut names_in_use = all_symbol_names(&productions, &self.nonterminals);
+        let mut names_in_use = all_symbol_names(&productions);
 
         let has_epsilon = nullable_from_table(&productions).contains(&self.start_symbol);
 
@@ -239,7 +238,6 @@ impl Grammar {
 
         let productions = dedup_bodies(productions);
         Grammar {
-            nonterminals: productions.keys().cloned().collect(),
             productions,
             start_symbol: start,
         }
@@ -258,8 +256,6 @@ impl Grammar {
 
 pub fn parse_grammar(source: &str) -> Result<Grammar, ParseError> {
     let mut grammar = Grammar::default();
-    let mut first_lhs: Option<String> = None;
-
     for (index, raw_line) in source.lines().enumerate() {
         let line_number = index + 1;
         let line = raw_line.trim();
@@ -282,23 +278,17 @@ pub fn parse_grammar(source: &str) -> Result<Grammar, ParseError> {
                 message: "left-hand side must be a single symbol".to_string(),
             });
         }
-        if first_lhs.is_none() {
-            first_lhs = Some(lhs.to_string());
-            grammar.add_variable(lhs);
-        }
         for alternative in rhs.split('|') {
             let alternative = alternative.trim();
             let body: Vec<&str> = alternative
                 .split_whitespace()
-                .filter(|symbol| *symbol != "ε")
+                .filter(|symbol| *symbol != EPSILON)
                 .collect();
             grammar.add_production(lhs, &body);
         }
     }
 
-    if let Some(start) = first_lhs {
-        grammar.start_symbol = start;
-    } else {
+    if grammar.start_symbol.is_empty() {
         return Err(ParseError {
             line: 0,
             message: "no productions found".to_string(),
@@ -337,11 +327,11 @@ fn form_key(form: &[String]) -> String {
 }
 
 fn is_terminal_form(grammar: &Grammar, form: &[String]) -> bool {
-    form.iter().all(|symbol| !grammar.nonterminals.contains(symbol))
+    form.iter().all(|symbol| !grammar.is_variable(symbol))
 }
 
 fn extreme_variable_position(grammar: &Grammar, form: &[String], leftmost: bool) -> Option<usize> {
-    let is_variable = |symbol: &String| grammar.nonterminals.contains(symbol);
+    let is_variable = |symbol: &String| grammar.is_variable(symbol);
     if leftmost {
         form.iter().position(is_variable)
     } else {
@@ -349,8 +339,8 @@ fn extreme_variable_position(grammar: &Grammar, form: &[String], leftmost: bool)
     }
 }
 
-fn all_symbol_names(productions: &ProductionTable, declared: &BTreeSet<String>) -> BTreeSet<String> {
-    let mut names: BTreeSet<String> = declared.clone();
+fn all_symbol_names(productions: &ProductionTable) -> BTreeSet<String> {
+    let mut names: BTreeSet<String> = BTreeSet::new();
     for (variable, bodies) in productions {
         names.insert(variable.clone());
         for body in bodies {
@@ -616,22 +606,17 @@ fn isolate_terminals(
     productions
 }
 
-use crate::finite_automata::FiniteAutomata;
-use crate::pushdown_automata::PushdownAutomata;
-use crate::state_machine::StateMachine;
-
 impl Grammar {
     pub fn to_finite_automata(&self) -> Result<FiniteAutomata, String> {
-        let table = self.production_table();
-        let nullable = nullable_from_table(&table);
-        let productions = eliminate_unit_productions(without_nullable_bodies(&table, &nullable));
+        let nullable = nullable_from_table(&self.productions);
+        let productions = eliminate_unit_productions(without_nullable_bodies(&self.productions, &nullable));
 
         for (variable, bodies) in &productions {
             for body in bodies {
                 let well_shaped = match body.len() {
                     0 => false,
-                    1 => !self.nonterminals.contains(&body[0]),
-                    2 => !self.nonterminals.contains(&body[0]) && self.nonterminals.contains(&body[1]),
+                    1 => !self.is_variable(&body[0]),
+                    2 => !self.is_variable(&body[0]) && self.is_variable(&body[1]),
                     _ => false,
                 };
                 if !well_shaped {
@@ -642,7 +627,7 @@ impl Grammar {
             }
         }
 
-        let variables: Vec<String> = self.nonterminals.iter().cloned().collect();
+        let variables: Vec<String> = self.productions.keys().cloned().collect();
         let index_of = |name: &str| -> usize {
             variables.iter().position(|v| v == name).expect("variable registered")
         };
@@ -677,7 +662,7 @@ impl Grammar {
 
     pub fn from_finite_automata(machine: &FiniteAutomata) -> Result<Grammar, String> {
         let initial_id = match machine.get_initial_state_id() {
-            Some(id) => *id,
+            Some(id) => id,
             None => return Err("The automaton has no initial state.".to_string()),
         };
 
@@ -740,7 +725,7 @@ impl Grammar {
             if let Some(state) = machine.get_states_by_id_ref().get(id) {
                 for (target, labels) in state.iter_by_transition() {
                     for label in labels {
-                        let read: Vec<&str> = if label.is_empty() || label == "ε" {
+                        let read: Vec<&str> = if is_epsilon(label) {
                             Vec::new()
                         } else {
                             vec![label.as_str()]
@@ -759,27 +744,29 @@ impl Grammar {
         Ok(grammar)
     }
 
-    fn drop_bodies_with_dead_variables(&mut self) {
+    fn dead_variables(&self) -> HashSet<&String> {
+        let mut dead: HashSet<&String> = HashSet::new();
         loop {
-            let dead: HashSet<String> = self
-                .nonterminals
+            let newly_dead: Vec<&String> = self
+                .productions
                 .iter()
-                .filter(|variable| {
-                    self.productions.get(*variable).is_none_or(|bodies| bodies.is_empty())
+                .filter(|(variable, bodies)| {
+                    !dead.contains(variable)
+                        && bodies.iter().all(|body| body.iter().any(|symbol| dead.contains(symbol)))
                 })
-                .cloned()
+                .map(|(variable, _)| variable)
                 .collect();
-            let mut changed = false;
-            for bodies in self.productions.values_mut() {
-                let before = bodies.len();
-                bodies.retain(|body| !body.iter().any(|symbol| dead.contains(symbol)));
-                changed |= bodies.len() != before;
+            if newly_dead.is_empty() {
+                return dead;
             }
-            if !changed {
-                break;
-            }
+            dead.extend(newly_dead);
         }
+    }
+
+    fn drop_bodies_with_dead_variables(&mut self) {
+        let dead: HashSet<String> = self.dead_variables().into_iter().cloned().collect();
         for bodies in self.productions.values_mut() {
+            bodies.retain(|body| !body.iter().any(|symbol| dead.contains(symbol)));
             bodies.sort();
             bodies.dedup();
         }
@@ -787,57 +774,44 @@ impl Grammar {
 
     pub fn to_pushdown_automata(&self) -> Result<PushdownAutomata, String> {
         let terminals = self.terminals();
-        for symbol in self.nonterminals.iter().chain(terminals.iter()) {
-            if symbol.contains(',')
-                || symbol.contains(';')
-                || symbol.contains('/')
-                || symbol == "ε"
-            {
+        for symbol in self.nonterminals().chain(terminals.iter()) {
+            if PdaOp::is_reserved_symbol(symbol) {
                 return Err(format!(
                     "symbol {symbol:?} cannot be converted: ',', ';' and '/' are reserved by the pushdown label format"
                 ));
             }
         }
 
-        let symbols: HashSet<&String> = self
-            .nonterminals
-            .iter()
-            .chain(terminals.iter())
-            .collect();
-        let mut marker = "Z".to_string();
-        let mut marker_counter = 0usize;
-        while symbols.contains(&marker) {
-            marker = format!("Z{marker_counter}");
-            marker_counter += 1;
-        }
+        let symbols: BTreeSet<String> = self.nonterminals().chain(terminals.iter()).cloned().collect();
+        let marker = if symbols.contains(DEFAULT_STACK) {
+            fresh_name(DEFAULT_STACK, &symbols, &mut 0)
+        } else {
+            DEFAULT_STACK.to_string()
+        };
 
         let mut pda = PushdownAutomata::new(marker.clone());
         pda.add_n_states(3);
         pda.make_initial(0);
         pda.make_final(2);
 
-        pda.add_transition(
-            0,
-            1,
-            format!("ε;{}/{},{}", marker, self.start_symbol, marker),
-        );
-
+        let label = |read: Option<&String>, pop: &String, push: &[String]| {
+            PdaOp {
+                read: read.cloned(),
+                pop: Some(pop.clone()),
+                push_entries: push.iter().rev().cloned().collect(),
+            }
+            .to_string()
+        };
+        pda.add_transition(0, 1, label(None, &marker, &[self.start_symbol.clone(), marker.clone()]));
         for (variable, bodies) in &self.productions {
             for body in bodies {
-                let pushed = if body.is_empty() {
-                    "ε".to_string()
-                } else {
-                    format!("{},ε", body.join(","))
-                };
-                pda.add_transition(1, 1, format!("ε;{variable}/{pushed}"));
+                pda.add_transition(1, 1, label(None, variable, body));
             }
         }
-
         for terminal in &terminals {
-            pda.add_transition(1, 1, format!("{terminal};{terminal}/ε"));
+            pda.add_transition(1, 1, label(Some(terminal), terminal, &[]));
         }
-
-        pda.add_transition(1, 2, format!("ε;{marker}/{marker}"));
+        pda.add_transition(1, 2, label(None, &marker, &[marker.clone()]));
 
         Ok(pda)
     }
@@ -845,25 +819,22 @@ impl Grammar {
 
 impl fmt::Display for Grammar {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let start = self.nonterminals.get(&self.start_symbol);
-        let others = self.nonterminals.iter().filter(|variable| **variable != self.start_symbol);
-        for variable in start.into_iter().chain(others) {
-            let bodies = match self.productions_of(variable) {
-                Some(bodies) => bodies,
-                None => continue,
-            };
-            write!(f, "{variable} ->")?;
-            for (index, body) in bodies.iter().enumerate() {
-                if index > 0 {
-                    write!(f, " |")?;
-                }
-                if body.is_empty() {
-                    write!(f, " ε")?;
-                } else {
-                    write!(f, " {}", body.join(" "))?;
-                }
+        let dead = self.dead_variables();
+        let start = &self.start_symbol;
+        let others = self.productions.keys().filter(|variable| *variable != start);
+        for variable in std::iter::once(start).chain(others) {
+            let alternatives: Vec<String> = self
+                .productions_of(variable)
+                .into_iter()
+                .flatten()
+                .filter(|body| !body.iter().any(|symbol| dead.contains(symbol)))
+                .map(|body| if body.is_empty() { EPSILON.to_string() } else { body.join(" ") })
+                .collect();
+            if !alternatives.is_empty() {
+                writeln!(f, "{variable} -> {}", alternatives.join(" | "))?;
+            } else if variable == start && !start.is_empty() {
+                writeln!(f, "{start} -> {start}")?;
             }
-            writeln!(f)?;
         }
         Ok(())
     }

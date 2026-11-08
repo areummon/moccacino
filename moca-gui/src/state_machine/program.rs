@@ -1,51 +1,209 @@
+use iced::keyboard::{self, Modifiers};
+use iced::time::Instant;
 use iced::widget::canvas::{self, Event, Frame, Geometry, LineCap, LineDash, Path, Stroke, Text};
-use iced::{alignment, mouse, Point, Rectangle, Renderer, Size, Theme, Vector};
-use std::collections::HashSet;
+use iced::{alignment, mouse, Color, Point, Rectangle, Renderer, Size, Theme, Vector};
+use indexmap::IndexSet;
+use std::time::Duration;
 
+use super::canvas::StateMachine;
+use super::edge::{EdgeGeometry, LABEL_FONT_SIZE};
+use super::gesture::Gesture;
 use super::hit_testing::Hit;
 use super::message::CanvasMessage;
 use super::node::{NodeLook, StateNode};
-use super::pending::PendingTransition;
-use super::state::{clamp_scroll, content_bounds, zoom_target, State};
+use super::state::{clamp_scroll, content_bounds};
 use super::tool::EditorTool;
-use super::edge::LABEL_FONT_SIZE;
 use super::util::VectorExt;
-use crate::gui::theme::{self, Family, Palette};
+use crate::theme::{self, Palette};
 
-const GRID_SPACING: f32 = 28.0;
-const DOUBLE_CLICK: std::time::Duration = std::time::Duration::from_millis(300);
-
-pub(crate) struct StateMachine<'a> {
-    pub(crate) state: &'a State,
-    pub(crate) states: &'a [StateNode],
-    pub(crate) transitions: &'a std::collections::HashMap<(usize, usize), indexmap::IndexSet<String>>,
-    pub(crate) initial_state: Option<usize>,
-    pub(crate) final_states: &'a HashSet<usize>,
-    pub(crate) active_states: &'a HashSet<usize>,
-    pub(crate) family: Family,
-    pub(crate) interactive: bool,
-    pub(crate) known_viewport: Size,
-}
+const DOUBLE_CLICK: Duration = Duration::from_millis(300);
 
 #[derive(Debug, Default)]
 pub(crate) struct Interaction {
-    pending: Option<PendingTransition>,
+    gesture: Option<Gesture>,
     hover: Option<Hit>,
+    modifiers: Modifiers,
+}
+
+fn changed(a: Vector, b: Vector) -> bool {
+    (a.x - b.x).abs() > f32::EPSILON || (a.y - b.y).abs() > f32::EPSILON
+}
+
+type Outcome = (canvas::event::Status, Option<CanvasMessage>);
+
+const IGNORED: Outcome = (canvas::event::Status::Ignored, None);
+
+fn captured(message: Option<CanvasMessage>) -> Outcome {
+    (canvas::event::Status::Captured, message)
 }
 
 impl StateMachine<'_> {
-    fn zoom(&self) -> f32 {
-        self.state.zoom()
-    }
-
-    fn to_world(&self, point: Point) -> Point {
+    fn wheel(&self, interaction: &Interaction, delta: mouse::ScrollDelta, anchor: Point, viewport: Size) -> Outcome {
         let scroll = self.state.scroll();
-        let zoom = self.zoom();
-        Point::new(point.x / zoom + scroll.x, point.y / zoom + scroll.y)
+        let zoom = self.state.zoom();
+        let (dx, dy) = match delta {
+            mouse::ScrollDelta::Lines { x, y } => (x * 40.0, y * 40.0),
+            mouse::ScrollDelta::Pixels { x, y } => (x, y),
+        };
+        if interaction.modifiers.command() {
+            let factor = 1.0015f32.powf(dy.clamp(-240.0, 240.0));
+            let (zoom, scroll) = self.state.zoom_target(factor, anchor, self.states, viewport);
+            return captured(Some(CanvasMessage::Zoomed { zoom, scroll }));
+        }
+        let (dx, dy) = if interaction.modifiers.shift() && dx == 0.0 { (-dy, 0.0) } else { (dx, dy) };
+        let new_scroll = clamp_scroll(
+            Vector::new(scroll.x + dx / zoom, scroll.y - dy / zoom),
+            self.states,
+            viewport,
+            zoom,
+        );
+        captured(changed(new_scroll, scroll).then_some(CanvasMessage::Scrolled(new_scroll)))
     }
 
-    fn changed(a: Vector, b: Vector) -> bool {
-        (a.x - b.x).abs() > f32::EPSILON || (a.y - b.y).abs() > f32::EPSILON
+    fn press(&self, interaction: &mut Interaction, screen: Point) -> Outcome {
+        let world = self.state.to_world(screen);
+        let hit = self.hit_test(world);
+        let previous = interaction.gesture.take();
+        match self.state.active_tool() {
+            EditorTool::Arrow => self.press_arrow(interaction, hit, previous, world, screen),
+            EditorTool::State => captured(hit.is_none().then_some(CanvasMessage::AddState(world))),
+            EditorTool::Transition => self.press_transition(interaction, hit, previous),
+            EditorTool::Delete => {
+                interaction.hover = None;
+                captured(match hit {
+                    Some(Hit::State(id)) => Some(CanvasMessage::DeleteState(id)),
+                    Some(Hit::Transition(pair)) => Some(CanvasMessage::DeleteTransition(pair)),
+                    None => None,
+                })
+            }
+        }
+    }
+
+    fn clicked_node(&self, hit: Option<Hit>) -> Option<&StateNode> {
+        match hit {
+            Some(Hit::State(id)) => self.states.iter().find(|node| node.id == id),
+            _ => None,
+        }
+    }
+
+    fn press_arrow(
+        &self,
+        interaction: &mut Interaction,
+        hit: Option<Hit>,
+        previous: Option<Gesture>,
+        world: Point,
+        screen: Point,
+    ) -> Outcome {
+        match hit {
+            Some(Hit::State(id)) => {
+                let now = Instant::now();
+                let double = matches!(
+                    previous,
+                    Some(Gesture::ClickTracking { at, state_id })
+                        if state_id == id && now.duration_since(at) < DOUBLE_CLICK
+                );
+                if double {
+                    interaction.gesture = Some(Gesture::ClickTracking { at: now, state_id: id });
+                    return captured(Some(CanvasMessage::RenameState(id)));
+                }
+                if interaction.modifiers.shift() {
+                    return captured(Some(CanvasMessage::ToggleFinal(id)));
+                }
+                if interaction.modifiers.alt() {
+                    return captured(Some(CanvasMessage::MakeInitial(id)));
+                }
+                if let Some(node) = self.clicked_node(hit) {
+                    interaction.gesture = Some(Gesture::Dragging {
+                        state_id: id,
+                        offset: world - node.position,
+                        moved: false,
+                    });
+                }
+                captured(None)
+            }
+            Some(Hit::Transition(pair)) => captured(Some(CanvasMessage::EditTransition(pair))),
+            None => {
+                interaction.gesture = Some(Gesture::Panning { origin_scroll: self.state.scroll(), cursor_start: screen });
+                captured(None)
+            }
+        }
+    }
+
+    fn press_transition(&self, interaction: &mut Interaction, hit: Option<Hit>, previous: Option<Gesture>) -> Outcome {
+        match (previous, self.clicked_node(hit)) {
+            (Some(Gesture::Connecting { from_state_id, .. }), Some(to_node)) => {
+                captured(Some(CanvasMessage::ConnectStates { from: from_state_id, to: to_node.id }))
+            }
+            (Some(Gesture::Connecting { .. }), None) => captured(None),
+            (_, node) => {
+                interaction.gesture = node.map(|node| Gesture::Connecting {
+                    from_state_id: node.id,
+                    from_point: node.position,
+                });
+                captured(None)
+            }
+        }
+    }
+
+    fn cursor_moved(&self, interaction: &mut Interaction, screen: Option<Point>, viewport: Size) -> Outcome {
+        if (viewport.width - self.known_viewport.width).abs() > 0.5
+            || (viewport.height - self.known_viewport.height).abs() > 0.5
+        {
+            return (canvas::event::Status::Ignored, Some(CanvasMessage::Viewport(viewport)));
+        }
+        let Some(screen) = screen else {
+            interaction.hover = None;
+            return IGNORED;
+        };
+        let world = self.state.to_world(screen);
+        let scroll = self.state.scroll();
+        let zoom = self.state.zoom();
+        let healed = clamp_scroll(scroll, self.states, viewport, zoom);
+        if changed(healed, scroll) && !matches!(interaction.gesture, Some(Gesture::Dragging { .. })) {
+            return captured(Some(CanvasMessage::Scrolled(healed)));
+        }
+        match interaction.gesture {
+            Some(Gesture::Dragging { state_id, offset, .. }) => {
+                interaction.gesture = Some(Gesture::Dragging { state_id, offset, moved: true });
+                interaction.hover = Some(Hit::State(state_id));
+                captured(Some(CanvasMessage::MoveState { state_id, new_position: world - offset }))
+            }
+            Some(Gesture::Panning { origin_scroll, cursor_start }) => {
+                let drag = screen - cursor_start;
+                let new_scroll = clamp_scroll(
+                    Vector::new(origin_scroll.x - drag.x / zoom, origin_scroll.y - drag.y / zoom),
+                    self.states,
+                    viewport,
+                    zoom,
+                );
+                captured(changed(new_scroll, scroll).then_some(CanvasMessage::Scrolled(new_scroll)))
+            }
+            Some(Gesture::Connecting { .. }) => {
+                interaction.hover = self.hit_test(world).filter(|hit| matches!(hit, Hit::State(_)));
+                captured(None)
+            }
+            _ => {
+                interaction.hover = match self.state.active_tool() {
+                    EditorTool::State => None,
+                    _ => self.hit_test(world),
+                };
+                IGNORED
+            }
+        }
+    }
+
+    fn release(interaction: &mut Interaction) -> Outcome {
+        match interaction.gesture {
+            Some(Gesture::Dragging { state_id, moved, .. }) => {
+                interaction.gesture = (!moved).then(|| Gesture::ClickTracking { at: Instant::now(), state_id });
+                captured(None)
+            }
+            Some(Gesture::Panning { .. }) => {
+                interaction.gesture = None;
+                captured(None)
+            }
+            _ => IGNORED,
+        }
     }
 }
 
@@ -58,252 +216,33 @@ impl canvas::Program<CanvasMessage> for StateMachine<'_> {
         event: Event,
         bounds: Rectangle,
         cursor: mouse::Cursor,
-    ) -> (canvas::event::Status, Option<CanvasMessage>) {
+    ) -> Outcome {
+        if let Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) = event {
+            interaction.modifiers = modifiers;
+            return IGNORED;
+        }
         if !self.interactive {
             interaction.hover = None;
-            return (canvas::event::Status::Ignored, None);
+            return IGNORED;
         }
-        let cursor_position = cursor.position_in(bounds);
-        let scroll = self.state.scroll();
-        let zoom = self.zoom();
+        let screen = cursor.position_in(bounds);
         let viewport = bounds.size();
-        let world_position = cursor_position.map(|pos| self.to_world(pos));
-
         match event {
-            Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
-                let Some(anchor) = cursor_position else {
-                    return (canvas::event::Status::Ignored, None);
-                };
-                let (dx, dy) = match delta {
-                    mouse::ScrollDelta::Lines { x, y } => (x * 40.0, y * 40.0),
-                    mouse::ScrollDelta::Pixels { x, y } => (x, y),
-                };
-                if self.state.is_ctrl_pressed() {
-                    let factor = 1.0015f32.powf(dy.clamp(-240.0, 240.0));
-                    let (new_zoom, new_scroll) =
-                        zoom_target(zoom, scroll, factor, anchor, self.states, viewport);
-                    return (
-                        canvas::event::Status::Captured,
-                        Some(CanvasMessage::Zoomed { zoom: new_zoom, scroll: new_scroll }),
-                    );
-                }
-                let (dx, dy) = if self.state.is_shift_pressed() && dx == 0.0 { (-dy, 0.0) } else { (dx, dy) };
-                let new_scroll = clamp_scroll(
-                    Vector::new(scroll.x + dx / zoom, scroll.y - dy / zoom),
-                    self.states,
-                    viewport,
-                    zoom,
-                );
-                if Self::changed(new_scroll, scroll) {
-                    (canvas::event::Status::Captured, Some(CanvasMessage::Scrolled(new_scroll)))
-                } else {
-                    (canvas::event::Status::Captured, None)
-                }
-            }
-            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
-                let (Some(cursor_pos), Some(screen_pos)) = (world_position, cursor_position) else {
-                    return (canvas::event::Status::Ignored, None);
-                };
-
-                let hit = self.hit_test(cursor_pos);
-                let clicked_node = match hit {
-                    Some(Hit::State(id)) => self.states.iter().find(|node| node.id == id),
-                    _ => None,
-                };
-                let clicked_transition = match hit {
-                    Some(Hit::Transition(pair)) => Some(pair),
-                    _ => None,
-                };
-
-                match self.state.active_tool() {
-                    EditorTool::Arrow => {
-                        let now = iced::time::Instant::now();
-                        let (last_click_time, last_clicked_state, last_clicked_transition) =
-                            match interaction.pending {
-                                Some(PendingTransition::ClickTracking {
-                                    last_click_time,
-                                    last_clicked_state,
-                                    last_clicked_transition,
-                                }) => (last_click_time, last_clicked_state, last_clicked_transition),
-                                _ => (now - DOUBLE_CLICK - std::time::Duration::from_millis(1), None, None),
-                            };
-                        interaction.pending = None;
-
-                        if let Some(node) = clicked_node {
-                            if now.duration_since(last_click_time) < DOUBLE_CLICK
-                                && last_clicked_state == Some(node.id)
-                            {
-                                interaction.pending = Some(PendingTransition::ClickTracking {
-                                    last_click_time: now,
-                                    last_clicked_state: Some(node.id),
-                                    last_clicked_transition: None,
-                                });
-                                return (
-                                    canvas::event::Status::Captured,
-                                    Some(CanvasMessage::StateDoubleClicked(node.id)),
-                                );
-                            }
-                            if self.state.is_shift_pressed() || self.state.is_alt_pressed() {
-                                return (
-                                    canvas::event::Status::Captured,
-                                    Some(CanvasMessage::StateClicked(node.id)),
-                                );
-                            }
-                            interaction.pending = Some(PendingTransition::Dragging {
-                                state_id: node.id,
-                                offset: cursor_pos - node.position,
-                                moved: false,
-                            });
-                            return (canvas::event::Status::Captured, None);
-                        }
-                        if let Some(pair) = clicked_transition {
-                            let double = now.duration_since(last_click_time) < DOUBLE_CLICK
-                                && last_clicked_transition == Some(pair);
-                            interaction.pending = Some(PendingTransition::ClickTracking {
-                                last_click_time: now,
-                                last_clicked_state: None,
-                                last_clicked_transition: Some(pair),
-                            });
-                            let message = if double {
-                                CanvasMessage::TransitionDoubleClicked(pair)
-                            } else {
-                                CanvasMessage::TransitionClicked(pair)
-                            };
-                            return (canvas::event::Status::Captured, Some(message));
-                        }
-                        interaction.pending = Some(PendingTransition::Panning {
-                            origin_scroll: scroll,
-                            cursor_start: screen_pos,
-                        });
-                        (canvas::event::Status::Captured, None)
-                    }
-                    EditorTool::State => {
-                        interaction.pending = None;
-                        if hit.is_none() {
-                            let label = format!("q{}", self.state.get_current_next_id());
-                            let state_node = StateNode::new_with_temp_id(cursor_pos, 30.0, label);
-                            (canvas::event::Status::Captured, Some(CanvasMessage::AddState(state_node)))
-                        } else {
-                            (canvas::event::Status::Captured, None)
-                        }
-                    }
-                    EditorTool::Transition => match interaction.pending.take() {
-                        Some(PendingTransition::Start { from_state_id, from_point }) => {
-                            if let Some(to_node) = clicked_node {
-                                (
-                                    canvas::event::Status::Captured,
-                                    Some(CanvasMessage::RequestTransitionLabel {
-                                        from_state_id,
-                                        to_state_id: to_node.id,
-                                        from_point,
-                                        to_point: to_node.position,
-                                    }),
-                                )
-                            } else {
-                                (canvas::event::Status::Captured, None)
-                            }
-                        }
-                        _ => {
-                            if let Some(node) = clicked_node {
-                                interaction.pending = Some(PendingTransition::Start {
-                                    from_state_id: node.id,
-                                    from_point: node.position,
-                                });
-                            }
-                            (canvas::event::Status::Captured, None)
-                        }
-                    },
-                    EditorTool::Delete => {
-                        interaction.pending = None;
-                        interaction.hover = None;
-                        match hit {
-                            Some(Hit::State(id)) => {
-                                (canvas::event::Status::Captured, Some(CanvasMessage::StateClicked(id)))
-                            }
-                            Some(Hit::Transition(pair)) => {
-                                (canvas::event::Status::Captured, Some(CanvasMessage::TransitionClicked(pair)))
-                            }
-                            None => (canvas::event::Status::Captured, None),
-                        }
-                    }
-                }
-            }
-            Event::Mouse(mouse::Event::CursorMoved { .. }) => {
-                if (viewport.width - self.known_viewport.width).abs() > 0.5
-                    || (viewport.height - self.known_viewport.height).abs() > 0.5
-                {
-                    return (canvas::event::Status::Ignored, Some(CanvasMessage::Viewport(viewport)));
-                }
-                let (Some(cursor_pos), Some(screen_pos)) = (world_position, cursor_position) else {
-                    interaction.hover = None;
-                    return (canvas::event::Status::Ignored, None);
-                };
-                let healed = clamp_scroll(scroll, self.states, viewport, zoom);
-                if Self::changed(healed, scroll)
-                    && !matches!(interaction.pending, Some(PendingTransition::Dragging { .. }))
-                {
-                    return (canvas::event::Status::Captured, Some(CanvasMessage::Scrolled(healed)));
-                }
-                match interaction.pending {
-                    Some(PendingTransition::Dragging { state_id, offset, .. }) => {
-                        interaction.pending = Some(PendingTransition::Dragging { state_id, offset, moved: true });
-                        interaction.hover = Some(Hit::State(state_id));
-                        (
-                            canvas::event::Status::Captured,
-                            Some(CanvasMessage::MoveState { state_id, new_position: cursor_pos - offset }),
-                        )
-                    }
-                    Some(PendingTransition::Panning { origin_scroll, cursor_start }) => {
-                        let drag = screen_pos - cursor_start;
-                        let new_scroll = clamp_scroll(
-                            Vector::new(origin_scroll.x - drag.x / zoom, origin_scroll.y - drag.y / zoom),
-                            self.states,
-                            viewport,
-                            zoom,
-                        );
-                        if Self::changed(new_scroll, scroll) {
-                            (canvas::event::Status::Captured, Some(CanvasMessage::Scrolled(new_scroll)))
-                        } else {
-                            (canvas::event::Status::Captured, None)
-                        }
-                    }
-                    Some(PendingTransition::Start { .. }) => {
-                        interaction.hover = self.hit_test(cursor_pos).filter(|hit| matches!(hit, Hit::State(_)));
-                        (canvas::event::Status::Captured, None)
-                    }
-                    _ => {
-                        interaction.hover = match self.state.active_tool() {
-                            EditorTool::State => None,
-                            _ => self.hit_test(cursor_pos),
-                        };
-                        (canvas::event::Status::Ignored, None)
-                    }
-                }
-            }
+            Event::Mouse(mouse::Event::WheelScrolled { delta }) => match screen {
+                Some(anchor) => self.wheel(interaction, delta, anchor, viewport),
+                None => IGNORED,
+            },
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => match screen {
+                Some(screen) => self.press(interaction, screen),
+                None => IGNORED,
+            },
+            Event::Mouse(mouse::Event::CursorMoved { .. }) => self.cursor_moved(interaction, screen, viewport),
             Event::Mouse(mouse::Event::CursorLeft) => {
                 interaction.hover = None;
-                (canvas::event::Status::Ignored, None)
+                IGNORED
             }
-            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => match interaction.pending {
-                Some(PendingTransition::Dragging { state_id, moved, .. }) => {
-                    interaction.pending = if moved {
-                        None
-                    } else {
-                        Some(PendingTransition::ClickTracking {
-                            last_click_time: iced::time::Instant::now(),
-                            last_clicked_state: Some(state_id),
-                            last_clicked_transition: None,
-                        })
-                    };
-                    (canvas::event::Status::Captured, None)
-                }
-                Some(PendingTransition::Panning { .. }) => {
-                    interaction.pending = None;
-                    (canvas::event::Status::Captured, None)
-                }
-                _ => (canvas::event::Status::Ignored, None),
-            },
-            _ => (canvas::event::Status::Ignored, None),
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => Self::release(interaction),
+            _ => IGNORED,
         }
     }
 
@@ -316,9 +255,10 @@ impl canvas::Program<CanvasMessage> for StateMachine<'_> {
         if !self.interactive || !cursor.is_over(bounds) {
             return mouse::Interaction::default();
         }
-        match (self.state.active_tool(), interaction.pending, interaction.hover) {
-            (_, Some(PendingTransition::Dragging { .. }), _)
-            | (_, Some(PendingTransition::Panning { .. }), _) => mouse::Interaction::Grabbing,
+        match (self.state.active_tool(), interaction.gesture, interaction.hover) {
+            (_, Some(Gesture::Dragging { .. }), _) | (_, Some(Gesture::Panning { .. }), _) => {
+                mouse::Interaction::Grabbing
+            }
             (EditorTool::Delete, _, Some(_)) => mouse::Interaction::Pointer,
             (EditorTool::Delete, _, None) => mouse::Interaction::Crosshair,
             (EditorTool::State, _, _) => mouse::Interaction::Crosshair,
@@ -340,51 +280,7 @@ impl canvas::Program<CanvasMessage> for StateMachine<'_> {
     ) -> Vec<Geometry> {
         let p = theme::palette(theme);
         let scroll = self.state.scroll();
-        let zoom = self.zoom();
-        let tint = self.family.color(p);
-
-        let grid = self.state.grid_cache.draw(renderer, bounds.size(), |frame| {
-            frame.fill(&Path::rectangle(Point::ORIGIN, frame.size()), p.canvas_bg);
-            frame.scale(zoom);
-            frame.translate(-scroll);
-            self.draw_grid(frame, p, bounds.size());
-        });
-
-        let content = self.state.cache.draw(renderer, bounds.size(), |frame| {
-            frame.scale(zoom);
-            frame.translate(-scroll);
-
-            let node_by_id = self.node_by_id();
-            for (&(from, to), labels) in self.transitions.iter() {
-                let Some(geometry) = self.edge_geometry(&node_by_id, from, to) else { continue };
-                frame.stroke(
-                    &geometry.shaft_path(),
-                    Stroke::default()
-                        .with_width(1.75)
-                        .with_color(p.edge)
-                        .with_line_cap(LineCap::Round),
-                );
-                frame.fill(&geometry.arrowhead_path(), p.edge);
-                for (rect, label) in geometry.label_rects(labels) {
-                    draw_label_pill(frame, p, rect, label, p.border_soft, p.label_bg);
-                }
-            }
-
-            for node in self.states {
-                node.draw(
-                    frame,
-                    p,
-                    tint,
-                    NodeLook {
-                        initial: self.initial_state == Some(node.id),
-                        accepting: self.final_states.contains(&node.id),
-                        active: self.active_states.contains(&node.id),
-                    },
-                );
-            }
-        });
-
-        let mut geometries = vec![grid, content];
+        let zoom = self.state.zoom();
 
         let mut overlay = Frame::new(renderer, bounds.size());
         let deleting = self.state.is_deletion_mode();
@@ -397,10 +293,8 @@ impl canvas::Program<CanvasMessage> for StateMachine<'_> {
                 Some(Hit::State(id)) => {
                     if let Some(node) = node_by_id.get(&id) {
                         frame.stroke(
-                            &Path::circle(node.position, node.radius + 5.0),
-                            Stroke::default()
-                                .with_width(2.5)
-                                .with_color(theme::alpha(highlight, 0.75)),
+                            &Path::circle(node.position, StateNode::RADIUS + 5.0),
+                            Stroke::default().with_width(2.5).with_color(theme::alpha(highlight, 0.75)),
                         );
                     }
                 }
@@ -408,29 +302,19 @@ impl canvas::Program<CanvasMessage> for StateMachine<'_> {
                     if let (Some(geometry), Some(labels)) =
                         (self.edge_geometry(&node_by_id, from, to), self.transitions.get(&(from, to)))
                     {
-                        frame.stroke(
-                            &geometry.shaft_path(),
-                            Stroke::default()
-                                .with_width(3.0)
-                                .with_color(highlight)
-                                .with_line_cap(LineCap::Round),
-                        );
-                        frame.fill(&geometry.arrowhead_path(), highlight);
                         let fill = if deleting { p.danger_soft } else { p.accent_soft };
-                        for (rect, label) in geometry.label_rects(labels) {
-                            draw_label_pill(frame, p, rect, label, highlight, fill);
-                        }
+                        let look = EdgeLook { width: 3.0, line: highlight, pill_stroke: highlight, pill_fill: fill };
+                        draw_edge(frame, p, &geometry, labels, look);
                     }
                 }
                 None => {}
             }
 
-            if let (Some(PendingTransition::Start { from_state_id, from_point }), Some(cursor_position)) =
-                (interaction.pending, cursor.position_in(bounds))
+            if let (Some(Gesture::Connecting { from_point, .. }), Some(cursor_position)) =
+                (interaction.gesture, cursor.position_in(bounds))
             {
-                let target = self.to_world(cursor_position);
-                let radius = node_by_id.get(&from_state_id).map(|node| node.radius).unwrap_or(30.0);
-                let start = from_point + (target - from_point).unit() * radius;
+                let target = self.state.to_world(cursor_position);
+                let start = from_point + (target - from_point).unit() * StateNode::RADIUS;
                 frame.stroke(
                     &Path::line(start, target),
                     Stroke {
@@ -456,39 +340,62 @@ impl canvas::Program<CanvasMessage> for StateMachine<'_> {
                 ] {
                     overlay.stroke(
                         &Path::line(center + a, center + b),
-                        Stroke::default().with_width(1.8).with_color(p.surface).with_line_cap(LineCap::Round),
+                        Stroke::default().with_width(1.8).with_color(p.on_danger).with_line_cap(LineCap::Round),
                     );
                 }
             }
         }
 
         self.draw_scrollbars(&mut overlay, p, bounds.size());
-        geometries.push(overlay.into_geometry());
-        geometries
+        vec![overlay.into_geometry()]
     }
 }
 
 impl StateMachine<'_> {
-    fn draw_grid(&self, frame: &mut Frame, p: &Palette, viewport: Size) {
-        let zoom = self.zoom();
-        let scroll = self.state.scroll();
-        let spacing = if zoom < 0.7 { GRID_SPACING * 2.0 } else { GRID_SPACING };
-        let visible = Size::new(viewport.width / zoom, viewport.height / zoom);
-        let start_x = (scroll.x / spacing).floor() * spacing;
-        let start_y = (scroll.y / spacing).floor() * spacing;
-        let side = 2.4 / zoom.max(0.8);
-        let dots = Path::new(|b| {
-            let mut y = start_y;
-            while y <= scroll.y + visible.height + spacing {
-                let mut x = start_x;
-                while x <= scroll.x + visible.width + spacing {
-                    b.rectangle(Point::new(x - side / 2.0, y - side / 2.0), Size::new(side, side));
-                    x += spacing;
-                }
-                y += spacing;
+    /// The edges `(from, to)` that pass `include`, in world coordinates.
+    pub(crate) fn draw_edges(&self, frame: &mut Frame, p: &Palette, include: impl Fn(usize, usize) -> bool) {
+        let node_by_id = self.node_by_id();
+        for (&(from, to), labels) in self.transitions.iter() {
+            if !include(from, to) {
+                continue;
             }
+            if let Some(geometry) = self.edge_geometry(&node_by_id, from, to) {
+                let look = EdgeLook { width: 1.75, line: p.edge, pill_stroke: p.border_soft, pill_fill: p.label_bg };
+                draw_edge(frame, p, &geometry, labels, look);
+            }
+        }
+    }
+
+    /// The states that pass `include`, in world coordinates.
+    pub(crate) fn draw_nodes(&self, frame: &mut Frame, p: &Palette, include: impl Fn(usize) -> bool) {
+        let tint = theme::family_color(p, self.family);
+        for node in self.states.iter().filter(|node| include(node.id)) {
+            node.draw(
+                frame,
+                p,
+                tint,
+                NodeLook {
+                    initial: self.initial_state == Some(node.id),
+                    accepting: self.final_states.contains(&node.id),
+                    active: self.active_states.contains(&node.id),
+                },
+            );
+        }
+    }
+
+    /// World rectangle covering everything `draw_edges` and `draw_nodes` paint.
+    pub(crate) fn content_extent(&self) -> Rectangle {
+        // Reaches past the circle to the active glow, drop shadow and initial pointer.
+        const NODE_REACH: f32 = StateNode::RADIUS + 24.0;
+        const STROKE_ALLOWANCE: f32 = 3.0;
+        let node_by_id = self.node_by_id();
+        let nodes = self.states.iter().map(|node| {
+            Rectangle::new(node.position - Vector::new(NODE_REACH, NODE_REACH), Size::new(2.0 * NODE_REACH, 2.0 * NODE_REACH))
         });
-        frame.fill(&dots, p.canvas_grid);
+        let edges = self.transitions.iter().filter_map(|(&(from, to), labels)| {
+            Some(self.edge_geometry(&node_by_id, from, to)?.extent(labels).expand(STROKE_ALLOWANCE))
+        });
+        nodes.chain(edges).reduce(|a, b| a.union(&b)).unwrap_or(Rectangle::new(Point::ORIGIN, Size::new(1.0, 1.0)))
     }
 
     fn draw_scrollbars(&self, frame: &mut Frame, p: &Palette, view: Size) {
@@ -498,10 +405,8 @@ impl StateMachine<'_> {
         if self.states.is_empty() {
             return;
         }
-        let zoom = self.zoom();
-        let scroll = self.state.scroll();
         let content = content_bounds(self.states);
-        let visible = Rectangle::new(Point::new(scroll.x, scroll.y), Size::new(view.width / zoom, view.height / zoom));
+        let visible = self.state.visible_world(view);
         let color = theme::alpha(p.text_faint, 0.55);
 
         let span = |content_start: f32, content_len: f32, view_start: f32, view_len: f32| {
@@ -540,19 +445,33 @@ impl StateMachine<'_> {
     }
 }
 
-fn draw_label_pill(frame: &mut Frame, p: &Palette, rect: Rectangle, label: &str, stroke: iced::Color, fill: iced::Color) {
-    let pill = Path::rounded_rectangle(rect.position(), rect.size(), (rect.height / 2.0).into());
-    frame.fill(&pill, fill);
-    frame.stroke(&pill, Stroke::default().with_width(1.0).with_color(stroke));
-    frame.fill_text(Text {
-        content: label.to_string(),
-        position: rect.center(),
-        color: p.text,
-        size: LABEL_FONT_SIZE.into(),
-        font: theme::MONO,
-        shaping: crate::gui::widgets::shaping_for(label),
-        horizontal_alignment: alignment::Horizontal::Center,
-        vertical_alignment: alignment::Vertical::Center,
-        ..Text::default()
-    });
+struct EdgeLook {
+    width: f32,
+    line: Color,
+    pill_stroke: Color,
+    pill_fill: Color,
+}
+
+fn draw_edge(frame: &mut Frame, p: &Palette, geometry: &EdgeGeometry, labels: &IndexSet<String>, look: EdgeLook) {
+    frame.stroke(
+        &geometry.shaft_path(),
+        Stroke::default().with_width(look.width).with_color(look.line).with_line_cap(LineCap::Round),
+    );
+    frame.fill(&geometry.arrowhead_path(), look.line);
+    for (rect, label) in geometry.label_rects(labels) {
+        let pill = Path::rounded_rectangle(rect.position(), rect.size(), (rect.height / 2.0).into());
+        frame.fill(&pill, look.pill_fill);
+        frame.stroke(&pill, Stroke::default().with_width(1.0).with_color(look.pill_stroke));
+        frame.fill_text(Text {
+            content: label.to_string(),
+            position: rect.center(),
+            color: p.text,
+            size: LABEL_FONT_SIZE.into(),
+            font: theme::MONO,
+            shaping: theme::shaping_for(label),
+            horizontal_alignment: alignment::Horizontal::Center,
+            vertical_alignment: alignment::Vertical::Center,
+            ..Text::default()
+        });
+    }
 }

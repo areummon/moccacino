@@ -1,13 +1,12 @@
 use iced::widget::canvas::{Frame, Path, Stroke, Text};
 use iced::{alignment, Color, Point, Vector};
 
-use crate::gui::theme::{self, Palette};
+use crate::theme::{self, Palette};
 
 #[derive(Debug, Clone)]
 pub struct StateNode {
     pub id: usize,
     pub position: Point,
-    pub radius: f32,
     pub label: String,
 }
 
@@ -19,17 +18,15 @@ pub(crate) struct NodeLook {
 }
 
 impl StateNode {
-    pub fn new(id: usize, position: Point, radius: f32, label: String) -> Self {
-        StateNode { id, position, radius, label }
-    }
+    pub(crate) const RADIUS: f32 = 30.0;
 
-    pub fn new_with_temp_id(position: Point, radius: f32, label: String) -> Self {
-        StateNode { id: 0, position, radius, label }
+    pub fn new(id: usize, position: Point, label: String) -> Self {
+        StateNode { id, position, label }
     }
 
     pub(crate) fn draw(&self, frame: &mut Frame, p: &Palette, tint: Color, look: NodeLook) {
         let center = self.position;
-        let r = self.radius;
+        let r = Self::RADIUS;
 
         if look.active {
             frame.fill(&Path::circle(center, r + 11.0), theme::alpha(p.accent, 0.14));
@@ -84,7 +81,7 @@ impl StateNode {
             color: p.text,
             size: 14.0.into(),
             font: theme::SEMIBOLD,
-            shaping: crate::gui::widgets::shaping_for(&self.label),
+            shaping: theme::shaping_for(&self.label),
             horizontal_alignment: alignment::Horizontal::Center,
             vertical_alignment: alignment::Vertical::Center,
             ..Text::default()

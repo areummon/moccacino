@@ -1,6 +1,7 @@
 
 use iced::font::Weight;
 use iced::widget::{button, container, rule, scrollable, text, text_editor, text_input};
+use crate::family::Family;
 use iced::{Background, Border, Color, Font, Shadow, Theme, Vector};
 
 const fn hex(rgb: u32) -> Color {
@@ -21,11 +22,20 @@ pub(crate) const SEMIBOLD: Font = Font { weight: Weight::Semibold, ..UI };
 pub(crate) const BOLD: Font = Font { weight: Weight::Bold, ..UI };
 pub(crate) const MONO: Font = Font::with_name("JetBrains Mono");
 
-pub(crate) const RADIUS_SM: f32 = 8.0;
-pub(crate) const RADIUS_MD: f32 = 10.0;
-pub(crate) const RADIUS_LG: f32 = 14.0;
-pub(crate) const RADIUS_XL: f32 = 18.0;
-pub(crate) const RADIUS_PILL: f32 = 999.0;
+/// The type scale. GUI text sizes come only from here, so equal roles read equal.
+pub(crate) const TEXT_XS: f32 = 11.0;
+pub(crate) const TEXT_SM: f32 = 12.0;
+pub(crate) const TEXT_MD: f32 = 13.0;
+pub(crate) const TEXT_BASE: f32 = 14.0;
+pub(crate) const TEXT_LG: f32 = 16.0;
+pub(crate) const TEXT_XL: f32 = 18.0;
+pub(crate) const TEXT_DISPLAY: f32 = 22.0;
+
+const RADIUS_SM: f32 = 8.0;
+const RADIUS_MD: f32 = 10.0;
+const RADIUS_LG: f32 = 14.0;
+const RADIUS_XL: f32 = 18.0;
+const RADIUS_PILL: f32 = 999.0;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Palette {
@@ -48,6 +58,7 @@ pub(crate) struct Palette {
     pub(crate) success_soft: Color,
     pub(crate) danger: Color,
     pub(crate) danger_soft: Color,
+    pub(crate) on_danger: Color,
     pub(crate) warning: Color,
     pub(crate) warning_soft: Color,
     pub(crate) shadow: Color,
@@ -65,7 +76,7 @@ pub(crate) struct Palette {
     pub(crate) family_grammar: Color,
 }
 
-pub(crate) const LIGHT: Palette = Palette {
+const LIGHT: Palette = Palette {
     bg: hex(0xF6EFE4),
     surface: hex(0xFFFBF5),
     raised: hex(0xFBF4EA),
@@ -85,6 +96,7 @@ pub(crate) const LIGHT: Palette = Palette {
     success_soft: hex(0xDDF0E2),
     danger: hex(0xC25F5F),
     danger_soft: hex(0xFADEDC),
+    on_danger: hex(0xFFFBF5),
     warning: hex(0xB5842A),
     warning_soft: hex(0xFAEFD2),
     shadow: hexa(0x5A4432, 0.14),
@@ -102,7 +114,7 @@ pub(crate) const LIGHT: Palette = Palette {
     family_grammar: hex(0xF3DE8A),
 };
 
-pub(crate) const DARK: Palette = Palette {
+const DARK: Palette = Palette {
     bg: hex(0x1F1A17),
     surface: hex(0x2A2420),
     raised: hex(0x332C27),
@@ -122,6 +134,7 @@ pub(crate) const DARK: Palette = Palette {
     success_soft: hex(0x2D3E32),
     danger: hex(0xEE9A9A),
     danger_soft: hex(0x4A2D2D),
+    on_danger: hex(0x1F1A17),
     warning: hex(0xEBC477),
     warning_soft: hex(0x463B25),
     shadow: hexa(0x000000, 0.38),
@@ -188,43 +201,12 @@ pub(crate) fn palette(theme: &Theme) -> &'static Palette {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Family {
-    Finite,
-    Pushdown,
-    Turing,
-    Grammar,
-}
-
-impl Family {
-    pub(crate) const ALL: [Family; 4] =
-        [Family::Finite, Family::Turing, Family::Pushdown, Family::Grammar];
-
-    pub(crate) fn color(self, p: &Palette) -> Color {
-        match self {
-            Family::Finite => p.family_finite,
-            Family::Pushdown => p.family_pda,
-            Family::Turing => p.family_tm,
-            Family::Grammar => p.family_grammar,
-        }
-    }
-
-    pub(crate) fn title(self) -> &'static str {
-        match self {
-            Family::Finite => "Finite Automaton",
-            Family::Pushdown => "Pushdown Automaton",
-            Family::Turing => "Turing Machine",
-            Family::Grammar => "Grammar",
-        }
-    }
-
-    pub(crate) fn blurb(self) -> &'static str {
-        match self {
-            Family::Finite => "DFAs and NFAs, regex, minimization",
-            Family::Pushdown => "Stack-powered context-free recognizers",
-            Family::Turing => "Tapes, heads and multi-tape machines",
-            Family::Grammar => "Context-free rules, CNF and derivations",
-        }
+pub(crate) fn family_color(p: &Palette, family: Family) -> Color {
+    match family {
+        Family::Finite => p.family_finite,
+        Family::Pushdown => p.family_pda,
+        Family::Turing => p.family_tm,
+        Family::Grammar => p.family_grammar,
     }
 }
 
@@ -254,6 +236,23 @@ fn border(color: Color, width: f32, radius: f32) -> Border {
         color,
         width,
         radius: radius.into(),
+    }
+}
+
+fn flat(background: Color, text_color: Color, radius: f32) -> button::Style {
+    button::Style {
+        background: Some(background.into()),
+        text_color,
+        border: border(Color::TRANSPARENT, 0.0, radius),
+        shadow: Shadow::default(),
+    }
+}
+
+fn pill(color: Color) -> container::Style {
+    container::Style {
+        background: Some(color.into()),
+        border: border(Color::TRANSPARENT, 0.0, RADIUS_PILL),
+        ..Default::default()
     }
 }
 
@@ -305,16 +304,10 @@ pub(crate) fn button_secondary(theme: &Theme, status: button::Status) -> button:
 
 pub(crate) fn button_ghost(theme: &Theme, status: button::Status) -> button::Style {
     let p = palette(theme);
-    let (background, text_color) = match status {
-        button::Status::Hovered | button::Status::Pressed => (p.hover, p.text),
-        button::Status::Disabled => (Color::TRANSPARENT, p.text_faint),
-        _ => (Color::TRANSPARENT, p.text),
-    };
-    button::Style {
-        background: Some(background.into()),
-        text_color,
-        border: border(Color::TRANSPARENT, 0.0, RADIUS_SM),
-        shadow: Shadow::default(),
+    match status {
+        button::Status::Hovered | button::Status::Pressed => flat(p.hover, p.text, RADIUS_SM),
+        button::Status::Disabled => flat(Color::TRANSPARENT, p.text_faint, RADIUS_SM),
+        _ => flat(Color::TRANSPARENT, p.text, RADIUS_SM),
     }
 }
 
@@ -324,12 +317,7 @@ pub(crate) fn button_danger(theme: &Theme, status: button::Status) -> button::St
         button::Status::Hovered => mix(p.danger, p.text, 0.12),
         _ => p.danger,
     };
-    button::Style {
-        background: Some(background.into()),
-        text_color: if theme.extended_palette().is_dark { p.bg } else { p.surface },
-        border: border(Color::TRANSPARENT, 0.0, RADIUS_MD),
-        shadow: Shadow::default(),
-    }
+    flat(background, p.on_danger, RADIUS_MD)
 }
 
 pub(crate) fn button_danger_ghost(theme: &Theme, status: button::Status) -> button::Style {
@@ -338,43 +326,26 @@ pub(crate) fn button_danger_ghost(theme: &Theme, status: button::Status) -> butt
         button::Status::Hovered | button::Status::Pressed => p.danger_soft,
         _ => Color::TRANSPARENT,
     };
-    button::Style {
-        background: Some(background.into()),
-        text_color: p.danger,
-        border: border(Color::TRANSPARENT, 0.0, RADIUS_SM),
-        shadow: Shadow::default(),
-    }
+    flat(background, p.danger, RADIUS_SM)
 }
 
 pub(crate) fn menu_trigger(open: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
     move |theme, status| {
         let p = palette(theme);
-        let background = match status {
-            _ if open => p.accent_soft,
-            button::Status::Hovered | button::Status::Pressed => p.hover,
-            _ => Color::TRANSPARENT,
-        };
-        button::Style {
-            background: Some(background.into()),
-            text_color: if open { p.accent_strong } else { p.text },
-            border: border(Color::TRANSPARENT, 0.0, RADIUS_SM),
-            shadow: Shadow::default(),
+        match status {
+            _ if open => flat(p.accent_soft, p.accent_strong, RADIUS_SM),
+            button::Status::Hovered | button::Status::Pressed => flat(p.hover, p.text, RADIUS_SM),
+            _ => flat(Color::TRANSPARENT, p.text, RADIUS_SM),
         }
     }
 }
 
 pub(crate) fn menu_item(theme: &Theme, status: button::Status) -> button::Style {
     let p = palette(theme);
-    let (background, text_color) = match status {
-        button::Status::Hovered | button::Status::Pressed => (p.accent_soft, p.text),
-        button::Status::Disabled => (Color::TRANSPARENT, p.text_faint),
-        _ => (Color::TRANSPARENT, p.text),
-    };
-    button::Style {
-        background: Some(background.into()),
-        text_color,
-        border: border(Color::TRANSPARENT, 0.0, RADIUS_SM),
-        shadow: Shadow::default(),
+    match status {
+        button::Status::Hovered | button::Status::Pressed => flat(p.accent_soft, p.text, RADIUS_SM),
+        button::Status::Disabled => flat(Color::TRANSPARENT, p.text_faint, RADIUS_SM),
+        _ => flat(Color::TRANSPARENT, p.text, RADIUS_SM),
     }
 }
 
@@ -402,16 +373,10 @@ pub(crate) fn toggle_pill(active: bool) -> impl Fn(&Theme, button::Status) -> bu
     move |theme, status| {
         let p = palette(theme);
         let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
-        let (background, text_color) = match (active, hovered) {
-            (true, _) => (p.accent_soft, p.accent_strong),
-            (false, true) => (p.hover, p.text),
-            (false, false) => (Color::TRANSPARENT, p.text_dim),
-        };
-        button::Style {
-            background: Some(background.into()),
-            text_color,
-            border: border(Color::TRANSPARENT, 0.0, RADIUS_PILL),
-            shadow: Shadow::default(),
+        match (active, hovered) {
+            (true, _) => flat(p.accent_soft, p.accent_strong, RADIUS_PILL),
+            (false, true) => flat(p.hover, p.text, RADIUS_PILL),
+            (false, false) => flat(Color::TRANSPARENT, p.text_dim, RADIUS_PILL),
         }
     }
 }
@@ -442,15 +407,9 @@ pub(crate) fn option_card(selected: bool, tint: Color) -> impl Fn(&Theme, button
 
 pub(crate) fn tab_close(theme: &Theme, status: button::Status) -> button::Style {
     let p = palette(theme);
-    let (background, text_color) = match status {
-        button::Status::Hovered | button::Status::Pressed => (p.danger_soft, p.danger),
-        _ => (Color::TRANSPARENT, p.text_faint),
-    };
-    button::Style {
-        background: Some(background.into()),
-        text_color,
-        border: border(Color::TRANSPARENT, 0.0, RADIUS_PILL),
-        shadow: Shadow::default(),
+    match status {
+        button::Status::Hovered | button::Status::Pressed => flat(p.danger_soft, p.danger, RADIUS_PILL),
+        _ => flat(Color::TRANSPARENT, p.text_faint, RADIUS_PILL),
     }
 }
 
@@ -459,14 +418,6 @@ pub(crate) fn app_background(theme: &Theme) -> container::Style {
     container::Style {
         background: Some(p.bg.into()),
         text_color: Some(p.text),
-        ..Default::default()
-    }
-}
-
-pub(crate) fn header(theme: &Theme) -> container::Style {
-    let p = palette(theme);
-    container::Style {
-        background: Some(p.bg.into()),
         ..Default::default()
     }
 }
@@ -555,71 +506,84 @@ pub(crate) enum Tone {
     Warning,
 }
 
-pub(crate) fn chip(tone: Tone) -> impl Fn(&Theme) -> container::Style {
-    move |theme| {
-        let p = palette(theme);
-        let (background, text_color) = match tone {
+impl Tone {
+    fn colors(self, p: &Palette) -> (Color, Color) {
+        match self {
             Tone::Neutral => (p.hover, p.text_dim),
             Tone::Accent => (p.accent_soft, p.accent_strong),
             Tone::Success => (p.success_soft, p.success),
             Tone::Danger => (p.danger_soft, p.danger),
             Tone::Warning => (p.warning_soft, p.warning),
-        };
-        container::Style {
-            background: Some(background.into()),
-            text_color: Some(text_color),
-            border: border(Color::TRANSPARENT, 0.0, RADIUS_PILL),
-            ..Default::default()
         }
+    }
+}
+
+pub(crate) fn chip(tone: Tone) -> impl Fn(&Theme) -> container::Style {
+    move |theme| {
+        let (background, text_color) = tone.colors(palette(theme));
+        container::Style { text_color: Some(text_color), ..pill(background) }
     }
 }
 
 pub(crate) fn family_dot(family: Family) -> impl Fn(&Theme) -> container::Style {
-    move |theme| {
-        let p = palette(theme);
-        container::Style {
-            background: Some(family.color(p).into()),
-            border: border(Color::TRANSPARENT, 0.0, RADIUS_PILL),
-            ..Default::default()
-        }
-    }
+    move |theme| pill(family_color(palette(theme), family))
 }
 
 pub(crate) fn unsaved_dot(theme: &Theme) -> container::Style {
-    container::Style {
-        background: Some(palette(theme).accent_strong.into()),
-        border: border(Color::TRANSPARENT, 0.0, RADIUS_PILL),
-        ..Default::default()
-    }
-}
-
-pub(crate) fn family_badge(family: Family) -> impl Fn(&Theme) -> container::Style {
-    move |theme| {
-        let p = palette(theme);
-        container::Style {
-            background: Some(mix(p.surface, family.color(p), 0.55).into()),
-            border: border(Color::TRANSPARENT, 0.0, RADIUS_PILL),
-            ..Default::default()
-        }
-    }
+    pill(palette(theme).accent_strong)
 }
 
 pub(crate) fn toast(tone: Tone) -> impl Fn(&Theme) -> container::Style {
     move |theme| {
         let p = palette(theme);
-        let stripe = match tone {
-            Tone::Neutral => p.border,
-            Tone::Accent => p.accent,
-            Tone::Success => p.success,
-            Tone::Danger => p.danger,
-            Tone::Warning => p.warning,
-        };
+        let (_, stripe) = tone.colors(p);
         container::Style {
             background: Some(mix(p.surface, stripe, 0.10).into()),
             text_color: Some(p.text),
             border: border(mix(p.border_soft, stripe, 0.45), 1.0, RADIUS_LG),
             shadow: soft_shadow(p, 6.0, 20.0),
         }
+    }
+}
+
+fn field_style(theme: &Theme, focused: bool, hovered: bool) -> text_input::Style {
+    let p = palette(theme);
+    let (stroke, width) = match (focused, hovered) {
+        (true, _) => (p.accent, 1.5),
+        (false, true) => (p.text_faint, 1.0),
+        (false, false) => (p.border, 1.0),
+    };
+    text_input::Style {
+        background: Background::Color(p.surface),
+        border: border(stroke, width, RADIUS_MD),
+        icon: p.text_dim,
+        placeholder: p.text_faint,
+        value: p.text,
+        selection: p.selection,
+    }
+}
+
+pub(crate) fn input(theme: &Theme, status: text_input::Status) -> text_input::Style {
+    field_style(
+        theme,
+        matches!(status, text_input::Status::Focused),
+        matches!(status, text_input::Status::Hovered),
+    )
+}
+
+pub(crate) fn editor(theme: &Theme, status: text_editor::Status) -> text_editor::Style {
+    let style = field_style(
+        theme,
+        matches!(status, text_editor::Status::Focused),
+        matches!(status, text_editor::Status::Hovered),
+    );
+    text_editor::Style {
+        background: style.background,
+        border: style.border,
+        icon: style.icon,
+        placeholder: style.placeholder,
+        value: style.value,
+        selection: style.selection,
     }
 }
 
@@ -639,40 +603,6 @@ pub(crate) fn cell(focus: bool, spent: bool) -> impl Fn(&Theme) -> container::St
             border: border(stroke, if focus { 1.5 } else { 1.0 }, 6.0),
             ..Default::default()
         }
-    }
-}
-
-pub(crate) fn input(theme: &Theme, status: text_input::Status) -> text_input::Style {
-    let p = palette(theme);
-    let (stroke, width) = match status {
-        text_input::Status::Focused => (p.accent, 1.5),
-        text_input::Status::Hovered => (p.text_faint, 1.0),
-        _ => (p.border, 1.0),
-    };
-    text_input::Style {
-        background: Background::Color(p.surface),
-        border: border(stroke, width, RADIUS_MD),
-        icon: p.text_dim,
-        placeholder: p.text_faint,
-        value: p.text,
-        selection: p.selection,
-    }
-}
-
-pub(crate) fn editor(theme: &Theme, status: text_editor::Status) -> text_editor::Style {
-    let p = palette(theme);
-    let (stroke, width) = match status {
-        text_editor::Status::Focused => (p.accent, 1.5),
-        text_editor::Status::Hovered => (p.text_faint, 1.0),
-        _ => (p.border, 1.0),
-    };
-    text_editor::Style {
-        background: Background::Color(p.surface),
-        border: border(stroke, width, RADIUS_MD),
-        icon: p.text_dim,
-        placeholder: p.text_faint,
-        value: p.text,
-        selection: p.selection,
     }
 }
 
@@ -711,4 +641,15 @@ pub(crate) fn scroll_subtle(theme: &Theme, status: scrollable::Status) -> scroll
         style.vertical_rail.scroller.color = Color::TRANSPARENT;
     }
     style
+}
+
+pub(crate) fn shaping_for(content: &str) -> text::Shaping {
+    let covered = content.chars().all(|c| {
+        (c as u32) < 0x100 || (0x2000..=0x206F).contains(&(c as u32)) || c == '\u{2212}'
+    });
+    if covered {
+        text::Shaping::Basic
+    } else {
+        text::Shaping::Advanced
+    }
 }

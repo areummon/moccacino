@@ -1,21 +1,30 @@
-use iced::widget::{button, column, container, horizontal_space, row, scrollable, text_input, Space};
+use iced::widget::{button, column, container, horizontal_space, mouse_area, row, scrollable, Space};
 use iced::{Alignment, Element, Length};
 
+use super::metrics::{DIALOG_CHROME_RESERVE, SHORTCUTS_TWO_COLUMN_MIN_WIDTH};
+use super::workspace::CloseRequest;
+use super::entity_loader::{PathDialog, LOAD_INPUT, SAVE_INPUT};
+use super::feature_icon::feature_icon;
 use super::icons::{icon, Icon, Ink};
 use super::message::Message;
-use super::widgets::text;
-use super::app::CloseRequest;
-use super::tab::TabMachine;
-use super::widgets::{self, dialog_card, modal_layer, DIALOG_LG, DIALOG_MD, DIALOG_SM};
-use crate::gui::theme::{self, Family};
+use super::message::Modal;
+use super::shortcuts::{self, Action, Section, SHORTCUTS};
+use super::widgets::{self, dialog_card, modal_layer, text, DIALOG_LG, DIALOG_MD, DIALOG_SM};
+use crate::theme;
+use crate::family::Family;
 use crate::platform;
 
 pub(crate) const EDIT_TEXT_INPUT: &str = "edit-text";
 pub(crate) const EDIT_LABEL_INPUT: &str = "edit-label";
 pub(crate) const CHECK_INPUT: &str = "check-input";
 pub(crate) const REGEX_INPUT: &str = "regex-input";
-pub(crate) const LOAD_INPUT: &str = "load-path";
-pub(crate) const SAVE_INPUT: &str = "save-path";
+
+const STARTUP_CARD_W: f32 = 250.0;
+/// Tall enough for a two-line blurb, so every card in a row matches.
+const STARTUP_CARD_H: f32 = 154.0;
+const STARTUP_COLS: usize = 2;
+const STARTUP_GAP: f32 = 14.0;
+const STARTUP_PADDING: f32 = 28.0;
 
 fn field<'a>(
     id: impl Into<String>,
@@ -24,19 +33,13 @@ fn field<'a>(
     on_input: impl Fn(String) -> Message + 'a,
     on_submit: Message,
 ) -> Element<'a, Message> {
-    text_input(placeholder, value)
-        .id(id.into())
-        .on_input(on_input)
-        .on_submit(on_submit)
-        .padding([9, 12])
-        .size(15)
-        .style(theme::input)
+    widgets::input(placeholder, value).id(id.into()).on_input(on_input).on_submit(on_submit)
         .into()
 }
 
 fn error_line<'a>(error: Option<&String>) -> Element<'a, Message> {
     match error {
-        Some(error) => row![icon(Icon::Warn, 14.0, Ink::Danger), text(error.clone()).size(13).style(theme::text_danger)]
+        Some(error) => row![icon(Icon::Warn, 14.0, Ink::Danger), text(error.clone()).size(theme::TEXT_MD).style(theme::text_danger)]
             .spacing(6)
             .align_y(Alignment::Center)
             .into(),
@@ -44,103 +47,129 @@ fn error_line<'a>(error: Option<&String>) -> Element<'a, Message> {
     }
 }
 
-fn label_hint(machine: &TabMachine) -> &'static str {
-    match machine {
-        TabMachine::Finite(_) => "A symbol such as a — leave blank for ε",
-        TabMachine::Pushdown(_) => "input;pop/push — e.g. a;Z/AZ  (ε = no-op)",
-        TabMachine::Turing(_) => "read;write/dir — e.g. 0;1/R  (dir: L, R or S)",
-        TabMachine::Grammar(_) => "",
+fn label_hint(family: Family) -> &'static str {
+    match family {
+        Family::Finite => "A symbol such as a — leave blank for ε",
+        Family::Pushdown => "input;pop/push — e.g. a;Z/AZ  (ε = no-op)",
+        Family::Turing => "read;write/dir — e.g. 0;1/R  (dir: L, R or S)",
+        Family::Grammar => "",
     }
+}
+
+fn cancel(modal: Modal) -> Element<'static, Message> {
+    widgets::ghost("Cancel", Some(Message::CloseModal(modal))).into()
+}
+
+fn modal(content: Element<'_, Message>) -> Element<'_, Message> {
+    modal_layer(content, Message::DismissModal)
+}
+
+struct PathDialogSpec {
+    modal: Modal,
+    title: &'static str,
+    subtitle: String,
+    input_id: &'static str,
+    on_input: fn(String) -> Message,
+    on_submit: Message,
+    on_browse: Message,
+    action: &'static str,
+}
+
+fn path_dialog<'a>(dialog: &PathDialog, spec: PathDialogSpec) -> Element<'a, Message> {
+    let body = column![
+        row![
+            field(spec.input_id, "/path/to/file.ce", &dialog.path, spec.on_input, spec.on_submit.clone()),
+            widgets::text_button(Some((Icon::Folder, Ink::Text)), "Browse…", Some(spec.on_browse), theme::button_secondary),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center),
+        error_line(dialog.error.as_ref()),
+    ]
+    .spacing(8);
+    modal(dialog_card(
+        spec.title,
+        Some(spec.subtitle),
+        body.into(),
+        vec![cancel(spec.modal), widgets::primary(None, spec.action, Some(spec.on_submit)).into()],
+        DIALOG_MD,
+    ))
 }
 
 impl super::app::App {
     pub(crate) fn create_load_dialog(&self) -> Element<'_, Message> {
-        let body = column![
-            row![
-                field(LOAD_INPUT, "/path/to/file.ce", &self.load_path_text, Message::LoadPathChanged, Message::LoadPathSubmitted),
-                button(widgets::labeled(Some((Icon::Folder, Ink::Text)), "Browse…"))
-                    .on_press(Message::LoadBrowseClicked)
-                    .padding([8, 12])
-                    .style(theme::button_secondary),
-            ]
-            .spacing(8)
-            .align_y(Alignment::Center),
-            error_line(self.load_dialog_error.as_ref()),
-        ]
-        .spacing(8);
-        modal_layer(dialog_card(
-            "Open computational entities",
-            Some("Every entity in the .ce file opens as its own tab.".to_string()),
-            body.into(),
-            vec![
-                widgets::ghost("Cancel", Some(Message::CancelLoadDialog)).into(),
-                widgets::primary("Open", Some(Message::LoadPathSubmitted)).into(),
-            ],
-            DIALOG_MD,
-        ))
+        let Some(dialog) = &self.load_dialog else {
+            return Space::new(0, 0).into();
+        };
+        path_dialog(
+            dialog,
+            PathDialogSpec {
+                modal: Modal::Load,
+                title: "Open computational entities",
+                subtitle: "Every entity in the .ce file opens as its own tab.".to_string(),
+                input_id: LOAD_INPUT,
+                on_input: Message::LoadPathChanged,
+                on_submit: Message::LoadPathSubmitted,
+                on_browse: Message::LoadBrowseClicked,
+                action: "Open",
+            },
+        )
     }
 
     pub(crate) fn create_save_dialog(&self) -> Element<'_, Message> {
-        let tab = self.get_active_tab();
-        let body = column![
-            row![
-                field(SAVE_INPUT, "/path/to/file.ce", &self.save_path_text, Message::SavePathChanged, Message::SavePathSubmitted),
-                button(widgets::labeled(Some((Icon::Folder, Ink::Text)), "Browse…"))
-                    .on_press(Message::SaveBrowseClicked)
-                    .padding([8, 12])
-                    .style(theme::button_secondary),
-            ]
-            .spacing(8)
-            .align_y(Alignment::Center),
-            error_line(self.save_dialog_error.as_ref()),
-        ]
-        .spacing(8);
-        modal_layer(dialog_card(
-            "Save computational entity",
-            Some(format!("Write “{}” to a .ce file.", tab.name)),
-            body.into(),
-            vec![
-                widgets::ghost("Cancel", Some(Message::CancelSaveDialog)).into(),
-                widgets::primary("Save", Some(Message::SavePathSubmitted)).into(),
-            ],
-            DIALOG_MD,
-        ))
+        let Some(dialog) = &self.save_dialog else {
+            return Space::new(0, 0).into();
+        };
+        path_dialog(
+            &dialog.file,
+            PathDialogSpec {
+                modal: Modal::Save,
+                title: "Save computational entity",
+                subtitle: format!("Write “{}” to a .ce file.", self.get_active_tab().name),
+                input_id: SAVE_INPUT,
+                on_input: Message::SavePathChanged,
+                on_submit: Message::SavePathSubmitted,
+                on_browse: Message::SaveBrowseClicked,
+                action: "Save",
+            },
+        )
     }
 
     pub(crate) fn create_startup_picker(&self) -> Element<'_, Message> {
         let p = self.palette();
         let card = |index: usize, family: Family| -> Element<'_, Message> {
             let selected = index == self.startup_selected;
-            button(
+            let card = button(
                 column![
-                    container(icon(Icon::Family(family), 26.0, Ink::Text))
-                        .padding(10)
-                        .style(theme::family_badge(family)),
-                    text(family.title()).size(16).font(theme::BOLD),
-                    text(family.blurb()).size(13).style(theme::text_dim),
+                    feature_icon(family, 46.0, selected),
+                    text(family.title()).size(theme::TEXT_LG).font(theme::BOLD),
+                    text(family.blurb()).size(theme::TEXT_MD).style(theme::text_dim),
                 ]
                 .spacing(8),
             )
             .on_press(Message::ChooseStartupModule(index))
-            .width(Length::Fixed(250.0))
+            .width(Length::Fixed(STARTUP_CARD_W))
+            .height(Length::Fixed(STARTUP_CARD_H))
             .padding(18)
-            .style(theme::option_card(selected, family.color(p)))
-            .into()
+            .style(theme::option_card(selected, theme::family_color(p, family)));
+            mouse_area(card).on_enter(Message::StartupHover(index)).into()
         };
-        let families = Family::ALL;
-        let grid = column![
-            row![card(0, families[0]), card(1, families[1])].spacing(14),
-            row![card(2, families[2]), card(3, families[3])].spacing(14),
-        ]
-        .spacing(14);
+        let mut grid = column![].spacing(STARTUP_GAP);
+        for (row_index, families) in Family::ALL.chunks(STARTUP_COLS).enumerate() {
+            let mut cards = row![].spacing(STARTUP_GAP);
+            for (column_index, family) in families.iter().enumerate() {
+                cards = cards.push(card(row_index * STARTUP_COLS + column_index, *family));
+            }
+            grid = grid.push(cards);
+        }
 
+        let columns = STARTUP_COLS as f32;
         let dialog = container(
             column![
                 row![
                     icon(Icon::Logo, 34.0, Ink::Text),
                     column![
-                        text("Welcome to Moccacino").size(22).font(theme::BOLD),
-                        text("What would you like to explore today?").size(14).style(theme::text_dim),
+                        text("Welcome to Moccacino").size(theme::TEXT_DISPLAY).font(theme::BOLD),
+                        text("What would you like to explore today?").size(theme::TEXT_BASE).style(theme::text_dim),
                     ]
                     .spacing(2),
                 ]
@@ -148,15 +177,19 @@ impl super::app::App {
                 .align_y(Alignment::Center),
                 grid,
                 row![
-                    button(widgets::labeled(Some((Icon::Folder, Ink::Text)), "Open a .ce file…"))
-                        .on_press(Message::StartupOpenFile)
-                        .padding([7, 12])
-                        .style(theme::button_ghost),
+                    widgets::text_button(
+                        Some((Icon::Folder, Ink::Text)),
+                        "Open a .ce file…",
+                        Some(Message::StartupOpenFile),
+                        theme::button_ghost,
+                    ),
                     horizontal_space(),
-                    widgets::kbd("← → ↑ ↓"),
-                    text("choose").size(12).style(theme::text_faint),
-                    widgets::kbd("Enter"),
-                    text("open").size(12).style(theme::text_faint),
+                    widgets::kbd(
+                        [-1, 1, -2, 2].map(|delta| shortcuts::hint(Action::StartupMove(delta))).join(" "),
+                    ),
+                    text("choose").size(theme::TEXT_SM).style(theme::text_faint),
+                    widgets::kbd(shortcuts::hint(Action::StartupChoose)),
+                    text("open").size(theme::TEXT_SM).style(theme::text_faint),
                 ]
                 .push_maybe((!platform::IS_WEB).then(|| widgets::ghost("Quit", Some(Message::ExitApp))))
                 .spacing(6)
@@ -164,34 +197,31 @@ impl super::app::App {
             ]
             .spacing(22),
         )
-        .padding(28)
-        .width(Length::Fixed(2.0 * 250.0 + 14.0 + 2.0 * 28.0))
+        .padding(STARTUP_PADDING)
+        .width(Length::Fixed(columns * STARTUP_CARD_W + (columns - 1.0) * STARTUP_GAP + 2.0 * STARTUP_PADDING))
         .style(theme::dialog);
 
-        widgets::blocking_layer(dialog.into())
+        modal_layer(dialog.into(), Message::Noop)
     }
 
     pub(crate) fn create_check_input_dialog(&self) -> Element<'_, Message> {
         let tab = self.get_active_tab();
-        let subtitle = if tab.machine.is_grammar() {
+        let subtitle = if tab.is_grammar() {
             "Membership is decided with CYK over the parsed grammar."
         } else {
             "Runs the whole machine at once; use the run panel to watch it step by step."
         };
-        modal_layer(dialog_card(
+        modal(dialog_card(
             "Check an input",
             Some(subtitle.to_string()),
             field(
                 CHECK_INPUT,
                 "Input word (blank = ε)",
-                &tab.check_input_text,
+                tab.check_input.as_deref().unwrap_or_default(),
                 Message::CheckInputTextChanged,
                 Message::SubmitCheckInput,
             ),
-            vec![
-                widgets::ghost("Cancel", Some(Message::CancelCheckInput)).into(),
-                widgets::primary("Check", Some(Message::SubmitCheckInput)).into(),
-            ],
+            vec![cancel(Modal::CheckInput), widgets::primary(None, "Check", Some(Message::SubmitCheckInput)).into()],
             DIALOG_SM,
         ))
     }
@@ -204,244 +234,186 @@ impl super::app::App {
             container(icon(Icon::Warn, 20.0, Ink::Danger))
                 .padding(8)
                 .style(theme::chip(theme::Tone::Danger)),
-            text(error_message.clone()).size(14),
+            text(error_message.clone()).size(theme::TEXT_BASE),
         ]
         .spacing(12)
         .align_y(Alignment::Center);
-        modal_layer(dialog_card(
+        modal(dialog_card(
             "That didn't work",
             None,
             body.into(),
-            vec![widgets::primary("OK", Some(Message::CloseError)).into()],
+            vec![widgets::primary(None, "OK", Some(Message::CloseModal(Modal::Error))).into()],
             DIALOG_MD,
         ))
     }
 
-    pub(crate) fn create_edit_dialog(&self) -> Element<'_, Message> {
-        let tab = self.get_active_tab();
-        if tab.pending_transition_dialog_open {
-            return modal_layer(dialog_card(
-                "New transition",
-                Some(label_hint(&tab.machine).to_string()),
-                field(
-                    EDIT_TEXT_INPUT,
-                    "Label",
-                    &tab.pending_transition_label,
-                    Message::EditTextChanged,
-                    Message::FinishEditing,
-                ),
-                vec![
-                    widgets::ghost("Cancel", Some(Message::CancelEditing)).into(),
-                    widgets::primary("Add", Some(Message::FinishEditing)).into(),
-                ],
-                DIALOG_SM,
-            ));
-        }
-        if tab.editing_transition_dialog_open {
-            let mut label_inputs = column![].spacing(8);
-            for (i, label) in tab.editing_transition_label_inputs.iter().enumerate() {
-                label_inputs = label_inputs.push(
-                    row![
-                        text_input("Label", label)
-                            .id(format!("{EDIT_LABEL_INPUT}-{i}"))
-                            .on_input(move |text| Message::EditTransitionLabelChanged(i, text))
-                            .on_submit(Message::SaveEditTransitionLabels)
-                            .padding([8, 12])
-                            .font(theme::MONO)
-                            .style(theme::input),
-                        widgets::tip(
-                            button(icon(Icon::Delete, 16.0, Ink::Danger))
-                                .on_press(Message::DeleteEditTransitionLabel(i))
-                                .padding(8)
-                                .style(theme::button_danger_ghost),
-                            "Remove this label",
-                            iced::widget::tooltip::Position::Right,
-                        ),
-                    ]
-                    .spacing(6)
-                    .align_y(Alignment::Center),
-                );
-            }
-            let body = column![
-                scrollable(label_inputs).height(Length::Shrink).style(theme::scroll),
-                button(widgets::labeled(Some((Icon::Plus, Ink::Accent)), "Add label"))
-                    .on_press(Message::AddEditTransitionLabel)
-                    .padding([6, 10])
-                    .style(theme::button_ghost),
-            ]
-            .spacing(8);
-            return modal_layer(dialog_card(
-                "Transition labels",
-                Some(label_hint(&tab.machine).to_string()),
-                container(body).max_height(320.0).into(),
-                vec![
-                    widgets::ghost("Cancel", Some(Message::CancelEditTransitionLabels)).into(),
-                    widgets::primary("Save", Some(Message::SaveEditTransitionLabels)).into(),
-                ],
-                DIALOG_SM,
-            ));
-        }
-        let title = if tab.editing_state.is_some() { "Rename state" } else { "Edit transition" };
-        modal_layer(dialog_card(
-            title,
+    pub(crate) fn create_rename_dialog(&self) -> Element<'_, Message> {
+        modal(dialog_card(
+            "Rename state",
             None,
-            field(EDIT_TEXT_INPUT, "Name", &tab.edit_text, Message::EditTextChanged, Message::FinishEditing),
+            field(EDIT_TEXT_INPUT, "Name", &self.get_active_tab().edit_text, Message::EditTextChanged, Message::FinishEditing),
+            vec![cancel(Modal::RenameState), widgets::primary(None, "Save", Some(Message::FinishEditing)).into()],
+            DIALOG_SM,
+        ))
+    }
+
+    pub(crate) fn create_new_transition_dialog(&self) -> Element<'_, Message> {
+        let tab = self.get_active_tab();
+        modal(dialog_card(
+            "New transition",
+            Some(label_hint(tab.family()).to_string()),
+            field(EDIT_TEXT_INPUT, "Label", &tab.edit_text, Message::EditTextChanged, Message::FinishEditing),
+            vec![cancel(Modal::NewTransition), widgets::primary(None, "Add", Some(Message::FinishEditing)).into()],
+            DIALOG_SM,
+        ))
+    }
+
+    pub(crate) fn create_transition_labels_dialog(&self) -> Element<'_, Message> {
+        let tab = self.get_active_tab();
+        let Some(edit) = &tab.label_edit else {
+            return Space::new(0, 0).into();
+        };
+        let mut label_inputs = column![].spacing(8);
+        for (i, label) in edit.inputs.iter().enumerate() {
+            label_inputs = label_inputs.push(
+                row![
+                    widgets::input("Label", label)
+                        .id(format!("{EDIT_LABEL_INPUT}-{i}"))
+                        .on_input(move |text| Message::EditTransitionLabelChanged(i, text))
+                        .on_submit(Message::SaveEditTransitionLabels)
+                        .font(theme::MONO),
+                    widgets::tip(
+                        widgets::icon_button(Icon::Delete, Some(Message::DeleteEditTransitionLabel(i)), Ink::Danger)
+                            .style(theme::button_danger_ghost),
+                        "Remove this label",
+                        iced::widget::tooltip::Position::Right,
+                    ),
+                ]
+                .spacing(6)
+                .align_y(Alignment::Center),
+            );
+        }
+        let body = column![
+            scrollable(label_inputs).height(Length::Shrink).style(theme::scroll),
+            widgets::text_button(
+                Some((Icon::Plus, Ink::Accent)),
+                "Add label",
+                Some(Message::AddEditTransitionLabel),
+                theme::button_ghost,
+            ),
+        ]
+        .spacing(8);
+        modal(dialog_card(
+            "Transition labels",
+            Some(label_hint(tab.family()).to_string()),
+            container(body).max_height(320.0).into(),
             vec![
-                widgets::ghost("Cancel", Some(Message::CancelEditing)).into(),
-                widgets::primary("Save", Some(Message::FinishEditing)).into(),
+                cancel(Modal::TransitionLabels),
+                widgets::primary(None, "Save", Some(Message::SaveEditTransitionLabels)).into(),
             ],
             DIALOG_SM,
         ))
     }
 
     pub(crate) fn create_latex_export_dialog(&self) -> Element<'_, Message> {
-        let code = self.latex_export_code.as_deref().unwrap_or("");
-        let is_grammar = self.get_active_tab().machine.is_grammar();
-        let subtitle = if is_grammar {
+        let code = self.latex_export.as_deref().unwrap_or("");
+        let subtitle = if self.get_active_tab().is_grammar() {
             "The grammar's productions, ready for a LaTeX document."
         } else {
             "A TikZ drawing of this automaton, ready for a LaTeX document."
         };
         let body = container(
-            scrollable(container(text(code.to_string()).font(theme::MONO).size(13)).padding(14))
+            scrollable(container(text(code.to_string()).font(theme::MONO).size(theme::TEXT_MD)).padding(14))
                 .height(Length::Fixed(320.0))
                 .style(theme::scroll),
         )
         .style(theme::sunken);
-        modal_layer(dialog_card(
+        modal(dialog_card(
             "LaTeX export",
             Some(subtitle.to_string()),
             body.into(),
             vec![
-                widgets::ghost("Close", Some(Message::CloseLatexExport)).into(),
-                button(widgets::labeled(Some((Icon::Check, Ink::OnAccent)), "Copy"))
-                    .on_press(Message::CopyLatexExport)
-                    .padding([7, 16])
-                    .style(theme::button_primary)
-                    .into(),
+                widgets::ghost("Close", Some(Message::CloseModal(Modal::LatexExport))).into(),
+                widgets::primary(Some(Icon::Check), "Copy", Some(Message::CopyLatexExport)).into(),
             ],
             DIALOG_LG,
         ))
     }
 
     pub(crate) fn create_regex_dialog(&self) -> Element<'_, Message> {
-        modal_layer(dialog_card(
+        modal(dialog_card(
             "Build from a regular expression",
             Some("Operators: | * + ?, grouping with ( ), \\c escapes, ε for empty.".to_string()),
             field(
                 REGEX_INPUT,
                 "e.g. (a|b)*abb",
-                &self.get_active_tab().regex_text,
+                self.get_active_tab().regex_input.as_deref().unwrap_or_default(),
                 Message::RegexTextChanged,
                 Message::SubmitRegex,
             ),
-            vec![
-                widgets::ghost("Cancel", Some(Message::CancelRegex)).into(),
-                widgets::primary("Build", Some(Message::SubmitRegex)).into(),
-            ],
+            vec![cancel(Modal::BuildRegex), widgets::primary(None, "Build", Some(Message::SubmitRegex)).into()],
             DIALOG_MD,
         ))
     }
 
     pub(crate) fn create_regex_export_dialog(&self) -> Element<'_, Message> {
-        let code = self.regex_export_code.as_deref().unwrap_or("");
-        let body = text_input("", code)
-            .on_input(|_| Message::OpenRegexExport)
-            .padding([9, 12])
-            .font(theme::MONO)
-            .style(theme::input);
-        modal_layer(dialog_card(
+        let code = self.regex_export.as_deref().unwrap_or("");
+        let body = widgets::input("", code).on_input(|_| Message::Noop).font(theme::MONO);
+        modal(dialog_card(
             "Equivalent regular expression",
             Some("Obtained by state elimination.".to_string()),
             body.into(),
             vec![
-                widgets::ghost("Close", Some(Message::CloseRegexExport)).into(),
-                button(widgets::labeled(Some((Icon::Check, Ink::OnAccent)), "Copy"))
-                    .on_press(Message::CopyRegexExport)
-                    .padding([7, 16])
-                    .style(theme::button_primary)
-                    .into(),
+                widgets::ghost("Close", Some(Message::CloseModal(Modal::RegexExport))).into(),
+                widgets::primary(Some(Icon::Check), "Copy", Some(Message::CopyRegexExport)).into(),
             ],
             DIALOG_MD,
         ))
     }
 
     pub(crate) fn create_shortcuts_dialog(&self) -> Element<'_, Message> {
-        let entry = |keys: &'static [&'static str], description: &'static str| -> Element<'_, Message> {
-            let mut caps = row![].spacing(4).align_y(Alignment::Center);
-            for key in keys {
-                caps = caps.push(widgets::kbd(*key));
-            }
-            row![
-                container(caps).width(Length::Fixed(128.0)),
-                text(description).size(13).style(theme::text_dim),
-            ]
-            .spacing(8)
-            .align_y(Alignment::Center)
-            .into()
-        };
-        let section = |title: &'static str, entries: Vec<Element<'static, Message>>| -> Element<'static, Message> {
-            let mut list = column![widgets::caption(title)].spacing(8);
-            for entry in entries {
-                list = list.push(entry);
+        let section = |section: Section| -> Element<'static, Message> {
+            let mut list = column![widgets::caption(section.title())].spacing(8);
+            for shortcut in SHORTCUTS.iter().filter(|shortcut| shortcut.section == section) {
+                let mut caps = row![].spacing(4).align_y(Alignment::Center);
+                let mut shown: Vec<Vec<String>> = shortcut.chords.iter().map(|chord| chord.caps()).collect();
+                shown.dedup();
+                for (index, chord) in shown.into_iter().enumerate() {
+                    if index > 0 {
+                        caps = caps.push(text("/").size(theme::TEXT_SM).style(theme::text_faint));
+                    }
+                    for cap in chord {
+                        caps = caps.push(widgets::kbd(cap));
+                    }
+                }
+                list = list.push(
+                    row![
+                        container(caps).width(Length::Fixed(128.0)),
+                        text(shortcut.label).size(theme::TEXT_MD).style(theme::text_dim),
+                    ]
+                    .spacing(8)
+                    .align_y(Alignment::Center),
+                );
             }
             list.width(Length::Fill).into()
         };
-        let canvas = section(
-            "CANVAS",
-            vec![
-                entry(&["1"], "Select / move tool"),
-                entry(&["2"], "State tool"),
-                entry(&["3"], "Transition tool"),
-                entry(&["4"], "Delete tool"),
-                entry(&["Tab"], "Toggle Select ↔ Delete"),
-                entry(&["Del"], "Hold for a quick delete"),
-                entry(&["Shift", "click"], "Toggle accepting state"),
-                entry(&["Alt", "click"], "Make initial state"),
-                entry(&["Esc"], "Back to Select"),
-            ],
-        );
-        let view = section(
-            "VIEW & RUN",
-            vec![
-                entry(&["Ctrl", "wheel"], "Zoom around the cursor"),
-                entry(&["Ctrl", "+ / −"], "Zoom in / out"),
-                entry(&["Ctrl", "0"], "Reset zoom"),
-                entry(&["F"], "Fit the machine to the view"),
-                entry(&["Space"], "Play / pause the run"),
-                entry(&["→"], "Step the run"),
-            ],
-        );
-        let app = section(
-            "APP",
-            vec![
-                entry(&["Ctrl", "T"], "New tab"),
-                entry(&["Ctrl", "W"], "Close tab"),
-                entry(&["Ctrl", "Tab"], "Next tab"),
-                entry(&["Ctrl", "O"], "Open a .ce file"),
-                entry(&["Ctrl", "S"], "Save the tab as .ce"),
-                entry(&["Ctrl", "Shift", "L"], "Light / dark theme"),
-                entry(&["F1"], "This cheat sheet"),
-            ],
-        );
-        let sections: Element<'_, Message> = if self.layout_width() >= 820.0 {
+        let (canvas, view, app) = (section(Section::Canvas), section(Section::ViewAndRun), section(Section::App));
+        let sections: Element<'_, Message> = if self.layout_width() >= SHORTCUTS_TWO_COLUMN_MIN_WIDTH {
             row![canvas, column![view, app].spacing(18).width(Length::Fill)].spacing(28).into()
         } else {
             column![canvas, view, app].spacing(18).into()
         };
-        let max_height = self.window_size.map(|size| size.height - 220.0).unwrap_or(560.0).max(200.0);
+        let max_height = self.window_size.map(|size| size.height - DIALOG_CHROME_RESERVE).unwrap_or(560.0).max(200.0);
         let body = container(scrollable(sections).style(theme::scroll)).max_height(max_height);
-        modal_layer(dialog_card(
+        modal(dialog_card(
             "Keyboard shortcuts",
             Some("Double-click a tab to rename it.".to_string()),
             body.into(),
-            vec![widgets::primary("Done", Some(Message::ToggleShortcuts)).into()],
+            vec![widgets::primary(None, "Done", Some(Message::ToggleShortcuts)).into()],
             DIALOG_LG + 80.0,
         ))
     }
-}
 
-impl super::app::App {
     pub(crate) fn create_close_dialog(&self) -> Element<'_, Message> {
         let Some(request) = self.pending_close else {
             return Space::new(0, 0).into();
@@ -466,9 +438,9 @@ impl super::app::App {
             let note = if tab.saved_fingerprint.is_none() { "never saved" } else { "modified" };
             list = list.push(
                 row![
-                    widgets::family_dot(tab.machine.family(), 8.0),
-                    text(tab.name.clone()).size(14).font(theme::SEMIBOLD),
-                    text(note).size(12).style(theme::text_faint),
+                    widgets::family_dot(tab.family(), 8.0),
+                    text(tab.name.clone()).size(theme::TEXT_BASE).font(theme::SEMIBOLD),
+                    text(note).size(theme::TEXT_SM).style(theme::text_faint),
                 ]
                 .spacing(8)
                 .align_y(Alignment::Center),
@@ -482,17 +454,14 @@ impl super::app::App {
         ]
         .spacing(12)
         .align_y(Alignment::Center);
-        modal_layer(dialog_card(
+        modal(dialog_card(
             title,
             Some(subtitle),
             body.into(),
             vec![
-                widgets::ghost("Cancel", Some(Message::CancelClose)).into(),
+                cancel(Modal::Close),
                 widgets::secondary("Save…", Some(Message::ConfirmCloseSave)).into(),
-                button(widgets::labeled(None, discard_label))
-                    .on_press(Message::ConfirmCloseDiscard)
-                    .padding([7, 16])
-                    .style(theme::button_danger)
+                widgets::text_button(None, discard_label, Some(Message::ConfirmCloseDiscard), theme::button_danger)
                     .into(),
             ],
             DIALOG_MD,

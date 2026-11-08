@@ -14,7 +14,7 @@ description = "Software program to experiment with concepts in automata theory a
 license = "MIT"
 
 [dependencies]
-iced = { version = "0.13.1", features = ["canvas", "smol"] }
+iced = { version = "0.13.1", features = ["advanced", "canvas", "smol"] }
 indexmap = "2.10.0"
 moca-data = { path = "./moca-data" }
 moca-gui = { path = "./moca-gui" }

@@ -34,14 +34,6 @@ impl<'a> Parser<'a> {
         self.chars.get(self.pos).copied()
     }
 
-    fn bump(&mut self) -> Option<char> {
-        let c = self.peek();
-        if c.is_some() {
-            self.pos += 1;
-        }
-        c
-    }
-
     fn eat(&mut self) {
         self.pos += 1;
     }
@@ -110,8 +102,15 @@ impl<'a> Parser<'a> {
             },
             Some('\\') => {
                 self.eat();
-                match self.bump() {
-                    Some(c) => Ok(RegexAst::Char(c)),
+                match self.peek() {
+                    Some('ε') => Err(ParseError {
+                        position: self.pos - 1,
+                        message: "a literal 'ε' symbol cannot be compiled: automaton labels use ε for the empty word".to_string(),
+                    }),
+                    Some(c) => {
+                        self.eat();
+                        Ok(RegexAst::Char(c))
+                    },
                     None => Err(self.error("escape at the end of the pattern")),
                 }
             },
@@ -125,8 +124,8 @@ impl<'a> Parser<'a> {
                 );
                 Err(self.error(&message))
             },
-            Some(_) => {
-                let c = self.bump().unwrap();
+            Some(c) => {
+                self.eat();
                 Ok(RegexAst::Char(c))
             },
             None => Err(self.error("expected an expression")),

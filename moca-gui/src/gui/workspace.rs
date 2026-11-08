@@ -3,26 +3,35 @@ use std::time::Duration;
 use iced::time::Instant;
 use iced::Task;
 
-use super::app::CloseRequest;
-use super::message::{Menu, Message};
-use super::tab::{Tab, TabMachine};
-use crate::gui::theme::Family;
+use super::message::Message;
+use super::tab::Tab;
+use crate::family::Family;
 
 const TAB_DOUBLE_CLICK: Duration = Duration::from_millis(350);
 pub(crate) const TAB_RENAME_INPUT: &str = "tab-rename";
+pub(crate) const TAB_STRIP: &str = "tab-strip";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CloseRequest {
+    App,
+    Tab(usize),
+}
 
 impl super::app::App {
-    pub(crate) fn open_machine_in_new_tab(
-        &mut self,
-        name: String,
-        machine: TabMachine,
-    ) -> Task<Message> {
-        let mut new_tab = Tab::new_with_name(name);
-        new_tab.machine = machine;
-        self.tabs.push(new_tab);
+    pub(crate) fn push_tab(&mut self, tab: Tab) {
+        self.open_menu = None;
+        self.commit_pending_rename();
+        self.tabs.push(tab);
         self.active_tab = self.tabs.len() - 1;
-        self.get_active_tab_mut().load_machine_to_gui();
-        self.fit_view()
+    }
+
+    pub(crate) fn open_in_new_tab(&mut self, tab: Tab) -> Task<Message> {
+        let fit = !tab.is_grammar();
+        self.push_tab(tab);
+        if fit {
+            return self.fit_view();
+        }
+        Task::none()
     }
 
     pub(crate) fn choose_startup_module(&mut self, index: usize) -> Task<Message> {
@@ -37,14 +46,6 @@ impl super::app::App {
         let count = Family::ALL.len() as i32;
         let next = (self.startup_selected as i32 + delta).rem_euclid(count);
         self.startup_selected = next as usize;
-        Task::none()
-    }
-
-    pub(crate) fn new_tab(&mut self, family: Family) -> Task<Message> {
-        self.open_menu = None;
-        self.commit_pending_rename();
-        self.tabs.push(Tab::new_of(family));
-        self.active_tab = self.tabs.len() - 1;
         Task::none()
     }
 
@@ -91,7 +92,7 @@ impl super::app::App {
         }
     }
 
-    pub(crate) fn remove_tab(&mut self, index: usize) -> Task<Message> {
+    fn remove_tab(&mut self, index: usize) -> Task<Message> {
         if self.tabs.len() > 1 && index < self.tabs.len() {
             self.renaming_tab = None;
             self.tabs.remove(index);
@@ -134,12 +135,7 @@ impl super::app::App {
         Task::none()
     }
 
-    pub(crate) fn commit_tab_rename(&mut self) -> Task<Message> {
-        self.commit_pending_rename();
-        Task::none()
-    }
-
-    fn commit_pending_rename(&mut self) {
+    pub(crate) fn commit_pending_rename(&mut self) {
         if let Some(index) = self.renaming_tab.take() {
             let name = self.tab_rename_text.trim();
             if !name.is_empty() {
@@ -148,66 +144,5 @@ impl super::app::App {
                 }
             }
         }
-    }
-
-    pub(crate) fn cancel_tab_rename(&mut self) {
-        self.renaming_tab = None;
-    }
-
-    pub(crate) fn toggle_menu(&mut self, menu: Menu) -> Task<Message> {
-        self.open_menu = if self.open_menu == Some(menu) { None } else { Some(menu) };
-        Task::none()
-    }
-
-    pub(crate) fn close_menus(&mut self) -> Task<Message> {
-        self.open_menu = None;
-        Task::none()
-    }
-
-    pub(crate) fn dismiss_modal(&mut self) -> Task<Message> {
-        if self.error_message.is_some() {
-            return self.close_error();
-        }
-        if self.pending_close.is_some() {
-            self.pending_close = None;
-            return Task::none();
-        }
-        if self.shortcuts_open {
-            self.shortcuts_open = false;
-            return Task::none();
-        }
-        if self.get_active_tab().editing_transition_dialog_open {
-            return self.cancel_edit_transition_labels();
-        }
-        if self.get_active_tab().pending_transition_dialog_open {
-            return self.cancel_editing();
-        }
-        if self.regex_export_dialog_open {
-            return self.close_regex_export();
-        }
-        if self.latex_export_dialog_open {
-            return self.close_latex_export();
-        }
-        if self.save_dialog_open {
-            return self.cancel_save_dialog();
-        }
-        if self.load_dialog_open {
-            return self.cancel_load_dialog();
-        }
-        if self.get_active_tab().regex_dialog_open {
-            return self.cancel_regex();
-        }
-        if self.get_active_tab().check_input_dialog_open {
-            return self.cancel_check_input();
-        }
-        if self.get_active_tab().editing_state.is_some() || self.get_active_tab().editing_transition.is_some() {
-            return self.cancel_editing();
-        }
-        Task::none()
-    }
-
-    pub(crate) fn close_error(&mut self) -> Task<Message> {
-        self.error_message = None;
-        Task::none()
     }
 }

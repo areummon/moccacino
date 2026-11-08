@@ -6,21 +6,24 @@ use iced::widget::{
 use iced::widget::text::Wrapping;
 use iced::{Alignment, Element, Length, Padding};
 
+use super::feature_icon::feature_icon;
 use super::icons::{icon, Icon, Ink};
 use super::message::{Menu, Message};
-use super::tab::TabMachine;
+use super::metrics::{
+    BRAND_TEXT_MIN_WIDTH, DOCK_COMPACT_MAX_WIDTH, HEADER_HEIGHT, PALETTE_ICONS_ONLY_MAX_WIDTH, STACKED_HEADER_MAX_WIDTH,
+    STATUS_BAR_HEIGHT, STATUS_COUNTS_MIN_WIDTH, STATUS_HINT_MIN_WIDTH, TAB_ROW_HEIGHT,
+};
+use super::shortcuts::{hint, Action};
 use super::widgets::{self, text, tip};
-use super::workspace::TAB_RENAME_INPUT;
-use crate::gui::theme::{self, Family, ThemeMode, Tone};
+use super::tab::Tab;
+use super::workspace::{TAB_RENAME_INPUT, TAB_STRIP};
+use crate::theme::{self, ThemeMode, Tone};
+use crate::family::Family;
 use crate::state_machine::{CanvasContext, EditorTool};
 
-const HEADER_HEIGHT: f32 = 52.0;
-const TAB_ROW_HEIGHT: f32 = 44.0;
 const HEADER_PADDING_X: f32 = 12.0;
 const BRAND_WIDTH: f32 = 128.0;
 const BRAND_WIDTH_COMPACT: f32 = 34.0;
-const BRAND_TEXT_MIN_WIDTH: f32 = 1000.0;
-const STACKED_HEADER_MAX_WIDTH: f32 = 800.0;
 const MENU_GAP: f32 = 2.0;
 const MENUS: [(Menu, &str, f32); 4] = [
     (Menu::New, "New", 70.0),
@@ -30,12 +33,13 @@ const MENUS: [(Menu, &str, f32); 4] = [
 ];
 const ICON_BUTTON: f32 = 32.0;
 const RIGHT_CLUSTER_SPACING: f32 = 4.0;
-const DROPDOWN_WIDTH: f32 = 272.0;
-pub(crate) const TAB_STRIP: &str = "tab-strip";
-const DOCK_COMPACT_MAX_WIDTH: f32 = 1150.0;
-const PALETTE_ICONS_ONLY_MAX_WIDTH: f32 = 760.0;
-const STATUS_HINT_MIN_WIDTH: f32 = 1000.0;
-const STATUS_COUNTS_MIN_WIDTH: f32 = 700.0;
+const NEW_TAB_GAP: f32 = 8.0;
+/// Inset of the floating canvas surfaces (tool palette, Clear, zoom chip), so all three are 40 px tall.
+const FLOATING_PADDING: u16 = 4;
+const DROPDOWN_WIDTH: f32 = 304.0;
+/// Width of the leading icon column in a menu, so labels in one menu share a left edge.
+const MENU_ICON_SLOT: f32 = 20.0;
+const FAMILY_ICON_SLOT: f32 = 30.0;
 
 impl super::app::App {
     fn header_layout(&self) -> (f32, bool) {
@@ -48,7 +52,7 @@ impl super::app::App {
         let (brand_width, stacked) = self.header_layout();
         let mut brand_row = row![icon(Icon::Logo, 24.0, Ink::Text)].spacing(8).align_y(Alignment::Center);
         if brand_width == BRAND_WIDTH {
-            brand_row = brand_row.push(text("moccacino").size(17).font(theme::BOLD));
+            brand_row = brand_row.push(text("moccacino").size(theme::TEXT_LG).font(theme::BOLD));
         }
         let brand = container(brand_row).width(Length::Fixed(brand_width));
 
@@ -58,7 +62,7 @@ impl super::app::App {
             menus = menus.push(
                 button(
                     row![
-                        text(label).size(14).font(theme::SEMIBOLD),
+                        text(label).size(theme::TEXT_BASE).font(theme::SEMIBOLD),
                         icon(Icon::ChevronDown, 12.0, if open { Ink::Accent } else { Ink::Faint }),
                     ]
                     .spacing(4)
@@ -78,7 +82,7 @@ impl super::app::App {
                 .width(Length::Fixed(ICON_BUTTON))
                 .padding(8)
                 .style(theme::menu_trigger(new_tab_open)),
-            "New tab  (Ctrl+T)",
+            format!("New tab  ({})", hint(Action::NewTabMenu)),
             tooltip::Position::Bottom,
         );
         let help = tip(
@@ -87,12 +91,12 @@ impl super::app::App {
                 .width(Length::Fixed(ICON_BUTTON))
                 .padding(8)
                 .style(theme::button_ghost),
-            "Keyboard shortcuts  (F1)",
+            format!("Keyboard shortcuts  ({})", hint(Action::Shortcuts)),
             tooltip::Position::Bottom,
         );
         let (theme_icon, theme_tip) = match self.theme_mode {
-            ThemeMode::Light => (Icon::Moon, "Switch to the dark theme  (Ctrl+Shift+L)"),
-            ThemeMode::Dark => (Icon::Sun, "Switch to the light theme  (Ctrl+Shift+L)"),
+            ThemeMode::Light => (Icon::Moon, "dark"),
+            ThemeMode::Dark => (Icon::Sun, "light"),
         };
         let theme_toggle = tip(
             button(icon(theme_icon, 16.0, Ink::Dim))
@@ -100,7 +104,7 @@ impl super::app::App {
                 .width(Length::Fixed(ICON_BUTTON))
                 .padding(8)
                 .style(theme::button_ghost),
-            theme_tip,
+            format!("Switch to the {theme_tip} theme  ({})", hint(Action::ToggleTheme)),
             tooltip::Position::Bottom,
         );
 
@@ -112,7 +116,7 @@ impl super::app::App {
                 .push(container(vertical_rule(1).style(theme::divider)).height(Length::Fixed(22.0)).padding([0, 8]))
                 .push(self.create_tab_strip());
         }
-        top = top.push(plus).push(Space::with_width(8)).push(help).push(theme_toggle);
+        top = top.push(plus).push(Space::with_width(NEW_TAB_GAP)).push(help).push(theme_toggle);
 
         let top = container(top)
             .padding([0.0, HEADER_PADDING_X])
@@ -131,7 +135,7 @@ impl super::app::App {
         } else {
             top.into()
         };
-        container(header).width(Length::Fill).style(theme::header).into()
+        container(header).width(Length::Fill).style(theme::app_background).into()
     }
 
     fn create_tab_strip(&self) -> Element<'_, Message> {
@@ -139,21 +143,21 @@ impl super::app::App {
         let mut strip = row![].spacing(4).align_y(Alignment::Center);
         for (index, tab) in self.tabs.iter().enumerate() {
             let active = index == self.active_tab;
-            let family = tab.machine.family();
+            let family = tab.family();
 
             let name: Element<'_, Message> = if self.renaming_tab == Some(index) {
                 text_input("Tab name", &self.tab_rename_text)
                     .id(TAB_RENAME_INPUT)
                     .on_input(Message::TabRenameChanged)
                     .on_submit(Message::TabRenameSubmit)
-                    .size(13)
+                    .size(theme::TEXT_MD)
                     .padding([2, 6])
                     .width(Length::Fixed(140.0))
                     .style(theme::input)
                     .into()
             } else {
                 text(tab.name.clone())
-                    .size(13)
+                    .size(theme::TEXT_MD)
                     .font(if active { theme::SEMIBOLD } else { theme::UI })
                     .into()
             };
@@ -163,7 +167,7 @@ impl super::app::App {
                 .align_y(Alignment::Center);
             if tab.insight.unsaved {
                 content = content.push(
-                    container(Space::new(Length::Fixed(6.0), Length::Fixed(6.0))).style(theme::unsaved_dot),
+                    widgets::dot(6.0, theme::unsaved_dot),
                 );
             }
             if closable {
@@ -177,7 +181,7 @@ impl super::app::App {
 
             let pill = button(content)
                 .on_press(Message::SwitchTab(index))
-                .padding(Padding { top: 6.0, bottom: 6.0, left: 12.0, right: if closable { 6.0 } else { 12.0 } })
+                .padding(Padding { top: 7.5, bottom: 7.5, left: 12.0, right: if closable { 6.0 } else { 12.0 } })
                 .style(theme::tab_pill(active));
             strip = strip.push(pill);
         }
@@ -185,7 +189,7 @@ impl super::app::App {
         scrollable(container(strip).padding([4, 2]))
             .id(scrollable::Id::new(TAB_STRIP))
             .direction(scrollable::Direction::Horizontal(
-                scrollable::Scrollbar::new().width(3).scroller_width(3).margin(0),
+                widgets::thin_scrollbar(3.0).margin(0),
             ))
             .width(Length::Fill)
             .style(theme::scroll_subtle)
@@ -201,7 +205,7 @@ impl super::app::App {
 
         let placed: Element<'_, Message> = match menu {
             Menu::NewFromTabs => {
-                let right = HEADER_PADDING_X + 2.0 * ICON_BUTTON + 8.0 + 3.0 * RIGHT_CLUSTER_SPACING;
+                let right = HEADER_PADDING_X + 2.0 * ICON_BUTTON + NEW_TAB_GAP + 3.0 * RIGHT_CLUSTER_SPACING;
                 container(panel)
                     .width(Length::Fill)
                     .align_x(iced::alignment::Horizontal::Right)
@@ -233,7 +237,7 @@ impl super::app::App {
 
     fn create_menu(&self, menu: Menu) -> Element<'_, Message> {
         let tab = self.get_active_tab();
-        let is_finite = matches!(tab.machine, TabMachine::Finite(_));
+        let is_finite = tab.family() == Family::Finite;
         let has_states = !tab.states.is_empty();
         match menu {
             Menu::New | Menu::NewFromTabs => {
@@ -242,12 +246,10 @@ impl super::app::App {
                     items = items.push(
                         button(
                             row![
-                                container(icon(Icon::Family(family), 18.0, Ink::Text))
-                                    .padding(6)
-                                    .style(theme::family_badge(family)),
+                                feature_icon(family, FAMILY_ICON_SLOT, false),
                                 column![
-                                    text(family.title()).size(14).font(theme::SEMIBOLD),
-                                    text(family.blurb()).size(12).style(theme::text_faint),
+                                    text(family.title()).size(theme::TEXT_BASE).font(theme::SEMIBOLD),
+                                    text(family.blurb()).size(theme::TEXT_SM).style(theme::text_faint),
                                 ]
                                 .spacing(1),
                             ]
@@ -256,13 +258,20 @@ impl super::app::App {
                         )
                         .on_press(Message::NewTab(family))
                         .width(Length::Fill)
-                        .padding([6, 8])
+                        .padding(MENU_ITEM_PADDING)
                         .style(theme::menu_item),
                     );
                 }
                 items
                     .push(menu_separator())
-                    .push(menu_item(Icon::Folder, "Open .ce file…", Some("Ctrl+O"), Some(Message::OpenLoadDialog), None))
+                    .push(menu_item_in(
+                        FAMILY_ICON_SLOT,
+                        Icon::Folder,
+                        "Open .ce file…",
+                        Some(hint(Action::Open)),
+                        Some(Message::OpenLoadDialog),
+                        None,
+                    ))
                     .into()
             }
             Menu::Operations => {
@@ -289,7 +298,7 @@ impl super::app::App {
                         Icon::Family(Family::Finite),
                         "NFA → DFA",
                         None,
-                        nfa_to_dfa_reason.is_none().then_some(Message::DfaToNfa),
+                        nfa_to_dfa_reason.is_none().then_some(Message::NfaToDfa),
                         nfa_to_dfa_reason,
                     ),
                     menu_item(
@@ -306,8 +315,8 @@ impl super::app::App {
                 .into()
             }
             Menu::File => column![
-                menu_item(Icon::Folder, "Open .ce file…", Some("Ctrl+O"), Some(Message::OpenLoadDialog), None),
-                menu_item(Icon::Check, "Save tab as .ce…", Some("Ctrl+S"), Some(Message::OpenSaveDialog), None),
+                menu_item(Icon::Folder, "Open .ce file…", Some(hint(Action::Open)), Some(Message::OpenLoadDialog), None),
+                menu_item(Icon::Check, "Save tab as .ce…", Some(hint(Action::Save)), Some(Message::OpenSaveDialog), None),
             ]
             .spacing(2)
             .into(),
@@ -349,7 +358,7 @@ impl super::app::App {
                 &tab.final_states,
                 CanvasContext {
                     active_states,
-                    family: tab.machine.family(),
+                    family: tab.family(),
                     interactive: !self.any_modal_open() && self.open_menu.is_none(),
                     known_viewport: self.canvas_viewport.unwrap_or(iced::Size::ZERO),
                 },
@@ -363,13 +372,13 @@ impl super::app::App {
                 container(
                     column![
                         icon(Icon::State, 40.0, Ink::Faint),
-                        text("An empty canvas").size(17).font(theme::SEMIBOLD).style(theme::text_dim),
+                        text("An empty canvas").size(theme::TEXT_LG).font(theme::SEMIBOLD).style(theme::text_dim),
                         row![
-                            text("Press").size(13).style(theme::text_faint),
-                            widgets::kbd("2"),
-                            text("and click to place states, then").size(13).style(theme::text_faint),
-                            widgets::kbd("3"),
-                            text("to connect them").size(13).style(theme::text_faint),
+                            text("Press").size(theme::TEXT_MD).style(theme::text_faint),
+                            widgets::kbd(hint(Action::Tool(EditorTool::State))),
+                            text("and click to place states, then").size(theme::TEXT_MD).style(theme::text_faint),
+                            widgets::kbd(hint(Action::Tool(EditorTool::Transition))),
+                            text("to connect them").size(theme::TEXT_MD).style(theme::text_faint),
                         ]
                         .spacing(6)
                         .align_y(Alignment::Center),
@@ -393,13 +402,17 @@ impl super::app::App {
         if !tab.states.is_empty() || !tab.transitions.is_empty() {
             layers.push(
                 container(tip(
-                    button(widgets::labeled(Some((Icon::Delete, Ink::Danger)), "Clear"))
-                        .on_press(Message::Clear)
-                        .padding([6, 12])
-                        .style(theme::button_danger_ghost),
+                    container(widgets::text_button(
+                        Some((Icon::Delete, Ink::Danger)),
+                        "Clear",
+                        Some(Message::Clear),
+                        theme::button_danger_ghost,
+                    ))
+                    .padding(FLOATING_PADDING)
+                    .style(theme::floating),
                     "Remove every state and transition",
                     tooltip::Position::Left,
-                ))
+                    ))
                 .width(Length::Fill)
                 .padding(14)
                 .align_x(iced::alignment::Horizontal::Right)
@@ -426,44 +439,41 @@ impl super::app::App {
         let mut tools = row![].spacing(2).align_y(Alignment::Center);
         for tool in EditorTool::ALL {
             let is_active = tool == active;
-            let ink = match (is_active, tool) {
-                (true, _) => Ink::Accent,
-                (false, _) => Ink::Dim,
-            };
-            let mut label = row![icon(tool.icon(), 16.0, ink)].spacing(6).align_y(Alignment::Center);
+            let ink = if is_active { Ink::Accent } else { Ink::Dim };
+            let mut label = row![icon(tool_icon(tool), widgets::ICON_SIZE, ink)].spacing(6).align_y(Alignment::Center);
             if captions {
-                label = label.push(text(tool.name()).size(13).font(theme::SEMIBOLD).wrapping(Wrapping::None));
+                label = label.push(text(tool.name()).size(theme::TEXT_BASE).font(theme::SEMIBOLD).wrapping(Wrapping::None));
             }
             tools = tools.push(tip(
                 button(label)
                 .on_press(Message::SelectTool(tool))
                 .padding([7, 12])
                 .style(theme::toggle_pill(is_active)),
-                format!("{}  ({})\n{}", tool.name(), tool.shortcut(), tool.tooltip()),
+                format!("{}  ({})\n{}", tool.name(), hint(Action::Tool(tool)), tool.tooltip()),
                 tooltip::Position::Bottom,
             ));
         }
-        container(tools).padding(4).style(theme::floating).into()
+        container(tools).padding(FLOATING_PADDING).style(theme::floating).into()
     }
 
     fn create_zoom_chip(&self) -> Element<'_, Message> {
         let zoom = self.get_active_tab().state_machine.zoom();
         let chip = row![
-            tip(widgets::icon_button(Icon::Minus, Some(Message::ZoomOut), Ink::Dim), "Zoom out  (Ctrl+−)", tooltip::Position::Top),
+            tip(widgets::icon_button(Icon::Minus, Some(Message::ZoomOut), Ink::Dim), format!("Zoom out  ({})", hint(Action::ZoomOut)), tooltip::Position::Top),
             tip(
-                button(text(format!("{:>3.0}%", zoom * 100.0)).size(12).font(theme::MONO))
+                button(text(format!("{:>3.0}%", zoom * 100.0)).size(theme::TEXT_SM).font(theme::MONO))
                     .on_press(Message::ZoomReset)
-                    .padding([6, 4])
+                    .padding([8, 4])
                     .style(theme::button_ghost),
-                "Reset to 100%  (Ctrl+0)",
+                format!("Reset to 100%  ({})", hint(Action::ZoomReset)),
                 tooltip::Position::Top,
             ),
-            tip(widgets::icon_button(Icon::Plus, Some(Message::ZoomIn), Ink::Dim), "Zoom in  (Ctrl++)", tooltip::Position::Top),
-            tip(widgets::icon_button(Icon::Fit, Some(Message::FitView), Ink::Dim), "Fit to view  (F)", tooltip::Position::Top),
+            tip(widgets::icon_button(Icon::Plus, Some(Message::ZoomIn), Ink::Dim), format!("Zoom in  ({})", hint(Action::ZoomIn)), tooltip::Position::Top),
+            tip(widgets::icon_button(Icon::Fit, Some(Message::FitView), Ink::Dim), format!("Fit to view  ({})", hint(Action::Fit)), tooltip::Position::Top),
         ]
         .spacing(0)
         .align_y(Alignment::Center);
-        container(chip).padding([2, 6]).style(theme::floating).into()
+        container(chip).padding(FLOATING_PADDING).style(theme::floating).into()
     }
 
     pub(crate) fn dock_is_compact(&self) -> bool {
@@ -471,34 +481,36 @@ impl super::app::App {
     }
 
     pub(crate) fn create_run_dock(&self) -> Element<'_, Message> {
-        if self.get_active_tab().machine.is_grammar() {
-            return Space::new(0, 0).into();
-        }
-        let dock = self.create_run_panel();
-        container(dock).padding(Padding { top: 0.0, right: 12.0, bottom: 8.0, left: 12.0 }).into()
+        container(self.create_run_panel()).padding(Padding { top: 0.0, right: 12.0, bottom: 8.0, left: 12.0 }).into()
     }
 
     pub(crate) fn create_status_bar(&self) -> Element<'_, Message> {
         let tab = self.get_active_tab();
-        let insight = &tab.insight;
-        let mut left = row![].spacing(10).align_y(Alignment::Center);
-        let mut right = row![].spacing(10).align_y(Alignment::Center);
+        let (left, right) = if tab.is_grammar() { grammar_status(tab) } else { self.automaton_status(tab) };
+        container(row![left, horizontal_space(), right].spacing(24).align_y(Alignment::Center))
+            .padding([0, 14])
+            .width(Length::Fill)
+            .height(Length::Fixed(STATUS_BAR_HEIGHT))
+            .center_y(Length::Fixed(STATUS_BAR_HEIGHT))
+            .style(theme::status_bar)
+            .into()
+    }
 
-        if tab.machine.is_grammar() {
-            left = left
-                .push(widgets::family_dot(Family::Grammar, 7.0))
-                .push(text("Grammar editor").size(12))
-                .push(text(format!("{} productions", insight.production_count)).size(12).style(theme::text_faint));
-        } else {
-            let tool = tab.active_tool();
-            left = left
-                .push(icon(tool.icon(), 13.0, Ink::Dim))
-                .push(text(tool.name()).size(12).font(theme::SEMIBOLD).wrapping(Wrapping::None));
-            if self.layout_width() >= STATUS_HINT_MIN_WIDTH {
-                left = left.push(text(tool.hint()).size(12).style(theme::text_faint).wrapping(Wrapping::None));
-            }
+    fn automaton_status<'a>(&self, tab: &'a Tab) -> (Element<'a, Message>, Element<'a, Message>) {
+        let tool = tab.active_tool();
+        let mut left = row![
+            icon(tool_icon(tool), 13.0, Ink::Dim),
+            text(tool.name()).size(theme::TEXT_SM).font(theme::SEMIBOLD).wrapping(Wrapping::None),
+        ]
+        .spacing(10)
+        .align_y(Alignment::Center);
+        if self.layout_width() >= STATUS_HINT_MIN_WIDTH {
+            left = left.push(text(tool.hint()).size(theme::TEXT_SM).style(theme::text_faint).wrapping(Wrapping::None));
+        }
+
+        let mut right = row![].spacing(10).align_y(Alignment::Center);
+        if self.layout_width() >= STATUS_COUNTS_MIN_WIDTH {
             let transition_count: usize = tab.transitions.values().map(|labels| labels.len()).sum();
-            if self.layout_width() >= STATUS_COUNTS_MIN_WIDTH {
             right = right.push(
                 text(format!(
                     "{} state{} · {} transition{}",
@@ -507,80 +519,87 @@ impl super::app::App {
                     transition_count,
                     if transition_count == 1 { "" } else { "s" },
                 ))
-                .size(12)
+                .size(theme::TEXT_SM)
                 .style(theme::text_faint)
                 .wrapping(Wrapping::None),
             );
-            }
-            if !tab.states.is_empty() {
-                right = right.push(widgets::chip(
-                    if insight.deterministic { "Deterministic" } else { "Nondeterministic" },
-                    Tone::Neutral,
-                ));
-            }
         }
-
-        let health: Element<'_, Message> = match &insight.problem {
-            None if tab.states.is_empty() && !tab.machine.is_grammar() => Space::new(0, 0).into(),
-            None => widgets::chip_with_icon(Icon::Check, Ink::Success, "Ready to run", Tone::Success),
-            Some(problem) => {
-                let short: String = if problem.chars().count() > 48 {
-                    format!("{}…", problem.chars().take(47).collect::<String>())
-                } else {
-                    problem.clone()
-                };
-                tip(
-                    widgets::chip_with_icon(Icon::Warn, Ink::Accent, short, Tone::Warning),
-                    problem.clone(),
-                    tooltip::Position::Top,
-                )
-            }
-        };
-        right = right.push(health);
-
-        if !tab.machine.is_grammar() {
-            right = right.push(
-                text(format!("{:.0}%", tab.state_machine.zoom() * 100.0))
-                    .size(12)
-                    .font(theme::MONO)
-                    .style(theme::text_faint),
-            );
+        if !tab.states.is_empty() {
+            let determinism = if tab.insight.deterministic { "Deterministic" } else { "Nondeterministic" };
+            right = right.push(widgets::chip(determinism, Tone::Neutral)).push(health_chip(&tab.insight.problem));
         }
-
-        container(row![left, horizontal_space(), right].spacing(24).align_y(Alignment::Center))
-            .padding([5, 14])
-            .width(Length::Fill)
-            .style(theme::status_bar)
-            .into()
+        right = right.push(
+            text(format!("{:.0}%", tab.state_machine.zoom() * 100.0))
+                .size(theme::TEXT_SM)
+                .font(theme::MONO)
+                .style(theme::text_faint),
+        );
+        (left.into(), right.into())
     }
 }
+
+fn grammar_status(tab: &Tab) -> (Element<'_, Message>, Element<'_, Message>) {
+    let left = row![
+        widgets::family_dot(Family::Grammar, 7.0),
+        text("Grammar editor").size(theme::TEXT_SM),
+        text(format!("{} productions", tab.insight.production_count)).size(theme::TEXT_SM).style(theme::text_faint),
+    ]
+    .spacing(10)
+    .align_y(Alignment::Center);
+    (left.into(), health_chip(&tab.insight.problem))
+}
+
+fn health_chip(problem: &Option<String>) -> Element<'_, Message> {
+    let Some(problem) = problem else {
+        return widgets::chip_with_icon(Icon::Check, Ink::Success, "Ready to run", Tone::Success);
+    };
+    let short: String = if problem.chars().count() > 48 {
+        format!("{}…", problem.chars().take(47).collect::<String>())
+    } else {
+        problem.clone()
+    };
+    tip(widgets::chip_with_icon(Icon::Warn, Ink::Warning, short, Tone::Warning), problem.clone(), tooltip::Position::Top)
+}
+
+const MENU_ITEM_PADDING: [u16; 2] = [7, 10];
 
 fn menu_item<'a>(
     glyph: Icon,
     label: &'a str,
-    shortcut: Option<&'a str>,
+    shortcut: Option<String>,
+    message: Option<Message>,
+    note: Option<&'a str>,
+) -> Element<'a, Message> {
+    menu_item_in(MENU_ICON_SLOT, glyph, label, shortcut, message, note)
+}
+
+fn menu_item_in<'a>(
+    slot: f32,
+    glyph: Icon,
+    label: &'a str,
+    shortcut: Option<String>,
     message: Option<Message>,
     note: Option<&'a str>,
 ) -> Element<'a, Message> {
     let enabled = message.is_some();
-    let mut body = column![text(label).size(14).font(theme::SEMIBOLD)].spacing(1);
+    let mut body = column![text(label).size(theme::TEXT_BASE).font(theme::SEMIBOLD)].spacing(1);
     if let Some(note) = note {
-        body = body.push(text(note).size(11).style(theme::text_faint));
+        body = body.push(text(note).size(theme::TEXT_XS).style(theme::text_faint));
     }
     let mut line = row![
-        container(icon(glyph, 16.0, if enabled { Ink::Dim } else { Ink::Faint })).padding([0, 2]),
+        container(icon(glyph, widgets::ICON_SIZE, if enabled { Ink::Dim } else { Ink::Faint })).center_x(Length::Fixed(slot)),
         body,
         horizontal_space(),
     ]
     .spacing(10)
     .align_y(Alignment::Center);
     if let Some(shortcut) = shortcut {
-        line = line.push(text(shortcut).size(11).font(theme::MONO).style(theme::text_faint));
+        line = line.push(text(shortcut).size(theme::TEXT_XS).font(theme::MONO).style(theme::text_faint));
     }
     button(line)
         .on_press_maybe(message)
         .width(Length::Fill)
-        .padding([7, 10])
+        .padding(MENU_ITEM_PADDING)
         .style(theme::menu_item)
         .into()
 }
@@ -589,4 +608,13 @@ fn menu_separator<'a>() -> Element<'a, Message> {
     container(iced::widget::horizontal_rule(1).style(theme::divider))
         .padding([4, 6])
         .into()
+}
+
+fn tool_icon(tool: EditorTool) -> Icon {
+    match tool {
+        EditorTool::Arrow => Icon::Select,
+        EditorTool::State => Icon::State,
+        EditorTool::Transition => Icon::Transition,
+        EditorTool::Delete => Icon::Delete,
+    }
 }

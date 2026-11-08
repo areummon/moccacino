@@ -1,8 +1,9 @@
+use iced::time::Instant;
 use iced::{Point, Vector};
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum PendingTransition {
-    Start {
+pub(crate) enum Gesture {
+    Connecting {
         from_state_id: usize,
         from_point: Point,
     },
@@ -16,8 +17,7 @@ pub(crate) enum PendingTransition {
         cursor_start: Point,
     },
     ClickTracking {
-        last_click_time: iced::time::Instant,
-        last_clicked_state: Option<usize>,
-        last_clicked_transition: Option<(usize, usize)>,
+        at: Instant,
+        state_id: usize,
     },
 }

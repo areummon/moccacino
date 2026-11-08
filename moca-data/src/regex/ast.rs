@@ -70,7 +70,7 @@ fn render(node: &RegexAst, context: Precedence) -> String {
     };
     match node {
         RegexAst::Empty => "\u{2205}".to_string(),
-        RegexAst::Epsilon => "ε".to_string(),
+        RegexAst::Epsilon => crate::state::EPSILON.to_string(),
         RegexAst::Char(c) => {
             if is_operator_char(*c) {
                 format!("\\{c}")
