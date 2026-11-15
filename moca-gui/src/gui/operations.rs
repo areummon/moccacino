@@ -103,10 +103,10 @@ impl super::app::App {
                 .parse()
                 .map(|grammar| tikz_export::export_grammar_to_latex(&grammar))
                 .map_err(|problem| format!("Cannot export: {problem}")),
-            None if tab.states.is_empty() && tab.transitions.is_empty() => {
+            None if tab.drawing.is_empty() => {
                 Err("Nothing to export: the canvas is empty.".to_string())
             }
-            None => Ok(tikz_export::export_to_tikz(&tab.states, &tab.transitions, tab.initial_state, &tab.final_states)),
+            None => Ok(tikz_export::export_to_tikz(&tab.drawing)),
         };
         match code {
             Ok(code) => self.latex_export = Some(code),

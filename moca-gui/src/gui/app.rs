@@ -125,6 +125,10 @@ impl App {
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
         let may_change_content = message.may_change_content();
+        if may_change_content {
+            // Closes a finished drag as its own undo step before the next edit lands.
+            self.get_active_tab_mut().record_history();
+        }
         let tabs_before = (self.active_tab, self.tabs.len());
         let mut task = self.dispatch(message);
         if self.tabs.is_empty() {
@@ -154,10 +158,9 @@ impl App {
             }
             Message::KeyPressed { key, modifiers, captured } => self.handle_key_pressed(key, modifiers, captured),
             Message::KeyReleased(key) => self.handle_key_released(key),
-            Message::Clear => {
-                self.get_active_tab_mut().clear();
-                Task::none()
-            }
+            Message::Clear => self.clear_canvas(),
+            Message::Undo => self.undo(),
+            Message::Redo => self.redo(),
             Message::EditTextChanged(text) => {
                 self.get_active_tab_mut().edit_text = text;
                 Task::none()
@@ -326,7 +329,7 @@ impl App {
         let viewport = self.viewport();
         let center = iced::Point::new(viewport.width / 2.0, viewport.height / 2.0);
         let tab = self.get_active_tab_mut();
-        tab.state_machine.zoom_around(factor, center, &tab.states, viewport);
+        tab.state_machine.zoom_around(factor, center, &tab.drawing.states, viewport);
         Task::none()
     }
 
@@ -338,7 +341,7 @@ impl App {
     pub(crate) fn fit_view(&mut self) -> Task<Message> {
         let viewport = self.viewport();
         let tab = self.get_active_tab_mut();
-        tab.state_machine.fit_to(&tab.states, viewport);
+        tab.state_machine.fit_to(&tab.drawing.states, viewport);
         Task::none()
     }
 

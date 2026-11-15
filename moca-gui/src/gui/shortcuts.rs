@@ -25,6 +25,8 @@ pub(crate) enum Action {
     ToggleDelete,
     HoldDelete,
     Escape,
+    Undo,
+    Redo,
     ZoomIn,
     ZoomOut,
     ZoomReset,
@@ -48,7 +50,14 @@ impl Action {
     pub(crate) fn needs_canvas(self) -> bool {
         matches!(
             self,
-            Action::Tool(_) | Action::ToggleDelete | Action::HoldDelete | Action::Fit | Action::PlayPause | Action::Step
+            Action::Tool(_)
+                | Action::ToggleDelete
+                | Action::HoldDelete
+                | Action::Undo
+                | Action::Redo
+                | Action::Fit
+                | Action::PlayPause
+                | Action::Step
         )
     }
 }
@@ -151,6 +160,9 @@ pub(crate) const SHORTCUTS: &[Shortcut] = &[
     gesture(Section::Canvas, &[key(Keycap::Mouse("Shift click"))], "Toggle accepting state"),
     gesture(Section::Canvas, &[key(Keycap::Mouse("Alt click"))], "Make initial state"),
     entry(Section::Canvas, &[key(Keycap::Named(Named::Escape))], "Back to Select", Action::Escape),
+    entry(Section::Canvas, &[ctrl(Keycap::Char("z"))], "Undo", Action::Undo),
+    entry(Section::Canvas, &[ctrl_shift(Keycap::Char("z"))], "Redo", Action::Redo),
+    entry(Section::Canvas, &[ctrl(Keycap::Char("y"))], "Redo (Windows style)", Action::Redo),
     gesture(Section::ViewAndRun, &[key(Keycap::Mouse("Ctrl wheel"))], "Zoom around the cursor"),
     entry(Section::ViewAndRun, &[ctrl(Keycap::Char("+")), ctrl(Keycap::Char("="))], "Zoom in", Action::ZoomIn),
     entry(Section::ViewAndRun, &[ctrl(Keycap::Char("-"))], "Zoom out", Action::ZoomOut),
@@ -179,10 +191,15 @@ pub(crate) const STARTUP_SHORTCUTS: &[Shortcut] = &[
 ];
 
 pub(crate) fn find(table: &[Shortcut], pressed: &Key, modifiers: Modifiers) -> Option<(Action, bool)> {
-    table.iter().find_map(|shortcut| {
-        let chord = shortcut.chords.iter().find(|chord| chord.matches(pressed, modifiers))?;
-        Some((shortcut.action?, chord.ctrl))
-    })
+    table
+        .iter()
+        .filter_map(|shortcut| {
+            let chord = shortcut.chords.iter().find(|chord| chord.matches(pressed, modifiers))?;
+            Some((shortcut.action?, *chord))
+        })
+        // A Shift chord outranks its Shift-less twin, which also matches while Shift is held.
+        .min_by_key(|(_, chord)| !chord.shift)
+        .map(|(action, chord)| (action, chord.ctrl))
 }
 
 fn shortcut_for(action: Action) -> Option<&'static Shortcut> {

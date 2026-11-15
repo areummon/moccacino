@@ -13,14 +13,14 @@ impl super::app::App {
     pub(crate) fn handle_canvas_message(&mut self, canvas_message: CanvasMessage) -> Task<Message> {
         let tab = self.get_active_tab_mut();
         match canvas_message {
-            CanvasMessage::AddState(position) => tab.add_state(position),
+            CanvasMessage::AddState(position) => tab.drawing.add_state(position),
             CanvasMessage::MoveState { state_id, new_position } => tab.move_state(state_id, new_position),
-            CanvasMessage::DeleteState(state_id) => tab.delete_state(state_id),
-            CanvasMessage::DeleteTransition(pair) => tab.delete_transition(pair),
-            CanvasMessage::ToggleFinal(state_id) => tab.toggle_final_state(state_id),
-            CanvasMessage::MakeInitial(state_id) => tab.set_initial_state(state_id),
+            CanvasMessage::DeleteState(state_id) => tab.drawing.delete_state(state_id),
+            CanvasMessage::DeleteTransition(pair) => tab.drawing.delete_transition(pair),
+            CanvasMessage::ToggleFinal(state_id) => tab.drawing.toggle_final_state(state_id),
+            CanvasMessage::MakeInitial(state_id) => tab.drawing.set_initial_state(state_id),
             CanvasMessage::RenameState(state_id) => {
-                let Some(label) = tab.node(state_id).map(|node| node.label.clone()) else {
+                let Some(label) = tab.drawing.node(state_id).map(|node| node.label.clone()) else {
                     return Task::none();
                 };
                 tab.editing_state = Some(state_id);
@@ -31,13 +31,17 @@ impl super::app::App {
                 ]);
             }
             CanvasMessage::EditTransition(pair) => {
-                let Some(labels) = tab.transitions.get(&pair) else {
+                let Some(labels) = tab.drawing.transitions.get(&pair) else {
                     return Task::none();
                 };
                 tab.label_edit = Some(LabelEdit { pair, inputs: labels.iter().cloned().collect() });
                 return iced::widget::text_input::focus(format!("{EDIT_LABEL_INPUT}-0"));
             }
             CanvasMessage::ConnectStates { from, to } => {
+                // An undo can remove the source while the gesture is still pending.
+                if tab.drawing.node(from).is_none() || tab.drawing.node(to).is_none() {
+                    return Task::none();
+                }
                 tab.pending_transition = Some((from, to));
                 tab.edit_text.clear();
                 return iced::widget::text_input::focus(EDIT_TEXT_INPUT);
@@ -50,7 +54,7 @@ impl super::app::App {
             CanvasMessage::Viewport(size) => {
                 let first_report = self.canvas_viewport.is_none();
                 self.canvas_viewport = Some(size);
-                if first_report && !self.get_active_tab().states.is_empty() {
+                if first_report && !self.get_active_tab().drawing.states.is_empty() {
                     return self.fit_view();
                 }
             }
@@ -106,6 +110,8 @@ impl super::app::App {
                 tab.set_active_tool(EditorTool::Delete);
             }
             Action::Escape => return self.escape(),
+            Action::Undo => return self.undo(),
+            Action::Redo => return self.redo(),
             Action::ZoomIn => return self.zoom_by(1.2),
             Action::ZoomOut => return self.zoom_by(1.0 / 1.2),
             Action::ZoomReset => return self.zoom_reset(),

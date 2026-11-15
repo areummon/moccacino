@@ -3,7 +3,7 @@ use iced::{alignment, Color, Point, Vector};
 
 use crate::theme::{self, Palette};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct StateNode {
     pub id: usize,
     pub position: Point,

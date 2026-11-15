@@ -5,6 +5,7 @@ mod dialogs;
 mod editing;
 mod entity_loader;
 mod grammar;
+mod history;
 mod modal;
 mod shortcuts;
 mod layout;

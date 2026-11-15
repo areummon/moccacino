@@ -238,7 +238,7 @@ impl super::app::App {
     fn create_menu(&self, menu: Menu) -> Element<'_, Message> {
         let tab = self.get_active_tab();
         let is_finite = tab.family() == Family::Finite;
-        let has_states = !tab.states.is_empty();
+        let has_states = !tab.drawing.states.is_empty();
         match menu {
             Menu::New | Menu::NewFromTabs => {
                 let mut items = column![].spacing(2);
@@ -352,10 +352,7 @@ impl super::app::App {
         let canvas = tab
             .state_machine
             .view(
-                &tab.states,
-                &tab.transitions,
-                tab.initial_state,
-                &tab.final_states,
+                &tab.drawing,
                 CanvasContext {
                     active_states,
                     family: tab.family(),
@@ -367,7 +364,7 @@ impl super::app::App {
 
         let mut layers: Vec<Element<'_, Message>> = vec![canvas];
 
-        if tab.states.is_empty() {
+        if tab.drawing.states.is_empty() {
             layers.push(
                 container(
                     column![
@@ -399,24 +396,13 @@ impl super::app::App {
                 .into(),
         );
 
-        if !tab.states.is_empty() || !tab.transitions.is_empty() {
+        if !tab.drawing.is_empty() || tab.can_undo() || tab.can_redo() {
             layers.push(
-                container(tip(
-                    container(widgets::text_button(
-                        Some((Icon::Delete, Ink::Danger)),
-                        "Clear",
-                        Some(Message::Clear),
-                        theme::button_danger_ghost,
-                    ))
-                    .padding(FLOATING_PADDING)
-                    .style(theme::floating),
-                    "Remove every state and transition",
-                    tooltip::Position::Left,
-                    ))
-                .width(Length::Fill)
-                .padding(14)
-                .align_x(iced::alignment::Horizontal::Right)
-                .into(),
+                container(mouse_area(self.create_edit_chip()).on_press(Message::Noop))
+                    .width(Length::Fill)
+                    .padding(14)
+                    .align_x(iced::alignment::Horizontal::Right)
+                    .into(),
             );
         }
 
@@ -454,6 +440,30 @@ impl super::app::App {
             ));
         }
         container(tools).padding(FLOATING_PADDING).style(theme::floating).into()
+    }
+
+    fn create_edit_chip(&self) -> Element<'_, Message> {
+        let tab = self.get_active_tab();
+        let history_button = |glyph, label: &str, action, message, enabled: bool| {
+            tip(
+                widgets::icon_button(glyph, enabled.then_some(message), if enabled { Ink::Dim } else { Ink::Faint }),
+                format!("{label}  ({})", hint(action)),
+                tooltip::Position::Bottom,
+            )
+        };
+        let mut chip = row![
+            history_button(Icon::Undo, "Undo", Action::Undo, Message::Undo, tab.can_undo()),
+            history_button(Icon::Redo, "Redo", Action::Redo, Message::Redo, tab.can_redo()),
+        ]
+        .align_y(Alignment::Center);
+        if !tab.drawing.is_empty() {
+            chip = chip.push(tip(
+                widgets::text_button(Some((Icon::Delete, Ink::Danger)), "Clear", Some(Message::Clear), theme::button_danger_ghost),
+                "Remove every state and transition",
+                tooltip::Position::Bottom,
+            ));
+        }
+        container(chip).padding(FLOATING_PADDING).style(theme::floating).into()
     }
 
     fn create_zoom_chip(&self) -> Element<'_, Message> {
@@ -510,12 +520,12 @@ impl super::app::App {
 
         let mut right = row![].spacing(10).align_y(Alignment::Center);
         if self.layout_width() >= STATUS_COUNTS_MIN_WIDTH {
-            let transition_count: usize = tab.transitions.values().map(|labels| labels.len()).sum();
+            let transition_count: usize = tab.drawing.transitions.values().map(|labels| labels.len()).sum();
             right = right.push(
                 text(format!(
                     "{} state{} · {} transition{}",
-                    tab.states.len(),
-                    if tab.states.len() == 1 { "" } else { "s" },
+                    tab.drawing.states.len(),
+                    if tab.drawing.states.len() == 1 { "" } else { "s" },
                     transition_count,
                     if transition_count == 1 { "" } else { "s" },
                 ))
@@ -524,7 +534,7 @@ impl super::app::App {
                 .wrapping(Wrapping::None),
             );
         }
-        if !tab.states.is_empty() {
+        if !tab.drawing.states.is_empty() {
             let determinism = if tab.insight.deterministic { "Deterministic" } else { "Nondeterministic" };
             right = right.push(widgets::chip(determinism, Tone::Neutral)).push(health_chip(&tab.insight.problem));
         }

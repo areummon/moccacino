@@ -369,7 +369,7 @@ impl super::app::App {
 
     fn state_label(&self, state_id: StateID) -> String {
         self.get_active_tab()
-            .node(state_id as usize)
+            .drawing.node(state_id as usize)
             .map_or_else(|| format!("q{state_id}"), |node| node.label.clone())
     }
 }

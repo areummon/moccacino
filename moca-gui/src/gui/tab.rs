@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::hash::{DefaultHasher, Hash, Hasher};
 
 use iced::widget::text_editor;
@@ -6,9 +6,10 @@ use indexmap::IndexSet;
 
 use crate::gui::layout;
 use crate::gui::automaton::Automaton;
+use crate::gui::history::History;
 use crate::gui::run::RunSession;
 use crate::family::Family;
-use crate::state_machine::{self, EditorTool, StateNode};
+use crate::state_machine::{self, Drawing, EditorTool, StateNode, Transitions};
 
 use moca_data::entity_file::{write_grammar_entity, Entity};
 use moca_data::finite_automata::FiniteAutomata;
@@ -69,11 +70,8 @@ pub(crate) struct Tab {
     pub(crate) name: String,
     pub(crate) kind: TabKind,
     pub(crate) state_machine: state_machine::State,
-    pub(crate) states: Vec<StateNode>,
-    pub(crate) transitions: HashMap<(usize, usize), IndexSet<String>>,
-    pub(crate) initial_state: Option<usize>,
-    pub(crate) final_states: HashSet<usize>,
-    next_state_id: usize,
+    pub(crate) drawing: Drawing,
+    history: History,
     pub(crate) editing_state: Option<usize>,
     pub(crate) pending_transition: Option<(usize, usize)>,
     pub(crate) edit_text: String,
@@ -118,6 +116,7 @@ impl Tab {
     pub(crate) fn from_automaton(name: String, automaton: Automaton) -> Self {
         let mut tab = Self { name, kind: TabKind::Automaton(automaton), ..Self::default() };
         tab.load_machine_to_gui();
+        tab.history = History::starting_at(&tab.drawing);
         tab
     }
 
@@ -151,6 +150,7 @@ impl Tab {
             saved_fingerprint: self.saved_fingerprint,
             run_input: std::mem::take(&mut self.run_input),
             dock_collapsed: self.dock_collapsed,
+            history: std::mem::take(&mut self.history),
             kind,
             ..Self::default()
         };
@@ -215,68 +215,55 @@ impl Tab {
         Ok(text)
     }
 
-    pub(crate) fn node(&self, state_id: usize) -> Option<&StateNode> {
-        self.states.iter().find(|node| node.id == state_id)
-    }
-
-    pub(crate) fn add_state(&mut self, position: iced::Point) {
-        let id = self.next_state_id;
-        self.next_state_id += 1;
-        self.states.push(StateNode::new(id, position, format!("q{id}")));
-        if self.states.len() == 1 && self.initial_state.is_none() {
-            self.initial_state = Some(id);
-        }
-    }
-
     pub(crate) fn move_state(&mut self, state_id: usize, position: iced::Point) {
-        if let Some(node) = self.states.iter_mut().find(|node| node.id == state_id) {
-            node.position = position;
-        }
+        self.drawing.move_state(state_id, position);
         self.state_machine.redraw_moved(state_id);
     }
 
-    pub(crate) fn rename_state(&mut self, state_id: usize, label: String) {
-        if let Some(node) = self.states.iter_mut().find(|node| node.id == state_id) {
-            node.label = label;
-        }
-    }
-
-    pub(crate) fn delete_state(&mut self, state_id: usize) {
-        self.states.retain(|node| node.id != state_id);
-        self.transitions.retain(|&(from, to), _| from != state_id && to != state_id);
-        if self.initial_state == Some(state_id) {
-            self.initial_state = None;
-        }
-        self.final_states.remove(&state_id);
-    }
-
-    pub(crate) fn set_initial_state(&mut self, state_id: usize) {
-        self.initial_state = Some(state_id);
-    }
-
-    pub(crate) fn toggle_final_state(&mut self, state_id: usize) {
-        if !self.final_states.remove(&state_id) {
-            self.final_states.insert(state_id);
-        }
-    }
-
-    pub(crate) fn add_transition(&mut self, from: usize, to: usize, label: &str) {
+    pub(crate) fn add_transition(&mut self, pair: (usize, usize), label: &str) {
         let label = normalize_label(self.family(), label);
-        self.transitions.entry((from, to)).or_default().insert(label);
+        self.drawing.add_transition(pair, label);
     }
 
+    /// Blank inputs are dropped, so clearing every field removes the transition.
     pub(crate) fn set_transition_labels(&mut self, pair: (usize, usize), inputs: &[String]) {
-        if inputs.iter().all(|input| input.trim().is_empty()) {
-            self.transitions.remove(&pair);
+        let family = self.family();
+        let labels = if inputs.iter().all(|input| input.trim().is_empty()) {
+            IndexSet::new()
         } else {
-            let family = self.family();
-            let labels = inputs.iter().map(|input| normalize_label(family, input)).collect();
-            self.transitions.insert(pair, labels);
-        }
+            inputs.iter().map(|input| normalize_label(family, input)).collect()
+        };
+        self.drawing.set_transition_labels(pair, labels);
     }
 
-    pub(crate) fn delete_transition(&mut self, pair: (usize, usize)) {
-        self.transitions.remove(&pair);
+    pub(crate) fn record_history(&mut self) {
+        self.history.record(&self.drawing);
+    }
+
+    pub(crate) fn can_undo(&self) -> bool {
+        self.history.can_undo(&self.drawing)
+    }
+
+    pub(crate) fn can_redo(&self) -> bool {
+        self.history.can_redo(&self.drawing)
+    }
+
+    pub(crate) fn undo(&mut self) -> bool {
+        let changed = self.history.undo(&mut self.drawing);
+        self.after_history_step(changed)
+    }
+
+    pub(crate) fn redo(&mut self) -> bool {
+        let changed = self.history.redo(&mut self.drawing);
+        self.after_history_step(changed)
+    }
+
+    // Positions are not fingerprinted, so a step that only moves states needs its own redraw.
+    fn after_history_step(&mut self, changed: bool) -> bool {
+        if changed {
+            self.state_machine.request_redraw();
+        }
+        changed
     }
 
     pub(crate) fn active_tool(&self) -> EditorTool {
@@ -292,6 +279,7 @@ impl Tab {
     }
 
     pub(crate) fn refresh_insight(&mut self) {
+        self.record_history();
         let fingerprint = self.content_fingerprint();
         if self.run.as_ref().is_some_and(|session| session.is_stale(fingerprint)) {
             self.run = None;
@@ -311,7 +299,7 @@ impl Tab {
                 Err(problem) => TabInsight { problem: Some(problem), ..TabInsight::default() },
             };
         }
-        let has_states = !self.states.is_empty();
+        let has_states = !self.drawing.states.is_empty();
         let Ok(automaton) = self.automaton() else {
             return TabInsight::default();
         };
@@ -329,31 +317,14 @@ impl Tab {
             editor.text.trim().hash(&mut hasher);
             return hasher.finish();
         }
-        let mut states: Vec<(usize, &str)> = self.states.iter().map(|node| (node.id, node.label.as_str())).collect();
-        states.sort_unstable();
-        states.hash(&mut hasher);
-        let mut transitions: Vec<((usize, usize), Vec<&str>)> = self
-            .transitions
-            .iter()
-            .map(|(pair, labels)| {
-                let mut labels: Vec<&str> = labels.iter().map(String::as_str).collect();
-                labels.sort_unstable();
-                (*pair, labels)
-            })
-            .collect();
-        transitions.sort_unstable();
-        transitions.hash(&mut hasher);
-        self.initial_state.hash(&mut hasher);
-        let mut finals: Vec<usize> = self.final_states.iter().copied().collect();
-        finals.sort_unstable();
-        finals.hash(&mut hasher);
+        self.drawing.hash_content(&mut hasher);
         hasher.finish()
     }
 
     fn is_empty_content(&self) -> bool {
         match self.grammar() {
             Some(editor) => editor.text.trim().is_empty(),
-            None => self.states.is_empty() && self.transitions.is_empty(),
+            None => self.drawing.is_empty(),
         }
     }
 
@@ -384,18 +355,18 @@ impl Tab {
         self.synced_fingerprint = Some(fingerprint);
         automaton.clear();
         let machine = automaton.structure_mut();
-        for node in &self.states {
+        for node in &self.drawing.states {
             machine.add_state_with_id_label(node.id as u64, &node.label);
         }
-        for (&(from, to), labels) in &self.transitions {
+        for (&(from, to), labels) in &self.drawing.transitions {
             for label in labels {
                 machine.add_transition(from as u64, to as u64, label.clone());
             }
         }
-        for &state_id in &self.final_states {
+        for &state_id in &self.drawing.final_states {
             machine.make_final(state_id as u64);
         }
-        if let Some(initial_id) = self.initial_state {
+        if let Some(initial_id) = self.drawing.initial_state {
             machine.make_initial(initial_id as u64);
         }
     }
@@ -408,23 +379,23 @@ impl Tab {
         let machine = automaton.structure();
         let mut loaded: Vec<_> = machine.get_states_by_id_ref().iter().collect();
         loaded.sort_unstable_by_key(|(id, _)| **id);
-        self.states = loaded
+        let mut states: Vec<StateNode> = loaded
             .into_iter()
             .map(|(id, state)| StateNode::new(*id as usize, iced::Point::new(100.0, 100.0), state.name.clone()))
             .collect();
-        self.next_state_id = self.states.iter().map(|node| node.id + 1).max().unwrap_or(0);
-        self.transitions.clear();
+        let mut transitions = Transitions::new();
         for (from_id, state) in machine.get_states_by_id_ref() {
             for (to_id, inputs) in state.iter_by_transition() {
-                let entry = self.transitions.entry((*from_id as usize, *to_id as usize)).or_default();
+                let entry = transitions.entry((*from_id as usize, *to_id as usize)).or_default();
                 for label in inputs {
                     entry.insert(normalize_label(family, label));
                 }
             }
         }
-        self.initial_state = machine.get_initial_state_id().map(|id| id as usize);
-        self.final_states = machine.get_final_states().iter().map(|&id| id as usize).collect();
-        layout::arrange(&mut self.states, &self.transitions, self.initial_state);
+        let initial_state = machine.get_initial_state_id().map(|id| id as usize);
+        let final_states = machine.get_final_states().iter().map(|&id| id as usize).collect();
+        layout::arrange(&mut states, &transitions, initial_state);
+        self.drawing = Drawing::new(states, transitions, initial_state, final_states);
         self.state_machine.set_scroll(iced::Vector::new(0.0, 0.0));
     }
 }
