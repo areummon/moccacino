@@ -6,7 +6,7 @@ use iced::{Element, Event, Length, Size, Subscription, Task};
 use std::time::Duration;
 
 use super::entity_loader::{PathDialog, SaveDialog};
-use super::message::{Menu, Message};
+use super::message::{ContextMenu, Menu, Message};
 use super::metrics::{CANVAS_CHROME_RESERVE, DEFAULT_WINDOW};
 use super::settings::Settings;
 use super::run::RunSession;
@@ -27,6 +27,7 @@ pub struct App {
     pub(crate) startup_picker_open: bool,
     pub(crate) startup_selected: usize,
     pub(crate) open_menu: Option<Menu>,
+    pub(crate) context_menu: Option<ContextMenu>,
     pub(crate) shortcuts_open: bool,
     pub(crate) load_dialog: Option<PathDialog>,
     pub(crate) save_dialog: Option<SaveDialog>,
@@ -161,6 +162,11 @@ impl App {
             Message::Clear => self.clear_canvas(),
             Message::Undo => self.undo(),
             Message::Redo => self.redo(),
+            Message::DeleteSelection => self.delete_selection(),
+            Message::CloseContextMenu => {
+                self.context_menu = None;
+                Task::none()
+            }
             Message::EditTextChanged(text) => {
                 self.get_active_tab_mut().edit_text = text;
                 Task::none()

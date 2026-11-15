@@ -8,7 +8,7 @@ use super::canvas::StateMachine;
 use super::util::VectorExt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Hit {
+pub enum Hit {
     State(usize),
     Transition((usize, usize)),
 }

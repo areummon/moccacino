@@ -3,6 +3,7 @@ use iced::time::Instant;
 use iced::widget::canvas::{self, Event, Frame, Geometry, LineCap, LineDash, Path, Stroke, Text};
 use iced::{alignment, mouse, Color, Point, Rectangle, Renderer, Size, Theme, Vector};
 use indexmap::IndexSet;
+use std::collections::HashSet;
 use std::time::Duration;
 
 use super::canvas::StateMachine;
@@ -112,6 +113,14 @@ impl StateMachine<'_> {
                 if interaction.modifiers.alt() {
                     return captured(Some(CanvasMessage::MakeInitial(id)));
                 }
+                let selection = self.state.selection();
+                if interaction.modifiers.command() {
+                    let mut toggled = selection.clone();
+                    if !toggled.remove(&id) {
+                        toggled.insert(id);
+                    }
+                    return captured(Some(CanvasMessage::Select(toggled)));
+                }
                 if let Some(node) = self.clicked_node(hit) {
                     interaction.gesture = Some(Gesture::Dragging {
                         state_id: id,
@@ -119,12 +128,17 @@ impl StateMachine<'_> {
                         moved: false,
                     });
                 }
-                captured(None)
+                // Pressing a selected state keeps the selection, so the drag moves all of it.
+                captured((!selection.contains(&id)).then(|| CanvasMessage::Select(HashSet::from([id]))))
             }
             Some(Hit::Transition(pair)) => captured(Some(CanvasMessage::EditTransition(pair))),
+            None if interaction.modifiers.command() => {
+                interaction.gesture = Some(Gesture::Selecting { origin: world, current: world });
+                captured(None)
+            }
             None => {
                 interaction.gesture = Some(Gesture::Panning { origin_scroll: self.state.scroll(), cursor_start: screen });
-                captured(None)
+                captured((!self.state.selection().is_empty()).then(|| CanvasMessage::Select(HashSet::new())))
             }
         }
     }
@@ -178,6 +192,10 @@ impl StateMachine<'_> {
                 );
                 captured(changed(new_scroll, scroll).then_some(CanvasMessage::Scrolled(new_scroll)))
             }
+            Some(Gesture::Selecting { origin, .. }) => {
+                interaction.gesture = Some(Gesture::Selecting { origin, current: world });
+                captured(None)
+            }
             Some(Gesture::Connecting { .. }) => {
                 interaction.hover = self.hit_test(world).filter(|hit| matches!(hit, Hit::State(_)));
                 captured(None)
@@ -192,8 +210,14 @@ impl StateMachine<'_> {
         }
     }
 
-    fn release(interaction: &mut Interaction) -> Outcome {
+    fn release(&self, interaction: &mut Interaction) -> Outcome {
         match interaction.gesture {
+            Some(Gesture::Selecting { origin, current }) => {
+                interaction.gesture = None;
+                let area = marquee(origin, current);
+                let inside = self.states.iter().filter(|node| area.contains(node.position)).map(|node| node.id);
+                captured(Some(CanvasMessage::Select(inside.collect())))
+            }
             Some(Gesture::Dragging { state_id, moved, .. }) => {
                 interaction.gesture = (!moved).then(|| Gesture::ClickTracking { at: Instant::now(), state_id });
                 captured(None)
@@ -205,6 +229,18 @@ impl StateMachine<'_> {
             _ => IGNORED,
         }
     }
+
+    fn context_press(&self, interaction: &mut Interaction, screen: Point) -> Outcome {
+        interaction.gesture = None;
+        match self.hit_test(self.state.to_world(screen)) {
+            Some(hit) => captured(Some(CanvasMessage::ContextMenu { hit, at: screen })),
+            None => IGNORED,
+        }
+    }
+}
+
+fn marquee(a: Point, b: Point) -> Rectangle {
+    Rectangle::new(Point::new(a.x.min(b.x), a.y.min(b.y)), Size::new((a.x - b.x).abs(), (a.y - b.y).abs()))
 }
 
 impl canvas::Program<CanvasMessage> for StateMachine<'_> {
@@ -241,7 +277,11 @@ impl canvas::Program<CanvasMessage> for StateMachine<'_> {
                 interaction.hover = None;
                 IGNORED
             }
-            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => Self::release(interaction),
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) => match screen {
+                Some(screen) => self.context_press(interaction, screen),
+                None => IGNORED,
+            },
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => self.release(interaction),
             _ => IGNORED,
         }
     }
@@ -289,6 +329,18 @@ impl canvas::Program<CanvasMessage> for StateMachine<'_> {
             frame.scale(zoom);
             frame.translate(-scroll);
             let node_by_id = self.node_by_id();
+            for node in self.state.selection().iter().filter_map(|id| node_by_id.get(id)) {
+                frame.stroke(
+                    &Path::circle(node.position, StateNode::RADIUS + 5.0),
+                    Stroke::default().with_width(2.0).with_color(p.accent_strong),
+                );
+            }
+            if let Some(Gesture::Selecting { origin, current }) = interaction.gesture {
+                let area = marquee(origin, current);
+                let outline = Path::rectangle(area.position(), area.size());
+                frame.fill(&outline, theme::alpha(p.accent, 0.10));
+                frame.stroke(&outline, Stroke::default().with_width(1.0 / zoom).with_color(p.accent_strong));
+            }
             match interaction.hover.filter(|_| self.interactive) {
                 Some(Hit::State(id)) => {
                     if let Some(node) = node_by_id.get(&id) {

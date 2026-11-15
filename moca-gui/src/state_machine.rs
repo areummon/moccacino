@@ -11,6 +11,7 @@ mod state;
 mod tool;
 mod util;
 
+pub use hit_testing::Hit;
 pub use message::CanvasMessage;
 pub use node::StateNode;
 pub use state::State;

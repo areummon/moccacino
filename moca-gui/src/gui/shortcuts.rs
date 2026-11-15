@@ -27,6 +27,7 @@ pub(crate) enum Action {
     Escape,
     Undo,
     Redo,
+    SelectAll,
     ZoomIn,
     ZoomOut,
     ZoomReset,
@@ -47,6 +48,11 @@ pub(crate) enum Action {
 }
 
 impl Action {
+    /// Ctrl chords that a focused text field keeps for itself.
+    pub(crate) fn yields_to_text_fields(self) -> bool {
+        matches!(self, Action::Undo | Action::Redo | Action::SelectAll)
+    }
+
     pub(crate) fn needs_canvas(self) -> bool {
         matches!(
             self,
@@ -55,6 +61,7 @@ impl Action {
                 | Action::HoldDelete
                 | Action::Undo
                 | Action::Redo
+                | Action::SelectAll
                 | Action::Fit
                 | Action::PlayPause
                 | Action::Step
@@ -156,9 +163,13 @@ pub(crate) const SHORTCUTS: &[Shortcut] = &[
     entry(Section::Canvas, &[key(Keycap::Char("3"))], "Transition tool", Action::Tool(EditorTool::Transition)),
     entry(Section::Canvas, &[key(Keycap::Char("4"))], "Delete tool", Action::Tool(EditorTool::Delete)),
     entry(Section::Canvas, &[key(Keycap::Named(Named::Tab))], "Toggle Select ↔ Delete", Action::ToggleDelete),
-    entry(Section::Canvas, &[key(Keycap::Named(Named::Delete))], "Hold for a quick delete", Action::HoldDelete),
+    entry(Section::Canvas, &[key(Keycap::Named(Named::Delete))], "Delete selection, or hold to delete", Action::HoldDelete),
     gesture(Section::Canvas, &[key(Keycap::Mouse("Shift click"))], "Toggle accepting state"),
     gesture(Section::Canvas, &[key(Keycap::Mouse("Alt click"))], "Make initial state"),
+    gesture(Section::Canvas, &[ctrl(Keycap::Mouse("click"))], "Toggle a state in the selection"),
+    gesture(Section::Canvas, &[ctrl(Keycap::Mouse("drag"))], "Select an area"),
+    entry(Section::Canvas, &[ctrl(Keycap::Char("a"))], "Select every state", Action::SelectAll),
+    gesture(Section::Canvas, &[key(Keycap::Mouse("Right click"))], "Menu for a state or transition"),
     entry(Section::Canvas, &[key(Keycap::Named(Named::Escape))], "Back to Select", Action::Escape),
     entry(Section::Canvas, &[ctrl(Keycap::Char("z"))], "Undo", Action::Undo),
     entry(Section::Canvas, &[ctrl_shift(Keycap::Char("z"))], "Redo", Action::Redo),

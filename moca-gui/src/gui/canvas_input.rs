@@ -2,15 +2,18 @@ use iced::keyboard::{Key, Modifiers};
 use iced::Task;
 
 use crate::platform;
-use crate::state_machine::{CanvasMessage, EditorTool};
+use crate::state_machine::{CanvasMessage, EditorTool, Hit};
 
 use super::dialogs::{EDIT_LABEL_INPUT, EDIT_TEXT_INPUT};
-use super::message::{Menu, Message};
+use super::message::{ContextMenu, Menu, Message};
 use super::shortcuts::{self, Action};
 use super::tab::LabelEdit;
 
 impl super::app::App {
     pub(crate) fn handle_canvas_message(&mut self, canvas_message: CanvasMessage) -> Task<Message> {
+        if !matches!(canvas_message, CanvasMessage::Viewport(_)) {
+            self.context_menu = None;
+        }
         let tab = self.get_active_tab_mut();
         match canvas_message {
             CanvasMessage::AddState(position) => tab.drawing.add_state(position),
@@ -46,6 +49,15 @@ impl super::app::App {
                 tab.edit_text.clear();
                 return iced::widget::text_input::focus(EDIT_TEXT_INPUT);
             }
+            CanvasMessage::Select(selection) => tab.state_machine.set_selection(selection),
+            CanvasMessage::ContextMenu { hit, at } => {
+                if let Hit::State(state_id) = hit {
+                    if !tab.state_machine.selection().contains(&state_id) {
+                        tab.state_machine.set_selection([state_id].into());
+                    }
+                }
+                self.context_menu = Some(ContextMenu { hit, at });
+            }
             CanvasMessage::Scrolled(scroll) => tab.state_machine.set_scroll(scroll),
             CanvasMessage::Zoomed { zoom, scroll } => {
                 tab.state_machine.set_zoom(zoom);
@@ -77,7 +89,8 @@ impl super::app::App {
         if action == Action::Escape {
             return self.escape();
         }
-        if self.any_modal_open() || (captured && !with_ctrl) || (action.needs_canvas() && self.get_active_tab().is_grammar()) {
+        let typing = captured && (!with_ctrl || action.yields_to_text_fields());
+        if self.any_modal_open() || typing || (action.needs_canvas() && self.get_active_tab().is_grammar()) {
             return Task::none();
         }
         self.perform(action)
@@ -87,13 +100,15 @@ impl super::app::App {
         if self.renaming_tab.take().is_some() {
             return Task::none();
         }
-        if self.open_menu.take().is_some() {
+        if self.open_menu.take().is_some() || self.context_menu.take().is_some() {
             return Task::none();
         }
         if self.any_modal_open() {
             return self.dismiss_modal();
         }
-        self.get_active_tab_mut().set_active_tool(EditorTool::Arrow);
+        let tab = self.get_active_tab_mut();
+        tab.set_active_tool(EditorTool::Arrow);
+        tab.state_machine.set_selection(Default::default());
         Task::none()
     }
 
@@ -105,6 +120,7 @@ impl super::app::App {
                 let next = if tab.state_machine.is_deletion_mode() { EditorTool::Arrow } else { EditorTool::Delete };
                 tab.set_active_tool(next);
             }
+            Action::HoldDelete if !tab.state_machine.selection().is_empty() => return self.delete_selection(),
             Action::HoldDelete => {
                 tab.state_machine.stash_tool();
                 tab.set_active_tool(EditorTool::Delete);
@@ -112,6 +128,7 @@ impl super::app::App {
             Action::Escape => return self.escape(),
             Action::Undo => return self.undo(),
             Action::Redo => return self.redo(),
+            Action::SelectAll => return self.select_all(),
             Action::ZoomIn => return self.zoom_by(1.2),
             Action::ZoomOut => return self.zoom_by(1.0 / 1.2),
             Action::ZoomReset => return self.zoom_reset(),

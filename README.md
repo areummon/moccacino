@@ -81,12 +81,14 @@ Editing is tool-based, in the style of JFLAP:
 
 | Tool | Key | What it does |
 |---|---|---|
-| **Select** | `1` | Drag a state to move it, or drag empty space to pan. Double-click a state to rename it; click a transition to edit its label. `Shift`+click toggles accepting, `Alt`+click makes a state initial. |
+| **Select** | `1` | Drag a state to move it, or drag empty space to pan. Double-click a state to rename it; click a transition to edit its label. `Shift`+click toggles accepting, `Alt`+click makes a state initial. `Ctrl`+click or `Ctrl`+drag selects several states, which then move together. |
 | **State** | `2` | Click empty space to add a state. |
 | **Transition** | `3` | Click the source state, then the target state. |
 | **Delete** | `4` | Click a state or transition to remove it. |
 
 `Tab` switches between Select and Delete. Holding `Delete` gives you the Delete tool while the key is held, and `Esc` returns to Select.
+
+Right-click a state or transition for its actions (rename, accepting, initial, delete). With several states selected, `Ctrl+A` selects all, `Del` deletes them, and `Esc` clears the selection.
 
 Every canvas edit can be undone with `Ctrl+Z` and redone with `Ctrl+Shift+Z` (or `Ctrl+Y`), or with the arrows beside **Clear**. That covers moving a state and clearing the canvas. Each tab keeps its own history.
 

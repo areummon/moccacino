@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 
-use iced::Point;
+use iced::{Point, Vector};
 use indexmap::IndexSet;
 
 use super::node::StateNode;
@@ -50,9 +50,9 @@ impl Drawing {
         }
     }
 
-    pub(crate) fn move_state(&mut self, state_id: usize, position: Point) {
-        if let Some(node) = self.node_mut(state_id) {
-            node.position = position;
+    pub(crate) fn translate(&mut self, ids: &HashSet<usize>, delta: Vector) {
+        for node in self.states.iter_mut().filter(|node| ids.contains(&node.id)) {
+            node.position = node.position + delta;
         }
     }
 

@@ -1,7 +1,7 @@
 use iced::keyboard;
 
 use crate::family::Family;
-use crate::state_machine::{CanvasMessage, EditorTool};
+use crate::state_machine::{CanvasMessage, EditorTool, Hit};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Menu {
@@ -10,6 +10,13 @@ pub enum Menu {
     Operations,
     File,
     Export,
+}
+
+/// The right-click menu of a state or transition, anchored at a point relative to the canvas.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ContextMenu {
+    pub(crate) hit: Hit,
+    pub(crate) at: iced::Point,
 }
 
 #[derive(Debug, Clone)]
@@ -25,6 +32,8 @@ pub enum Message {
     Clear,
     Undo,
     Redo,
+    DeleteSelection,
+    CloseContextMenu,
     EditTextChanged(String),
     FinishEditing,
     ToggleMenu(Menu),
