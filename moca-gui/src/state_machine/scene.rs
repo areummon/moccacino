@@ -94,7 +94,7 @@ impl Scene<'_> {
         let extent = state.scene_extent(|| machine.content_extent());
         let size = Size::new((extent.width * zoom).ceil().max(1.0), (extent.height * zoom).ceil().max(1.0));
         let dragged = state.dragged();
-        let still = |id: usize| Some(id) != dragged;
+        let still = |id: usize| !dragged.contains(&id);
         let cached = |cache: &Cache, draw: &dyn Fn(&mut Frame)| {
             cache.draw(renderer, size, |frame| {
                 frame.scale(zoom);
@@ -104,7 +104,7 @@ impl Scene<'_> {
         };
         let edges = cached(&state.edge_cache, &|frame| machine.draw_edges(frame, p, |from, to| still(from) && still(to)));
         let nodes = cached(&state.node_cache, &|frame| machine.draw_nodes(frame, p, still));
-        // The dragged state and its edges, drawn fresh at viewport size.
+        // The dragged states and their edges, drawn fresh at viewport size.
         let live = |draw: &dyn Fn(&mut Frame)| {
             let mut frame = Frame::new(renderer, bounds.size());
             frame.scale(zoom);
@@ -112,10 +112,10 @@ impl Scene<'_> {
             draw(&mut frame);
             frame.into_geometry()
         };
-        let moving = dragged.map(|id| {
+        let moving = (!dragged.is_empty()).then(|| {
             (
-                live(&|frame| machine.draw_edges(frame, p, |from, to| from == id || to == id)),
-                live(&|frame| machine.draw_nodes(frame, p, |node| node == id)),
+                live(&|frame| machine.draw_edges(frame, p, |from, to| !still(from) || !still(to))),
+                live(&|frame| machine.draw_nodes(frame, p, |node| !still(node))),
             )
         });
 

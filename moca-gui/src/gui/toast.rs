@@ -75,7 +75,8 @@ impl super::app::App {
                 Tone::Success => (Icon::Check, Ink::Success),
                 Tone::Danger => (Icon::Close, Ink::Danger),
                 Tone::Warning => (Icon::Warn, Ink::Warning),
-                Tone::Accent | Tone::Neutral => (Icon::Check, Ink::Accent),
+                Tone::Accent => (Icon::Check, Ink::Accent),
+                Tone::Neutral => (Icon::Reset, Ink::Dim),
             };
             let mut content = column![text(toast.title.clone()).size(theme::TEXT_BASE).font(theme::SEMIBOLD)].spacing(4);
             if let Some(body) = &toast.body {

@@ -16,6 +16,11 @@ pub(crate) enum Gesture {
         origin_scroll: Vector,
         cursor_start: Point,
     },
+    /// A marquee between two world points.
+    Selecting {
+        origin: Point,
+        current: Point,
+    },
     ClickTracking {
         at: Instant,
         state_id: usize,

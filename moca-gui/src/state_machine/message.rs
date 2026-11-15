@@ -1,4 +1,8 @@
+use std::collections::HashSet;
+
 use iced::{Point, Size, Vector};
+
+use super::hit_testing::Hit;
 
 #[derive(Debug, Clone)]
 pub enum CanvasMessage {
@@ -11,6 +15,9 @@ pub enum CanvasMessage {
     RenameState(usize),
     EditTransition((usize, usize)),
     ConnectStates { from: usize, to: usize },
+    Select(HashSet<usize>),
+    /// A right-click on `hit`, at a point relative to the canvas.
+    ContextMenu { hit: Hit, at: Point },
     Scrolled(Vector),
     Zoomed { zoom: f32, scroll: Vector },
     Viewport(Size),

@@ -215,9 +215,27 @@ impl Tab {
         Ok(text)
     }
 
+    /// Moves `state_id` to `position`, carrying the rest of the selection along when it is part of it.
     pub(crate) fn move_state(&mut self, state_id: usize, position: iced::Point) {
-        self.drawing.move_state(state_id, position);
-        self.state_machine.redraw_moved(state_id);
+        let Some(node) = self.drawing.node(state_id) else {
+            return;
+        };
+        let delta = position - node.position;
+        let selection = self.state_machine.selection();
+        let moving = if selection.contains(&state_id) { selection.clone() } else { HashSet::from([state_id]) };
+        self.drawing.translate(&moving, delta);
+        self.state_machine.redraw_moved(&moving);
+    }
+
+    pub(crate) fn select_all(&mut self) {
+        self.state_machine.set_selection(self.drawing.states.iter().map(|node| node.id).collect());
+    }
+
+    pub(crate) fn delete_selection(&mut self) {
+        for state_id in self.state_machine.selection().clone() {
+            self.drawing.delete_state(state_id);
+        }
+        self.state_machine.set_selection(HashSet::new());
     }
 
     pub(crate) fn add_transition(&mut self, pair: (usize, usize), label: &str) {
@@ -280,6 +298,8 @@ impl Tab {
 
     pub(crate) fn refresh_insight(&mut self) {
         self.record_history();
+        let drawing = &self.drawing;
+        self.state_machine.retain_selection(|id| drawing.node(id).is_some());
         let fingerprint = self.content_fingerprint();
         if self.run.as_ref().is_some_and(|session| session.is_stale(fingerprint)) {
             self.run = None;

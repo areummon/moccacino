@@ -64,8 +64,8 @@ full-width layout: brand, menus and tabs on one header row). Each command waits
 
 | Command | Does |
 |---|---|
-| `$M click X Y [shift\|alt\|ctrl\|double]…` | left click; modifiers are held 0.2 s before the click (see gotcha) |
-| `$M drag X1 Y1 X2 Y2` | press, move in 8 steps, release (move states, pan) |
+| `$M click X Y [shift\|alt\|ctrl\|double\|right]…` | left click, or right click with `right`; modifiers are held 0.2 s before the click (see gotcha) |
+| `$M drag X1 Y1 X2 Y2 [shift\|alt\|ctrl]…` | press, move in 8 steps, release (move states, pan; `ctrl` draws a selection rectangle) |
 | `$M size W H` | resize the window (responsive layouts; see Gotchas) |
 | `$M move X Y` | hover only (also: park the pointer away before a shot to drop hover rings/tooltips) |
 | `$M key K…` | xdotool keysyms: `Return Escape Tab Delete Right space 1 2 ctrl+s ctrl+o ctrl+Tab ctrl+shift+Tab ctrl+a F1` |

@@ -8,7 +8,7 @@ use iced::{Alignment, Element, Length, Padding};
 
 use super::feature_icon::feature_icon;
 use super::icons::{icon, Icon, Ink};
-use super::message::{Menu, Message};
+use super::message::{ContextMenu, Menu, Message};
 use super::metrics::{
     BRAND_TEXT_MIN_WIDTH, DOCK_COMPACT_MAX_WIDTH, HEADER_HEIGHT, PALETTE_ICONS_ONLY_MAX_WIDTH, STACKED_HEADER_MAX_WIDTH,
     STATUS_BAR_HEIGHT, STATUS_COUNTS_MIN_WIDTH, STATUS_HINT_MIN_WIDTH, TAB_ROW_HEIGHT,
@@ -19,7 +19,7 @@ use super::tab::Tab;
 use super::workspace::{TAB_RENAME_INPUT, TAB_STRIP};
 use crate::theme::{self, ThemeMode, Tone};
 use crate::family::Family;
-use crate::state_machine::{CanvasContext, EditorTool};
+use crate::state_machine::{CanvasContext, CanvasMessage, EditorTool, Hit};
 
 const HEADER_PADDING_X: f32 = 12.0;
 const BRAND_WIDTH: f32 = 128.0;
@@ -37,6 +37,9 @@ const NEW_TAB_GAP: f32 = 8.0;
 /// Inset of the floating canvas surfaces (tool palette, Clear, zoom chip), so all three are 40 px tall.
 const FLOATING_PADDING: u16 = 4;
 const DROPDOWN_WIDTH: f32 = 304.0;
+const CONTEXT_MENU_WIDTH: f32 = 248.0;
+/// Tallest context menu (four items and a separator), used to keep it inside the canvas.
+const CONTEXT_MENU_MAX_HEIGHT: f32 = 176.0;
 /// Width of the leading icon column in a menu, so labels in one menu share a left edge.
 const MENU_ICON_SLOT: f32 = 20.0;
 const FAMILY_ICON_SLOT: f32 = 30.0;
@@ -356,7 +359,7 @@ impl super::app::App {
                 CanvasContext {
                     active_states,
                     family: tab.family(),
-                    interactive: !self.any_modal_open() && self.open_menu.is_none(),
+                    interactive: !self.any_modal_open() && self.open_menu.is_none() && self.context_menu.is_none(),
                     known_viewport: self.canvas_viewport.unwrap_or(iced::Size::ZERO),
                 },
             )
@@ -416,7 +419,68 @@ impl super::app::App {
                 .into(),
         );
 
+        if let Some(menu) = self.context_menu {
+            layers.push(self.create_context_menu_layer(menu));
+        }
+
         stack(layers).width(Length::Fill).height(Length::Fill).into()
+    }
+
+    fn create_context_menu_layer(&self, menu: ContextMenu) -> Element<'_, Message> {
+        let viewport = self.canvas_viewport.unwrap_or(iced::Size::new(f32::MAX, f32::MAX));
+        let left = menu.at.x.min(viewport.width - CONTEXT_MENU_WIDTH - 8.0).max(0.0);
+        let top = menu.at.y.min(viewport.height - CONTEXT_MENU_MAX_HEIGHT - 8.0).max(0.0);
+        let panel = container(self.create_context_menu(menu.hit))
+            .padding(6)
+            .width(Length::Fixed(CONTEXT_MENU_WIDTH))
+            .style(theme::menu_panel);
+        mouse_area(
+            container(mouse_area(panel).on_press(Message::Noop))
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .padding(Padding { top, right: 0.0, bottom: 0.0, left }),
+        )
+        .on_press(Message::CloseContextMenu)
+        .on_right_press(Message::CloseContextMenu)
+        .into()
+    }
+
+    fn create_context_menu(&self, hit: Hit) -> Element<'_, Message> {
+        let tab = self.get_active_tab();
+        let canvas = |message| Some(Message::Canvas(message));
+        let items = match hit {
+            Hit::State(_) if tab.state_machine.selection().len() > 1 => {
+                column![menu_item(Icon::Delete, "Delete selected states", Some(hint(Action::HoldDelete)), Some(Message::DeleteSelection), None)]
+            }
+            Hit::State(id) => {
+                let accepting = tab.drawing.final_states.contains(&id);
+                let initial = tab.drawing.initial_state == Some(id);
+                column![
+                    menu_item(Icon::Keyboard, "Rename…", Some("Double-click".to_string()), canvas(CanvasMessage::RenameState(id)), None),
+                    menu_item(
+                        Icon::Check,
+                        if accepting { "Unmark accepting" } else { "Mark accepting" },
+                        Some("Shift+click".to_string()),
+                        canvas(CanvasMessage::ToggleFinal(id)),
+                        None,
+                    ),
+                    menu_item(
+                        Icon::State,
+                        "Make initial",
+                        Some("Alt+click".to_string()),
+                        (!initial).then(|| Message::Canvas(CanvasMessage::MakeInitial(id))),
+                        initial.then_some("Already the initial state"),
+                    ),
+                    menu_separator(),
+                    menu_item(Icon::Delete, "Delete state", Some(hint(Action::HoldDelete)), canvas(CanvasMessage::DeleteState(id)), None),
+                ]
+            }
+            Hit::Transition(pair) => column![
+                menu_item(Icon::Keyboard, "Edit labels…", Some("Click".to_string()), canvas(CanvasMessage::EditTransition(pair)), None),
+                menu_item(Icon::Delete, "Delete transition", None, canvas(CanvasMessage::DeleteTransition(pair)), None),
+            ],
+        };
+        items.spacing(2).into()
     }
 
     fn create_tool_palette(&self) -> Element<'_, Message> {
@@ -534,6 +598,10 @@ impl super::app::App {
                 .wrapping(Wrapping::None),
             );
         }
+        let selected = tab.state_machine.selection().len();
+        if selected > 0 {
+            right = right.push(widgets::chip(format!("{selected} selected"), Tone::Accent));
+        }
         if !tab.drawing.states.is_empty() {
             let determinism = if tab.insight.deterministic { "Deterministic" } else { "Nondeterministic" };
             right = right.push(widgets::chip(determinism, Tone::Neutral)).push(health_chip(&tab.insight.problem));
@@ -604,7 +672,7 @@ fn menu_item_in<'a>(
     .spacing(10)
     .align_y(Alignment::Center);
     if let Some(shortcut) = shortcut {
-        line = line.push(text(shortcut).size(theme::TEXT_XS).font(theme::MONO).style(theme::text_faint));
+        line = line.push(text(shortcut).size(theme::TEXT_XS).font(theme::MONO).style(theme::text_faint).wrapping(Wrapping::None));
     }
     button(line)
         .on_press_maybe(message)

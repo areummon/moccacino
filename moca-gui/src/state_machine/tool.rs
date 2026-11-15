@@ -24,9 +24,9 @@ impl EditorTool {
     pub(crate) fn tooltip(self) -> &'static str {
         match self {
             EditorTool::Arrow => {
-                "Drag to move states · drag empty space to pan · double-click a state to \
-                 rename · Shift+click: final · Alt+click: initial · click a transition to \
-                 edit its labels"
+                "Drag to move states · drag empty space to pan · Ctrl+click or Ctrl+drag to \
+                 select several · double-click a state to rename · click a transition to \
+                 edit its labels · right-click for more"
             }
             EditorTool::State => "Click empty canvas to create a state there",
             EditorTool::Transition => {
@@ -39,7 +39,7 @@ impl EditorTool {
 
     pub(crate) fn hint(self) -> &'static str {
         match self {
-            EditorTool::Arrow => "Drag states · drag space to pan · double-click to rename",
+            EditorTool::Arrow => "Drag states · drag space to pan · Ctrl+drag to select · right-click for more",
             EditorTool::State => "Click anywhere to place a state",
             EditorTool::Transition => "Click a source state, then its target",
             EditorTool::Delete => "Click a state or transition to remove it",

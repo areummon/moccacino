@@ -1,4 +1,5 @@
 use std::cell::Cell;
+use std::collections::HashSet;
 
 use iced::widget::canvas;
 use iced::{Point, Rectangle, Size, Vector};
@@ -13,11 +14,12 @@ const CONTENT_MARGIN: f32 = 80.0;
 const CONTENT_MARGIN_TOP: f32 = 120.0;
 
 pub struct State {
-    /// The graph, split so edges stay under nodes. While a state is dragged both leave it
-    /// (and its edges) out, and the scene draws those few shapes fresh each frame.
+    /// The graph, split so edges stay under nodes. While states are dragged both leave them
+    /// (and their edges) out, and the scene draws those few shapes fresh each frame.
     pub(crate) edge_cache: canvas::Cache,
     pub(crate) node_cache: canvas::Cache,
-    dragged: Option<usize>,
+    dragged: HashSet<usize>,
+    selection: HashSet<usize>,
     /// One viewport of dots; kept across pans and edits, rebuilt on zoom, resize or theme.
     pub(crate) grid_cache: canvas::Cache,
     /// World rectangle the cached scene covers; computed with the cache and cleared with it.
@@ -33,7 +35,8 @@ impl Default for State {
         Self {
             edge_cache: canvas::Cache::default(),
             node_cache: canvas::Cache::default(),
-            dragged: None,
+            dragged: HashSet::new(),
+            selection: HashSet::new(),
             grid_cache: canvas::Cache::default(),
             scene_extent: Cell::new(None),
             tool: EditorTool::default(),
@@ -108,20 +111,32 @@ impl State {
         self.edge_cache.clear();
         self.node_cache.clear();
         self.scene_extent.set(None);
-        self.dragged = None;
+        self.dragged.clear();
     }
 
-    /// Redraw after `id` moved. The first move of a drag rebuilds the caches without it;
-    /// later moves of the same state reuse them.
-    pub(crate) fn redraw_moved(&mut self, id: usize) {
-        if self.dragged != Some(id) {
+    /// Redraw after `ids` moved. The first move of a drag rebuilds the caches without them;
+    /// later moves of the same states reuse them.
+    pub(crate) fn redraw_moved(&mut self, ids: &HashSet<usize>) {
+        if self.dragged != *ids {
             self.request_redraw();
-            self.dragged = Some(id);
+            self.dragged.clone_from(ids);
         }
     }
 
-    pub(crate) fn dragged(&self) -> Option<usize> {
-        self.dragged
+    pub(crate) fn dragged(&self) -> &HashSet<usize> {
+        &self.dragged
+    }
+
+    pub(crate) fn selection(&self) -> &HashSet<usize> {
+        &self.selection
+    }
+
+    pub(crate) fn set_selection(&mut self, selection: HashSet<usize>) {
+        self.selection = selection;
+    }
+
+    pub(crate) fn retain_selection(&mut self, keep: impl Fn(usize) -> bool) {
+        self.selection.retain(|&id| keep(id));
     }
 
     pub(crate) fn request_full_redraw(&mut self) {

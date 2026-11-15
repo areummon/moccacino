@@ -6,7 +6,7 @@
 #   moca up                      build, start Xvfb + app, wait for the window
 #   moca doctor                  read-only health check of the instance
 #   moca shot <name>             window screenshot -> evidence dir
-#   moca click X Y [shift|alt|ctrl|double]...   window-relative click
+#   moca click X Y [shift|alt|ctrl|double|right]...   window-relative click
 #   moca drag X1 Y1 X2 Y2        left-button drag
 #   moca move X Y                hover only
 #   moca size W H                resize the window (responsive layouts)
@@ -162,18 +162,19 @@ cmd_shot() {
     echo "$out"
 }
 
-mods_down() { local m; for m in "$@"; do [[ $m == double ]] || xdotool keydown "$m"; done; }
-mods_up() { local m; for m in "$@"; do [[ $m == double ]] || xdotool keyup "$m"; done; }
+mods_down() { local m; for m in "$@"; do [[ $m == double || $m == right ]] || xdotool keydown "$m"; done; }
+mods_up() { local m; for m in "$@"; do [[ $m == double || $m == right ]] || xdotool keyup "$m"; done; }
 
 cmd_click() {
     tools; load
     local x="${1:?usage: moca click X Y [mods]}" y="${2:?}"; shift 2
-    local repeat=1 m
+    local repeat=1 button=1 m
     for m in "$@"; do
         case "$m" in
             shift|alt|ctrl) ;;
             double) repeat=2 ;;
-            *) die "unknown click modifier '$m' (shift|alt|ctrl|double)" ;;
+            right) button=3 ;;
+            *) die "unknown click modifier '$m' (shift|alt|ctrl|double|right)" ;;
         esac
     done
     xdotool mousemove --window "$WID" "$x" "$y"
@@ -182,7 +183,7 @@ cmd_click() {
     # The app learns modifiers from its key subscription, which iced delivers
     # after the canvas has already handled a same-batch click: hold first.
     (($#)) && sleep 0.2
-    xdotool click --repeat "$repeat" --delay 80 1
+    xdotool click --repeat "$repeat" --delay 80 "$button"
     mods_up "$@"
     settle
 }
@@ -191,13 +192,17 @@ cmd_move() { tools; load; xdotool mousemove --window "$WID" "${1:?}" "${2:?}"; s
 
 cmd_drag() {
     tools; load
-    local x1="${1:?usage: moca drag X1 Y1 X2 Y2}" y1="${2:?}" x2="${3:?}" y2="${4:?}" i
-    xdotool mousemove --window "$WID" "$x1" "$y1" mousedown 1
+    local x1="${1:?usage: moca drag X1 Y1 X2 Y2 [mods]}" y1="${2:?}" x2="${3:?}" y2="${4:?}" i; shift 4
+    xdotool mousemove --window "$WID" "$x1" "$y1"
+    mods_down "$@"
+    (($#)) && sleep 0.2
+    xdotool mousedown 1
     for i in 1 2 3 4 5 6 7 8; do
         xdotool mousemove --window "$WID" $((x1 + (x2 - x1) * i / 8)) $((y1 + (y2 - y1) * i / 8))
         sleep 0.03
     done
     xdotool mouseup 1
+    mods_up "$@"
     settle
 }
 

@@ -32,6 +32,17 @@ impl super::app::App {
         Task::none()
     }
 
+    pub(crate) fn select_all(&mut self) -> Task<Message> {
+        self.get_active_tab_mut().select_all();
+        Task::none()
+    }
+
+    pub(crate) fn delete_selection(&mut self) -> Task<Message> {
+        self.context_menu = None;
+        self.get_active_tab_mut().delete_selection();
+        Task::none()
+    }
+
     pub(crate) fn label_inputs_mut(&mut self) -> Option<&mut Vec<String>> {
         self.get_active_tab_mut().label_edit.as_mut().map(|edit| &mut edit.inputs)
     }
