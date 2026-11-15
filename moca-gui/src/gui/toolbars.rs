@@ -37,7 +37,7 @@ const NEW_TAB_GAP: f32 = 8.0;
 /// Inset of the floating canvas surfaces (tool palette, Clear, zoom chip), so all three are 40 px tall.
 const FLOATING_PADDING: u16 = 4;
 const DROPDOWN_WIDTH: f32 = 304.0;
-const CONTEXT_MENU_WIDTH: f32 = 248.0;
+const CONTEXT_MENU_WIDTH: f32 = 288.0;
 /// Tallest context menu (four items and a separator), used to keep it inside the canvas.
 const CONTEXT_MENU_MAX_HEIGHT: f32 = 176.0;
 /// Width of the leading icon column in a menu, so labels in one menu share a left edge.
