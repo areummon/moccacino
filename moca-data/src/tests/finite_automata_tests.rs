@@ -328,9 +328,9 @@ fn reference_class_count(automata: &FiniteAutomata) -> usize {
         }
         x
     }
-    for i in 0..total {
-        for j in 0..total {
-            if !dist[i][j] {
+    for (i, row) in dist.iter().enumerate() {
+        for (j, &distinguishable) in row.iter().enumerate() {
+            if !distinguishable {
                 let a = find(&mut parent, i);
                 let b = find(&mut parent, j);
                 if a != b {
