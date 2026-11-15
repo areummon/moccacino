@@ -53,15 +53,25 @@ const shot = async (name) => {
   const { result } = await send('Page.captureScreenshot', { format: 'png' });
   fs.writeFileSync(path.join(outDir, `${name}.png`), Buffer.from(result.data, 'base64'));
 };
-const click = async (x, y, clickCount = 1) => {
+const click = async (x, y, clickCount = 1, button = 'left') => {
   for (const type of ['mouseMoved', 'mousePressed', 'mouseReleased']) {
-    await send('Input.dispatchMouseEvent', { type, x, y, button: 'left', clickCount });
+    await send('Input.dispatchMouseEvent', { type, x, y, button, clickCount });
     await sleep(40);
   }
 };
 const key = async (k) => {
   await send('Input.dispatchKeyEvent', { type: 'keyDown', key: k, text: k.length === 1 ? k : undefined });
   await send('Input.dispatchKeyEvent', { type: 'keyUp', key: k });
+};
+
+// A Ctrl chord as trusted key events: Control down, the key with the Ctrl modifier, both up.
+const ctrl = async (k) => {
+  const control = { key: 'Control', code: 'ControlLeft', windowsVirtualKeyCode: 17 };
+  const letter = { key: k, code: `Key${k.toUpperCase()}`, windowsVirtualKeyCode: k.toUpperCase().charCodeAt(0), modifiers: 2 };
+  await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...control, modifiers: 2 });
+  await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...letter });
+  await send('Input.dispatchKeyEvent', { type: 'keyUp', ...letter });
+  await send('Input.dispatchKeyEvent', { type: 'keyUp', ...control });
 };
 
 await send('Runtime.enable');
@@ -76,6 +86,8 @@ for (const a of actions) {
   if (a.cdp) logs.push(`cdp ${a.cdp[0]} => ${JSON.stringify((await send(a.cdp[0], a.cdp[1])).error ?? 'ok')}`);
   if (a.click) await click(...a.click);
   if (a.dbl) await click(...a.dbl, 2);
+  if (a.rclick) await click(...a.rclick, 1, 'right');
+  if (a.ctrl) await ctrl(a.ctrl);
   if (a.key) await key(a.key);
   if (a.type) for (const ch of a.type) await key(ch);
   if (a.eval) logs.push(`eval ${a.eval} => ${JSON.stringify((await send('Runtime.evaluate', { expression: a.eval, returnByValue: true })).result?.result?.value)}`);

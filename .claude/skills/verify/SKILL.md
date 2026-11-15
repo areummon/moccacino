@@ -90,6 +90,7 @@ Fixed coordinates (1280×820, verified):
 |---|---|
 | Header menus: New / Operations / File / Export | 175 25 / 265 25 / 357 25 / 430 25 |
 | New-tab `+` / shortcuts / theme toggle (right side) | 1167 25 / 1216 25 / 1251 25 |
+| Undo / Redo / Clear (canvas top right, shown once the tab has content or history) | 1131 87 / 1163 87 / 1220 87 |
 | File menu items: Open .ce / Save tab as .ce | 420 78 / 428 111 |
 | Export menu items: LaTeX/TikZ / Regular expression / Copy LLM prompt | 470 78 / 470 111 / 470 160 |
 | Operations: Check input… | 300 78 |
@@ -130,7 +131,7 @@ must show no stray files (only `.claude/` if the skill itself is uncommitted).
 ## Web build
 
 The wasm build has its own driver, `.claude/skills/verify/scripts/web DIST_DIR OUT_DIR [ACTIONS_JSON]`
-(Node + headless Chromium over CDP; build `dist/` with trunk in the devshell first).
+(Node + headless Chromium over CDP; build `dist/` with trunk in the devshell first, and run the driver with `env -u LD_LIBRARY_PATH` when inside the devshell).
 It serves the build, runs the JSON actions, saves numbered PNGs to `OUT_DIR`, prints console
 output, and exits 1 on any page exception or panic. Recipes and the action format are in
 [`features/web.md`](features/web.md).

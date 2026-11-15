@@ -38,13 +38,14 @@ Preconditions:
 - **Delete.** Run `$M key 4` and `$M click 750 350`. `q1` and its edge disappear, and the status bar reads `1 state · 0 transitions`. `$M key Tab` returns to Select. Adding a state now (`$M key 2`, `$M click 400 500`) gives `q2` with no initial arrow while `s` (the old `q0`) is still initial.
 - **Clear.** Run `$M click 1220 87`, then `$M key 2` and `$M click 400 350`: the new state is `q0` again, with the initial arrow.
 - **Select and move.** With states at 300 300, 500 300 and 500 480: `$M drag 220 220 600 380 ctrl` rings the first two and the status bar reads `2 selected`. `$M click 500 480 ctrl` adds the third. `$M drag 300 300 360 400` moves all three by the same offset; `$M key ctrl+z` puts them back.
-- **Context menu.** `$M click 500 300 right`, then `$M shot menu` and click an item (for one selected state: Rename 760 322, accepting 760 361, initial 760 400, Delete 760 446 when the click was at 700 300; items sit about 20, 60, 100 and 145 px below the pointer). `$M key ctrl+a`, `$M click 500 300 right` shows only `Delete selected states`.
+- **Context menu.** `$M click 500 300 right`, then `$M shot menu` and click an item (the panel is 288 px wide and opens with its top-left corner at the pointer; for one selected state the rows sit about 22, 56, 90 and 135 px below the pointer: Rename 560 322, accepting 560 356, initial 560 390, Delete 560 435 for a click at 500 300. On the initial state the disabled `Make initial` row grows an `Already the initial state` subtitle and pushes Delete down about 15 px. Near the right or bottom edge the panel is pulled back inside the canvas, so shoot it first). `$M key ctrl+a`, `$M click 500 300 right` shows only `Delete selected states`.
 - **Undo and redo.** Run `$M key ctrl+z` twice: the new state goes, then the cleared machine comes back. `$M key ctrl+shift+z` clears it again and `$M key ctrl+z` restores it. `$M shot` after each step.
 
 ## Gotchas
 
 - Shift and Alt clicks only count when the modifier is down before the click. `$M click … shift` handles this, but a raw `xdotool keydown shift click 1` silently does nothing.
 - A hovered state draws a halo ring that looks like an accepting double circle. Park the pointer before you judge, or trust the saved `.ce` file.
+- A selected state draws an accent ring too, and any plain click on a state selects it (the status bar shows `1 selected`). `$M key Escape` clears the selection before a proof shot.
 - While a run is loaded, the active state glows and its accepting ring turns accent-colored, so it is harder to spot.
 - Undo and redo are inert while a dialog is open and on grammar tabs. A drag becomes an undo step at the next key press or click, not on mouse release.
 - Tool keys are inert while a dialog or text field has focus. Run `$M key Escape` first, or `$M click 40 640` only when Select is already active (with the State tool that click adds a state).
