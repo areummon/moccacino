@@ -811,7 +811,7 @@ impl Grammar {
         for terminal in &terminals {
             pda.add_transition(1, 1, label(Some(terminal), terminal, &[]));
         }
-        pda.add_transition(1, 2, label(None, &marker, &[marker.clone()]));
+        pda.add_transition(1, 2, label(None, &marker, std::slice::from_ref(&marker)));
 
         Ok(pda)
     }

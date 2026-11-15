@@ -514,11 +514,11 @@ fn demo_file_entities_match_their_names_test() {
 
     fn is_anbn(word: &str) -> bool {
         let half = word.len() / 2;
-        word.len() % 2 == 0 && word[..half].chars().all(|c| c == 'a') && word[half..].chars().all(|c| c == 'b')
+        word.len().is_multiple_of(2) && word[..half].chars().all(|c| c == 'a') && word[half..].chars().all(|c| c == 'b')
     }
     type Spec = (&'static str, &'static [char], fn(&str) -> bool);
     let specs: [Spec; 6] = [
-        ("even-number-of-as", &['a', 'b'], |w| w.matches('a').count() % 2 == 0),
+        ("even-number-of-as", &['a', 'b'], |w| w.matches('a').count().is_multiple_of(2)),
         ("ends-with-b", &['a', 'b'], |w| w.ends_with('b')),
         ("anbn", &['a', 'b'], is_anbn),
         ("contains-a-zero", &['0', '1'], |w| w.contains('0')),

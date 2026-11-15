@@ -1,9 +1,9 @@
 use iced::widget::canvas::Canvas;
 use iced::widget::stack;
 use iced::{Element, Fill, Size};
-use indexmap::IndexSet;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
+use super::drawing::{Drawing, Transitions};
 use super::message::CanvasMessage;
 use super::node::StateNode;
 use super::state::State;
@@ -13,7 +13,7 @@ use crate::family::Family;
 pub(crate) struct StateMachine<'a> {
     pub(crate) state: &'a State,
     pub(crate) states: &'a [StateNode],
-    pub(crate) transitions: &'a HashMap<(usize, usize), IndexSet<String>>,
+    pub(crate) transitions: &'a Transitions,
     pub(crate) initial_state: Option<usize>,
     pub(crate) final_states: &'a HashSet<usize>,
     pub(crate) active_states: &'a HashSet<usize>,
@@ -32,18 +32,15 @@ pub(crate) struct CanvasContext<'a> {
 impl State {
     pub(crate) fn view<'a>(
         &'a self,
-        states: &'a [StateNode],
-        transitions: &'a HashMap<(usize, usize), IndexSet<String>>,
-        initial_state: Option<usize>,
-        final_states: &'a HashSet<usize>,
+        drawing: &'a Drawing,
         context: CanvasContext<'a>,
     ) -> Element<'a, CanvasMessage> {
         let machine = StateMachine {
             state: self,
-            states,
-            transitions,
-            initial_state,
-            final_states,
+            states: &drawing.states,
+            transitions: &drawing.transitions,
+            initial_state: drawing.initial_state,
+            final_states: &drawing.final_states,
             active_states: context.active_states,
             family: context.family,
             interactive: context.interactive,

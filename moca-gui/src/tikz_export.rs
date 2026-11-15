@@ -1,18 +1,13 @@
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
-use indexmap::IndexSet;
 use moca_data::grammar::Grammar;
 use moca_data::state::EPSILON;
 
-use crate::state_machine::StateNode;
+use crate::state_machine::Drawing;
 
-pub fn export_to_tikz(
-    states: &[StateNode],
-    transitions: &HashMap<(usize, usize), IndexSet<String>>,
-    initial_state: Option<usize>,
-    final_states: &HashSet<usize>,
-) -> String {
+pub(crate) fn export_to_tikz(drawing: &Drawing) -> String {
+    let Drawing { states, transitions, initial_state, final_states, .. } = drawing;
     let (min_x, min_y, max_x, max_y) = states.iter().fold(
         (f32::INFINITY, f32::INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY),
         |(min_x, min_y, max_x, max_y), s| {
@@ -41,7 +36,7 @@ pub fn export_to_tikz(
         let x = (s.position.x - min_x) * scale;
         let y = (s.position.y - min_y) * scale;
         let mut style = String::from("state");
-        if initial_state == Some(s.id) {
+        if *initial_state == Some(s.id) {
             style.push_str(", initial");
         }
         if final_states.contains(&s.id) {
@@ -57,7 +52,7 @@ pub fn export_to_tikz(
         ));
     }
 
-    let mut edges: Vec<(&(usize, usize), &IndexSet<String>)> = transitions.iter().collect();
+    let mut edges: Vec<(&(usize, usize), &indexmap::IndexSet<String>)> = transitions.iter().collect();
     edges.sort_unstable_by_key(|(pair, _)| **pair);
     for (&(from_id, to_id), labels) in edges {
         let (Some(from), Some(to)) = (id_to_name.get(&from_id), id_to_name.get(&to_id)) else { continue };

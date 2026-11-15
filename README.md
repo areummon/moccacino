@@ -88,6 +88,8 @@ Editing is tool-based, in the style of JFLAP:
 
 `Tab` switches between Select and Delete. Holding `Delete` gives you the Delete tool while the key is held, and `Esc` returns to Select.
 
+Every canvas edit can be undone with `Ctrl+Z` and redone with `Ctrl+Shift+Z` (or `Ctrl+Y`), or with the arrows beside **Clear**. That covers moving a state and clearing the canvas. Each tab keeps its own history.
+
 To move around the canvas, zoom with `Ctrl`+wheel or `Ctrl` `+`/`−`. `Ctrl+0` resets the zoom and `F` fits the machine to the view.
 
 ### Transition labels
@@ -163,6 +165,7 @@ Press `F1` (or `?`) in the app for the full cheat sheet. The main shortcuts are:
 | `Ctrl+O` / `Ctrl+S` | Open / save a `.ce` file |
 | `Ctrl+Shift+L` | Switch between the light and dark themes |
 | `1`–`4`, `Tab`, `Esc` | Editing tools |
+| `Ctrl+Z` / `Ctrl+Shift+Z` | Undo / redo a canvas edit |
 | `Space` / `→` | Play or pause / step the run |
 | `F`, `Ctrl+0` | Fit to view, reset zoom |
 
@@ -173,10 +176,10 @@ The repository is a [Cargo workspace](https://doc.rust-lang.org/book/ch14-03-car
 - **`moca-data`**: a dependency-free library containing all the theory. It holds the engines for every machine family (stepping, validation, determinism), the conversions and minimization, the grammar tools, the regex compiler, and the `.ce` reader and writer.
 - **`moca-gui`**: the Iced front end. It covers the canvas editor, tabs, run panels, dialogs, the theme, and the bundled fonts (Nunito, JetBrains Mono and DejaVu Sans, with their licenses in `moca-gui/assets/fonts`). The root package's `moccacino` binary is built from `moca-gui/src/main.rs`.
 
-Tests live in `moca-data` and run with this exact command:
+Tests live in `moca-data`:
 
 ```bash
-cargo test -p moca-data --bin moca-data
+cargo test -p moca-data
 ```
 
 Besides unit tests for each family, the suite cross-checks the engines against each other and against reference algorithms. For example, it compares Hopcroft's algorithm with table-filling minimization on random DFAs.

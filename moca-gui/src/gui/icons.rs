@@ -15,6 +15,8 @@ pub(crate) enum Icon {
     Pause,
     Step,
     Reset,
+    Undo,
+    Redo,
     Sun,
     Moon,
     ChevronDown,
@@ -152,6 +154,22 @@ pub(super) fn arc_into(b: &mut path::Builder, cx: f32, cy: f32, r: f32, start: f
     }
 }
 
+/// An arrow that runs right, turns around and points back left; `place` maps x so Redo can mirror it.
+fn turn_back(place: impl Fn(f32) -> f32) -> Path {
+    Path::new(|b| {
+        b.move_to(Point::new(place(9.0), 5.0));
+        b.line_to(Point::new(place(5.0), 9.0));
+        b.line_to(Point::new(place(9.0), 13.0));
+        b.move_to(Point::new(place(5.0), 9.0));
+        b.line_to(Point::new(place(14.0), 9.0));
+        for step in 0..=12 {
+            let angle = -std::f32::consts::FRAC_PI_2 + std::f32::consts::PI * step as f32 / 12.0;
+            b.line_to(Point::new(place(14.0 + 4.75 * angle.cos()), 13.75 + 4.75 * angle.sin()));
+        }
+        b.line_to(Point::new(place(10.0), 18.5));
+    })
+}
+
 fn paint(frame: &mut Frame, icon: Icon, ink: Color, p: &Palette) {
     let stroke = pen(ink, 2.0);
     match icon {
@@ -191,6 +209,8 @@ fn paint(frame: &mut Frame, icon: Icon, ink: Color, p: &Palette) {
             frame.fill(&head, ink);
             frame.stroke(&head, pen(ink, 1.2));
         }
+        Icon::Undo => frame.stroke(&turn_back(|x| x), stroke),
+        Icon::Redo => frame.stroke(&turn_back(|x| 24.0 - x), stroke),
         Icon::Sun => {
             frame.stroke(&Path::circle(Point::new(12.0, 12.0), 4.0), stroke);
             for i in 0..8 {

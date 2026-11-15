@@ -1,4 +1,5 @@
 mod canvas;
+mod drawing;
 mod edge;
 mod gesture;
 mod hit_testing;
@@ -14,4 +15,5 @@ pub use message::CanvasMessage;
 pub use node::StateNode;
 pub use state::State;
 pub(crate) use canvas::CanvasContext;
+pub(crate) use drawing::{Drawing, Transitions};
 pub(crate) use tool::EditorTool;

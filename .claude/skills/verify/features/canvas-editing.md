@@ -12,7 +12,8 @@ The user draws a machine on the canvas with JFLAP-style tools. They add states, 
 - `edit-label`: click a transition's label with Select to open `Transition labels`: one row per label, `Add label`, a delete icon per row, `Save`. Saving with every row cleared removes the edge.
 - `edit-move-pan`: drag a state to move it, or drag empty space to pan.
 - `edit-delete`: the Delete tool (`4`, `Tab`, or hold `Delete`) removes the clicked state with its edges, or one edge. `Tab` toggles Delete↔Select; releasing a held `Delete` restores the tool active before the hold.
-- `edit-clear`: the `Clear` button (top right of the canvas, at 1220 86, level with the tool palette; shown while the tab has states or transitions) empties the tab, resets zoom, the run, the name counter and the tool (back to Select), and keeps the machine family.
+- `edit-clear`: the `Clear` button (top right of the canvas, at 1220 87, level with the tool palette, right of the undo and redo arrows; shown while the tab has states or transitions) empties the tab, resets zoom, the run, the name counter and the tool (back to Select), and keeps the machine family. A toast names the undo shortcut.
+- `edit-undo`: `ctrl+z` steps back one canvas edit and `ctrl+shift+z` or `ctrl+y` steps forward. Every edit is one step: add, delete, rename, relabel, accepting, initial, a whole drag, and `Clear`. The arrows left of `Clear` (1131 87 and 1163 87) do the same and are faint when there is nothing to step to. History is per tab, and a loaded or generated tab starts with none.
 
 ## How to get to it (user POV)
 
@@ -33,13 +34,15 @@ Preconditions:
 - **Move initial.** Run `$M click 750 350 alt` (marker moves to `q1`), then `$M click 750 350 alt` again: `q1` keeps it. Run `$M click 400 350 alt` to move it back to `q0`.
 - **Rename and relabel.** Run `$M click 400 350 double`, `$M key ctrl+a`, `$M type s`, `$M key Return`: `q0` reads `s`. Run `$M click 575 334` (the `a` label pill): `Transition labels` opens with focus in the row. Run `$M key ctrl+a`, `$M type b`, `$M key Return`.
 - **Delete.** Run `$M key 4` and `$M click 750 350`. `q1` and its edge disappear, and the status bar reads `1 state · 0 transitions`. `$M key Tab` returns to Select. Adding a state now (`$M key 2`, `$M click 400 500`) gives `q2` with no initial arrow while `s` (the old `q0`) is still initial.
-- **Clear.** Run `$M click 1220 86`, then `$M key 2` and `$M click 400 350`: the new state is `q0` again, with the initial arrow.
+- **Clear.** Run `$M click 1220 87`, then `$M key 2` and `$M click 400 350`: the new state is `q0` again, with the initial arrow.
+- **Undo and redo.** Run `$M key ctrl+z` twice: the new state goes, then the cleared machine comes back. `$M key ctrl+shift+z` clears it again and `$M key ctrl+z` restores it. `$M shot` after each step.
 
 ## Gotchas
 
 - Shift and Alt clicks only count when the modifier is down before the click. `$M click … shift` handles this, but a raw `xdotool keydown shift click 1` silently does nothing.
 - A hovered state draws a halo ring that looks like an accepting double circle. Park the pointer before you judge, or trust the saved `.ce` file.
 - While a run is loaded, the active state glows and its accepting ring turns accent-colored, so it is harder to spot.
+- Undo and redo are inert while a dialog is open and on grammar tabs. A drag becomes an undo step at the next key press or click, not on mouse release.
 - Tool keys are inert while a dialog or text field has focus. Run `$M key Escape` first, or `$M click 40 640` only when Select is already active (with the State tool that click adds a state).
 - The status bar's transition count counts labels, not edges.
 - With the State tool, a click on an existing state, edge or label does not add a state. Pick empty spots at least about 70 px apart (states have a radius of about 30 px).

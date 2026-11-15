@@ -23,6 +23,8 @@ pub enum Message {
     },
     KeyReleased(keyboard::Key),
     Clear,
+    Undo,
+    Redo,
     EditTextChanged(String),
     FinishEditing,
     ToggleMenu(Menu),

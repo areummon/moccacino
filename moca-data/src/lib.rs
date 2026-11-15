@@ -7,3 +7,6 @@ pub mod regex;
 pub mod state_machine;
 pub mod state;
 pub mod turing_machine;
+
+#[cfg(test)]
+mod tests;
