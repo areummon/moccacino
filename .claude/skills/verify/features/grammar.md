@@ -9,6 +9,7 @@ Grammar tabs are text-based: a productions editor on the left and a "Test a word
 - `gram-derive`: **Derive** (901, 187) shows a leftmost derivation, one sentential form per line with spaced symbols: `S` / `=> a S b` / `=> a a S b b` / `=> a a b b`. It gives up after 50,000 steps.
 - `gram-cnf`: **To CNF** (151, 734) opens a `CNF` tab with the fresh start variable `S00`, and its card reads `Chomsky normal form ready. Start symbol: S00.`
 - Check, Derive and To CNF re-parse the editor themselves; Parse is not a prerequisite.
+- The status bar reads `Grammar editor`, `N productions` and a `Ready to run` chip; while the text does not parse it reads `0 productions` and a warning chip with the parse error.
 
 ## How to get to it (user POV)
 
@@ -29,6 +30,6 @@ Preconditions:
 
 ## Gotchas
 
-- The tool palette and run dock are absent here, and the tool keys are inert.
+- The tool palette and run dock are absent here, and the tool keys are inert. `ctrl+a` selects the text of the focused field, not canvas states.
 - The result card shows the last action only. Shoot after each button press.
 - Check runs CYK on the CNF and stays fast. Derive on wide grammars (e.g. `S -> S S`) can search up to its 50,000-step cap before reporting `No leftmost derivation of "w" within 50000 steps.`

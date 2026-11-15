@@ -11,6 +11,8 @@ The same app compiled to wasm runs in a browser tab (GitHub Pages, base path `/m
 - `web-theme`: the theme toggle persists in `localStorage["moccacino.settings"]` (`theme=dark`) across reloads.
 - `web-shortcuts`: Ctrl chords work as on the desktop (`ctrl+shift+l` theme, `ctrl+o`, `ctrl+s`, `ctrl+a` in fields).
 - `web-paste`: Ctrl+V pastes the system clipboard at the cursor in every text field and in the grammar editor.
+- `web-canvas-chords`: on the canvas `ctrl+a` selects every state and `ctrl+z` undoes the last edit, as on the desktop.
+- `web-context-menu`: right-click on a state or transition opens the app's own menu; the browser's context menu does not appear.
 
 ## How to get to it (user POV)
 
@@ -23,10 +25,10 @@ The desktop harness (`moca`) does not apply. `.claude/skills/verify/scripts/web`
 ```bash
 W=.claude/skills/verify/scripts/web
 env -u LD_LIBRARY_PATH nix develop --command trunk build --release --public-url /moccacino/
-$W dist "$EVID/web" '[{"click":[507,326],"shot":"fa"}]'
+env -u LD_LIBRARY_PATH $W dist "$EVID/web" '[{"click":[507,326],"shot":"fa"}]'
 ```
 
-It needs `node` and `chromium` on `PATH` and free ports 8765 and 9333. It always shoots `00-loaded` after an 8 s boot wait. Actions run in order, each optionally followed by `wait` (ms, default 600) and `shot` (name): `click: [x, y]`, `dbl: [x, y]`, `key: "Escape"`, `type: "aa"`, `eval: "<js>"` (logged with its value), `cdp: [method, params]`, `reload: true`. Coordinates match the desktop's 1280×820 layout.
+It needs `node` and `chromium` on `PATH` and free ports 8765 and 9333. Inside the Nix devshell run it with `env -u LD_LIBRARY_PATH`, as above: with the devshell's value `node` dies on an OpenSSL symbol error before the page loads. It always shoots `00-loaded` after an 8 s boot wait. Actions run in order, each optionally followed by `wait` (ms, default 600) and `shot` (name): `click: [x, y]`, `dbl: [x, y]`, `rclick: [x, y]` (right button), `key: "Escape"`, `ctrl: "z"` (a trusted Ctrl chord with a letter key), `type: "aa"`, `eval: "<js>"` (logged with its value), `cdp: [method, params]`, `reload: true`. Coordinates match the desktop's 1280×820 layout.
 
 Preconditions:
 
@@ -34,6 +36,7 @@ Preconditions:
 
 - **Boot.** Run with no actions. `00-loaded` shows the picker with `Open a .ce file…` and no `Quit`; the output is `(no console output)`.
 - **Edit and run.** `[{"click":[507,326]},{"key":"2"},{"click":[400,350]},{"click":[750,350]},{"key":"3"},{"click":[400,350]},{"click":[750,350],"wait":800},{"type":"a"},{"key":"Enter"},{"click":[285,725]},{"type":"aa"},{"click":[428,725]},{"click":[556,704],"wait":4000,"shot":"played"}]`: two states, an `a` edge, and the run auto-plays to `Rejected` at `state q1 steps 1`.
+- **Select, undo and right-click.** After the two states of the previous step: `{"key":"Escape"},{"rclick":[400,350],"wait":800,"shot":"menu"}` shows `Rename…`, `Mark accepting`, a disabled `Make initial` and `Delete state` beside `q0`, and no browser menu. Then `{"key":"Escape"},{"click":[40,600]},{"ctrl":"a","shot":"all"}` rings both states and the status bar reads `2 selected`; `{"ctrl":"z","shot":"undo"}` removes the last edit.
 - **Save.** Hook the download first, then save: `{"eval":"window.__dl=[];HTMLAnchorElement.prototype.click=function(){window.__dl.push(this.download);fetch(this.href).then(r=>r.text()).then(t=>window.__dl.push(t))};1"}`, then `{"click":[357,25]},{"click":[428,112],"wait":1500}` and `{"eval":"JSON.stringify(window.__dl)"}`: `["Automaton.ce","entity: dfa\n…"]`.
 - **Clipboard.** `{"cdp":["Browser.grantPermissions",{"origin":"http://127.0.0.1:8765","permissions":["clipboardReadWrite","clipboardSanitizedWrite"]}]}` first; after Export → Copy LLM prompt (`{"click":[430,25]},{"click":[495,160],"wait":1000}`), read it back with `{"eval":"window.__c='';navigator.clipboard.readText().then(t=>window.__c=t.length);1","wait":1000},{"eval":"window.__c"}` (2671 characters, the length of `moca_data::entity_file::LLM_PROMPT`).
 - **Theme.** `{"click":[1251,25],"wait":800},{"eval":"localStorage.getItem(\"moccacino.settings\")"},{"reload":true,"shot":"reloaded"}`: `"theme=dark\n"`, and the reloaded page is dark.
@@ -43,5 +46,5 @@ Preconditions:
 
 - The dock grows after Load, so Play moves from (546, 725) to (556, 704).
 - A blank page with a 300×150 canvas means startup failed: rerun and read the printed `console.error`. The known causes (missing `instant/wasm-bindgen`, WebGPU without an adapter, MSAA on WebGL) are listed in AGENTS.md.
-- Ctrl shortcuts and paste depend on the vendored `iced_winit` (modifier routing, clipboard) and the paste shim in `index.html`. Drive Ctrl chords with trusted CDP key events (`rawKeyDown` for `Control`, then the key with `"modifiers": 2`, then `keyUp`); a paste needs `"commands": ["paste"]` on the `v` event, because CDP does not run the browser's editing command by itself.
+- Ctrl shortcuts and paste depend on the vendored `iced_winit` (modifier routing, clipboard) and the paste shim in `index.html`. The `ctrl` action sends Ctrl chords as trusted CDP key events (`rawKeyDown` for `Control`, then the key with `"modifiers": 2`, then `keyUp`); a paste still needs the raw `cdp` form, with `"commands": ["paste"]` on the `v` event, because CDP does not run the browser's editing command by itself.
 - `ctrl+w` closes the browser tab in a real browser; do not use it to test tab closing on the web.
